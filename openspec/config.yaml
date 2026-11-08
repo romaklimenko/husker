@@ -1,0 +1,40 @@
+schema: spec-driven
+
+context: |
+  Husker is a local Rust terminal todo app for people who manage tasks from
+  their keyboard. It supports lists, due dates, tags, English and Danish.
+  Task status (open, done, cancelled), readiness (maybe, anytime), and Trash
+  are separate concepts. Due dates are local calendar dates.
+  README.md and docs/ describe implemented behavior for terminal users.
+  Proposals and specs are read by people. Tasks and design evidence are also
+  read by coding agents. Do not commit or push before the user asks.
+
+rules:
+  proposal:
+    - State the proposed behavior first, then explain why it is needed.
+    - Use one idea per sentence. Keep sentences under 40 words.
+    - Name compatibility and migration effects explicitly.
+    - Keep each unresolved decision in one place tagged DECISION PENDING.
+    - Use counted lists or tables for sets of affected files or behaviors.
+    - Do not cite source line numbers.
+  specs:
+    - Write for a maintainer who opens one requirement directly.
+    - Describe behavior in present tense without change history.
+    - State one rule per requirement. Keep its conditions and exceptions together.
+    - Put SHALL or MUST in the first paragraph after each requirement heading.
+    - Give every requirement a concrete scenario with observable inputs and results.
+    - Keep Requirement and Scenario headings and WHEN and THEN bullets in OpenSpec syntax.
+    - Enumerate accepted values, boundaries, errors, and excluded cases explicitly.
+    - Use tables for enumerations longer than three items.
+    - Use one name per concept. Name exact fields, commands, and visible labels.
+    - No source line numbers, long dashes, decorative bold summaries, or sentences over 40 words.
+    - State each rule once and refer to the spec that owns shared details.
+  design:
+    - Lead with the decision, then its reason and rejected alternatives.
+    - Label runtime claims as read from source, measured, or assumed.
+    - List out-of-scope behavior explicitly.
+    - Keep source line numbers in evidence lists only.
+  tasks:
+    - Use independently verifiable checkboxes.
+    - Name the files, observable behavior, and verification for each task.
+    - Leave a task unchecked until its implementation and checks are complete.

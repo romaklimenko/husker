@@ -1,0 +1,15 @@
+/DRAFT.md
+/DRAFTS.md
+/ACTIVE.md
+/target/
+/.scratch/
+/.claude/settings.local.json
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
