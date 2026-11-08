@@ -6,7 +6,7 @@ The client starts Husker as a local process and communicates over standard input
 
 ## Install or update Husker
 
-This guide describes Husker 0.7.0 and its task tools.
+This guide describes Husker 0.8.0 and its task tools.
 Close running Husker instances before updating the executable.
 Disconnect MCP clients that already use Husker, then run this command from the source directory:
 
@@ -233,12 +233,15 @@ After connecting a writable `Private` server, try these requests:
 An empty search returns open tasks and tasks completed or cancelled today, outside Trash.
 Ask for open tasks only when that is what you need. The agent can use `s:open`.
 The agent can use the [same search syntax as the terminal](usage.md#find-tasks), such as `due:today` or `s:done`.
+Use `s:done` or `s:cancelled` to retrieve older closed tasks as well as today's.
+Due filters always inspect the stored due date, even for completed tasks.
 `#shopping` searches for that literal text in titles and descriptions.
 Tasks have no separate tags or readiness fields.
 Searching another list with `l:Work` cannot broaden the connection's access.
 Task searches return up to 100 results by default and allow pages of up to 200.
-Results follow the [planning order](usage.md#plan-by-due-date), with open tasks
-before done and cancelled tasks within each date group.
+Results follow the [planning order](usage.md#plan-by-due-date). Open tasks in
+due-date groups come first, followed by Done today, Cancelled today, Done,
+and Cancelled. Closed tasks use newest status dates first within each group.
 
 A writable connection can add and edit tasks, change their status, and move them to or from Trash.
 A connection restricted with `--list` cannot create or rename lists.
@@ -247,6 +250,11 @@ Ordinary list results follow the order saved in the terminal, with the default l
 The terminal picker's virtual All tasks entry is not added to MCP list results.
 New lists append after existing lists. Renaming a list keeps its position.
 Use Alt+Up or Alt+Down in the terminal's list picker to change that order.
+List deletion is available only in the terminal. It moves every task to the
+default list before removing the old list. An existing MCP connection scoped
+to the removed list returns no tasks. It does not gain access to the destination.
+Creating another list with the same name does not reconnect that old process.
+Update the client's `--list` setting and reconnect to choose a new list explicitly.
 
 Task edits require the `version` returned when the agent read the task.
 If you edit the task in the terminal first, the agent's stale edit fails.
@@ -254,6 +262,9 @@ The agent must read the current task before trying another edit.
 Husker does not silently overwrite your newer save.
 Task results include `status_changed_on`, the local date of completion or cancellation.
 Reopening clears that date. Older tasks migrated without a known completion date return null.
+Task records remain stored, but Husker does not keep past status transitions
+or previous task text. The terminal's History view reads these current closed
+records. MCP clients can retrieve the same records through status-filtered searches.
 
 While an agent works, the terminal refreshes automatically and shows a notice
 when another process changes tasks. Press F5 to refresh immediately.

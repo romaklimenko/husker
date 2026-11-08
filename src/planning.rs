@@ -54,15 +54,51 @@ impl Bucket {
 }
 
 pub fn sort_tasks(tasks: &mut [Task], today: NaiveDate) {
-    tasks.sort_by_key(|task| {
-        (
-            Bucket::for_task(task, today),
-            task.status != Status::Open,
-            task.due,
-            task.position,
-            task.id,
-        )
+    tasks.sort_by(|left, right| {
+        planned_group(left, today)
+            .cmp(&planned_group(right, today))
+            .then_with(|| {
+                if left.status == Status::Open {
+                    (left.due, left.position, left.id).cmp(&(right.due, right.position, right.id))
+                } else {
+                    right
+                        .status_changed_on
+                        .cmp(&left.status_changed_on)
+                        .then_with(|| right.id.cmp(&left.id))
+                }
+            })
     });
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum PlannedGroup {
+    Due(Bucket),
+    DoneToday,
+    CancelledToday,
+    Done,
+    Cancelled,
+}
+
+impl PlannedGroup {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Due(bucket) => bucket.key(),
+            Self::DoneToday => "done_today",
+            Self::CancelledToday => "cancelled_today",
+            Self::Done => "done",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+pub fn planned_group(task: &Task, today: NaiveDate) -> PlannedGroup {
+    match (task.status, task.status_changed_on == Some(today)) {
+        (Status::Open, _) => PlannedGroup::Due(Bucket::for_task(task, today)),
+        (Status::Done, true) => PlannedGroup::DoneToday,
+        (Status::Cancelled, true) => PlannedGroup::CancelledToday,
+        (Status::Done, false) => PlannedGroup::Done,
+        (Status::Cancelled, false) => PlannedGroup::Cancelled,
+    }
 }
 
 pub fn date_label(date: NaiveDate, language: Language) -> String {
@@ -135,7 +171,7 @@ mod tests {
     }
 
     #[test]
-    fn undated_tasks_follow_all_dates_regardless_of_status() {
+    fn open_undated_tasks_precede_finished_work_regardless_of_due_date() {
         let today = NaiveDate::from_ymd_opt(2026, 11, 8).unwrap();
         let mut undated = task(None);
         undated.id = 1;
@@ -150,12 +186,12 @@ mod tests {
         sort_tasks(&mut tasks, today);
         assert_eq!(
             tasks.iter().map(|task| task.id).collect::<Vec<_>>(),
-            [3, 2, 1]
+            [1, 2, 3]
         );
     }
 
     #[test]
-    fn open_tasks_lead_each_group_before_dates_and_positions() {
+    fn open_due_groups_precede_separate_closed_sections() {
         let today = NaiveDate::from_ymd_opt(2026, 11, 8).unwrap();
         let cases = [
             (1, Some(-5), Status::Done),
@@ -181,7 +217,52 @@ mod tests {
         sort_tasks(&mut tasks, today);
         assert_eq!(
             tasks.iter().map(|task| task.id).collect::<Vec<_>>(),
-            [2, 1, 4, 3, 6, 5, 8, 7, 9]
+            [2, 4, 6, 8, 9, 5, 1, 7, 3]
+        );
+    }
+
+    #[test]
+    fn completion_groups_do_not_change_due_buckets_or_invent_dates() {
+        let today = NaiveDate::from_ymd_opt(2026, 11, 8).unwrap();
+        let mut done = task(None);
+        done.status = Status::Done;
+        done.status_changed_on = Some(today);
+        assert_eq!(planned_group(&done, today), PlannedGroup::DoneToday);
+        assert_eq!(Bucket::for_task(&done, today), Bucket::Undated);
+        assert_eq!(
+            planned_group(&done, today.succ_opt().unwrap()),
+            PlannedGroup::Done
+        );
+        done.due = Some(today.pred_opt().unwrap());
+        done.status = Status::Cancelled;
+        assert_eq!(planned_group(&done, today), PlannedGroup::CancelledToday);
+        assert_eq!(Bucket::for_task(&done, today), Bucket::Overdue);
+        done.status_changed_on = None;
+        assert_eq!(planned_group(&done, today), PlannedGroup::Cancelled);
+    }
+
+    #[test]
+    fn closed_sections_use_newest_day_then_id_and_put_unknown_dates_last() {
+        let today = NaiveDate::from_ymd_opt(2026, 11, 8).unwrap();
+        let mut tasks = [
+            (1, None),
+            (2, Some(today.pred_opt().unwrap())),
+            (3, Some(today)),
+            (4, Some(today)),
+        ]
+        .into_iter()
+        .map(|(id, date)| {
+            let mut value = task(None);
+            value.id = id;
+            value.status = Status::Done;
+            value.status_changed_on = date;
+            value
+        })
+        .collect::<Vec<_>>();
+        sort_tasks(&mut tasks, today);
+        assert_eq!(
+            tasks.iter().map(|task| task.id).collect::<Vec<_>>(),
+            [4, 3, 2, 1]
         );
     }
 

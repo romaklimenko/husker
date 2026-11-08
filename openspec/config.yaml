@@ -5,7 +5,8 @@ context: |
   their keyboard or mouse. It supports lists, due dates, English and Danish.
   Task status (open, done, cancelled) and Trash are separate concepts.
   Due dates and status-change dates are local calendar dates. Hashtags are
-  ordinary task text. Undated tasks form one group.
+  ordinary task text. Undated open tasks form the Sometime group.
+  Completed and cancelled tasks use separate status groups and dated History.
   README.md and docs/ describe implemented behavior for terminal users.
   Proposals and specs are read by people. Tasks and design evidence are also
   read by coding agents. Do not commit or push before the user asks.

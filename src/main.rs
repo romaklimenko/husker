@@ -164,7 +164,7 @@ fn run(cli: Cli) -> Result<()> {
         .with_context(|| format!("Cannot create profile {}", profile.display()))?;
     let mut store = Store::open(&profile.join("tasks.db"))?;
     let Some(command) = cli.command else {
-        return ui::run(&mut store, &config);
+        return ui::run(&mut store, &config, &config_path);
     };
     match command {
         Command::Mcp { .. } => unreachable!("MCP handled before ordinary commands"),

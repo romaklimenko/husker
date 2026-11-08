@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{collections::BTreeMap, fs, io::Write, path::Path};
 
 use anyhow::{Context, Result, bail};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -9,11 +9,14 @@ use crate::i18n::{Language, tr};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
     Tasks,
+    History,
     Lists,
     Editor,
     ConfirmDiscard,
+    DeleteListConfirm,
     Filter,
     ListName,
+    Language,
     Help,
     CopyText,
 }
@@ -26,8 +29,12 @@ pub enum Action {
     NewTask,
     NewList,
     RenameList,
+    DeleteList,
+    Language,
     Lists,
-    Planned,
+    AllTasks,
+    History,
+    Reopen,
     Filter,
     ToggleDone,
     ToggleCancelled,
@@ -53,15 +60,19 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Self; 30] = [
+    pub const ALL: [Self; 34] = [
         Self::Up,
         Self::Down,
         Self::Open,
         Self::NewTask,
         Self::NewList,
         Self::RenameList,
+        Self::DeleteList,
+        Self::Language,
         Self::Lists,
-        Self::Planned,
+        Self::AllTasks,
+        Self::History,
+        Self::Reopen,
         Self::Filter,
         Self::ToggleDone,
         Self::ToggleCancelled,
@@ -94,8 +105,12 @@ impl Action {
             Self::NewTask => "new_task",
             Self::NewList => "new_list",
             Self::RenameList => "rename_list",
+            Self::DeleteList => "delete_list",
+            Self::Language => "language",
             Self::Lists => "lists",
-            Self::Planned => "planned",
+            Self::AllTasks => "all_tasks",
+            Self::History => "history",
+            Self::Reopen => "reopen",
             Self::Filter => "filter",
             Self::ToggleDone => "toggle_done",
             Self::ToggleCancelled => "toggle_cancelled",
@@ -126,31 +141,52 @@ impl Action {
             Self::Up | Self::Down => {
                 matches!(
                     mode,
-                    Mode::Tasks | Mode::Lists | Mode::Help | Mode::CopyText
+                    Mode::Tasks
+                        | Mode::History
+                        | Mode::Lists
+                        | Mode::Help
+                        | Mode::CopyText
+                        | Mode::Language
                 )
             }
-            Self::Open | Self::Lists | Self::Planned | Self::Help | Self::Quit => {
-                matches!(mode, Mode::Tasks | Mode::Lists)
+            Self::Open | Self::Lists | Self::AllTasks | Self::Help | Self::Quit => {
+                matches!(mode, Mode::Tasks | Mode::History | Mode::Lists)
             }
-            Self::NewTask
-            | Self::Filter
-            | Self::ToggleDone
-            | Self::ToggleCancelled
-            | Self::Trash
-            | Self::Restore => mode == Mode::Tasks,
+            Self::History => matches!(mode, Mode::Tasks | Mode::History),
+            Self::Language => matches!(
+                mode,
+                Mode::Tasks
+                    | Mode::History
+                    | Mode::Lists
+                    | Mode::Editor
+                    | Mode::Filter
+                    | Mode::ListName
+                    | Mode::Help
+            ),
+            Self::Reopen => mode == Mode::History,
+            Self::NewTask | Self::Restore => mode == Mode::Tasks,
+            Self::Filter | Self::ToggleDone | Self::ToggleCancelled | Self::Trash => {
+                matches!(mode, Mode::Tasks | Mode::History)
+            }
             Self::MoveUp | Self::MoveDown => matches!(mode, Mode::Tasks | Mode::Lists),
-            Self::NewList | Self::RenameList => mode == Mode::Lists,
+            Self::NewList | Self::RenameList | Self::DeleteList => mode == Mode::Lists,
             Self::Back => matches!(
                 mode,
-                Mode::Tasks | Mode::Lists | Mode::Filter | Mode::ListName
+                Mode::Tasks
+                    | Mode::History
+                    | Mode::Lists
+                    | Mode::Filter
+                    | Mode::ListName
+                    | Mode::DeleteListConfirm
+                    | Mode::Language
             ),
             Self::Save | Self::NextField | Self::PreviousField => mode == Mode::Editor,
             Self::Discard => matches!(mode, Mode::Editor | Mode::ConfirmDiscard),
-            Self::Apply => matches!(mode, Mode::Filter | Mode::ListName),
+            Self::Apply => matches!(mode, Mode::Filter | Mode::ListName | Mode::Language),
             Self::Close => matches!(mode, Mode::Help | Mode::CopyText),
             Self::Refresh => true,
             Self::ToggleMouse => mode != Mode::CopyText,
-            Self::CopyText => matches!(mode, Mode::Tasks | Mode::Editor),
+            Self::CopyText => matches!(mode, Mode::Tasks | Mode::History | Mode::Editor),
             Self::CopySelection => matches!(mode, Mode::Editor | Mode::Filter | Mode::ListName),
             Self::ScrollLeft | Self::ScrollRight => mode == Mode::CopyText,
         }
@@ -164,8 +200,12 @@ impl Action {
             Self::NewTask => &["n"],
             Self::NewList => &["N"],
             Self::RenameList => &["R"],
+            Self::DeleteList => &["d", "delete"],
+            Self::Language => &["f3"],
             Self::Lists => &["l"],
-            Self::Planned => &["p"],
+            Self::AllTasks => &[],
+            Self::History => &["h"],
+            Self::Reopen => &["r"],
             Self::Filter => &["/"],
             Self::ToggleDone => &["space"],
             Self::ToggleCancelled => &["c"],
@@ -221,6 +261,15 @@ impl Default for Config {
 }
 
 impl Config {
+    pub fn save_language(&self, path: &Path, language: Language) -> Result<()> {
+        save_language_file(path, language).with_context(|| {
+            format!(
+                "Could not save language to configuration '{}'.",
+                path.display()
+            )
+        })
+    }
+
     pub fn load(path: &Path, explicit: bool) -> Result<Self> {
         match fs::read_to_string(path) {
             Ok(text) => Self::from_toml(&text)
@@ -236,6 +285,14 @@ impl Config {
     pub fn from_toml(text: &str) -> Result<Self> {
         let mut file: ConfigFile =
             toml::from_str(text).context("Could not parse TOML configuration.")?;
+        if let Some(legacy_keys) = file.keys.remove("planned") {
+            if file.keys.contains_key("all_tasks") {
+                bail!(
+                    "Both 'all_tasks' and legacy 'planned' are set in [keys]. Use only 'all_tasks'."
+                );
+            }
+            file.keys.insert("all_tasks".into(), legacy_keys);
+        }
         let mut keys = BTreeMap::new();
         for action in Action::ALL {
             let names = file.keys.remove(action.name()).unwrap_or_else(|| {
@@ -310,11 +367,14 @@ impl Config {
     fn validate(&self) -> Result<()> {
         for mode in [
             Mode::Tasks,
+            Mode::History,
             Mode::Lists,
             Mode::Editor,
             Mode::ConfirmDiscard,
+            Mode::DeleteListConfirm,
             Mode::Filter,
             Mode::ListName,
+            Mode::Language,
             Mode::Help,
             Mode::CopyText,
         ] {
@@ -342,6 +402,76 @@ impl Config {
         }
         Ok(())
     }
+}
+
+fn save_language_file(path: &Path, language: Language) -> Result<()> {
+    // Resolve existing symlinks so replacing a config does not replace the link itself.
+    let path = match fs::canonicalize(path) {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => path.to_path_buf(),
+        Err(error) => return Err(error.into()),
+    };
+    let original = match fs::read_to_string(&path) {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    let mut text = original.clone().unwrap_or_default();
+    Config::from_toml(&text)?;
+
+    #[derive(Deserialize)]
+    struct LanguageLocation {
+        language: Option<toml::Spanned<String>>,
+    }
+    let location: LanguageLocation = toml::from_str(&text)?;
+    if let Some(value) = location.language {
+        text.replace_range(value.span(), &format!("\"{language}\""));
+    } else {
+        let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
+        let start = if text.starts_with('\u{feff}') {
+            '\u{feff}'.len_utf8()
+        } else {
+            0
+        };
+        text.insert_str(start, &format!("language = \"{language}\"{newline}"));
+    }
+    Config::from_toml(&text)?;
+    let permissions = match fs::metadata(&path) {
+        Ok(metadata) => {
+            let permissions = metadata.permissions();
+            if permissions.readonly() {
+                bail!("The configuration file is read-only.");
+            }
+            Some(permissions)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(text.as_bytes())?;
+    if let Some(permissions) = permissions {
+        temporary.as_file().set_permissions(permissions)?;
+    }
+    temporary.as_file().sync_all()?;
+    // Do not replace edits that arrived while preparing the new file.
+    let current = match fs::read_to_string(&path) {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    if current != original {
+        bail!("The configuration changed while saving. Try again.");
+    }
+    if original.is_some() {
+        temporary.persist(path)?;
+    } else {
+        temporary.persist_noclobber(path)?;
+    }
+    Ok(())
 }
 
 fn parse_binding(name: &str) -> Result<Binding> {
@@ -430,6 +560,134 @@ fn normalize_key(code: KeyCode, mut modifiers: KeyModifiers) -> (KeyCode, KeyMod
 mod tests {
     use super::*;
 
+    #[test]
+    fn saving_language_changes_only_the_root_value_and_keeps_current_bindings() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("shared.toml");
+        let config = Config::from_toml("[keys]\nquit = ['ctrl+q']").unwrap();
+        for value in [
+            "'en'",
+            "\"en\"",
+            "'''en'''",
+            "\"\"\"en\"\"\"",
+            "\"\\u0065n\"",
+        ] {
+            let original = format!(
+                "# Sprog æøå\r\n'language' = {value} # keep me\r\n[keys]\r\nquit = ['ctrl+x']\r\nlanguage = ['f6']\r\n"
+            );
+            fs::write(&path, &original).unwrap();
+            config.save_language(&path, Language::Da).unwrap();
+            assert_eq!(
+                fs::read_to_string(&path).unwrap(),
+                original.replacen(value, "\"da\"", 1)
+            );
+            let loaded = Config::load(&path, true).unwrap();
+            assert_eq!(loaded.language, Language::Da);
+            assert_eq!(loaded.keys_for(Action::Quit), "ctrl+x");
+            assert_eq!(loaded.keys_for(Action::Language), "f6");
+            assert_eq!(config.language, Language::En);
+            assert_eq!(config.keys_for(Action::Quit), "ctrl+q");
+        }
+    }
+
+    #[test]
+    fn saving_language_creates_config_and_adds_missing_root_setting_before_tables() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        let config = Config::default();
+        config.save_language(&path, Language::Da).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "language = \"da\"\n");
+        assert_eq!(Config::load(&path, false).unwrap().language, Language::Da);
+        for original in [
+            "# settings\r\n[keys]\r\nlanguage = ['f6']\r\n",
+            "\u{feff}# settings\n[keys]\nquit = ['ctrl+q']\n",
+        ] {
+            fs::write(&path, original).unwrap();
+            config.save_language(&path, Language::Da).unwrap();
+            let saved = fs::read_to_string(&path).unwrap();
+            assert!(saved.contains(original.trim_start_matches('\u{feff}')));
+            assert_eq!(
+                saved.starts_with('\u{feff}'),
+                original.starts_with('\u{feff}')
+            );
+            assert_eq!(Config::load(&path, true).unwrap().language, Language::Da);
+        }
+    }
+
+    #[test]
+    fn failed_language_saves_preserve_config_contents() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        let config = Config::default();
+        for original in [
+            "language = 'xx'",
+            "language = 'en'\n[keys]\nquit = ['n']",
+            "bad TOML",
+        ] {
+            fs::write(&path, original).unwrap();
+            assert!(config.save_language(&path, Language::Da).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        }
+        fs::write(&path, "language = 'en'\n").unwrap();
+        let writable = fs::metadata(&path).unwrap().permissions();
+        let mut readonly = writable.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&path, readonly).unwrap();
+        let result = config.save_language(&path, Language::Da);
+        fs::set_permissions(&path, writable).unwrap();
+        assert!(format!("{:#}", result.unwrap_err()).contains("read-only"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "language = 'en'\n");
+        assert!(
+            config
+                .save_language(directory.path(), Language::Da)
+                .is_err()
+        );
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn language_action_respects_modes_and_configured_picker_controls() {
+        let config = Config::default();
+        for mode in [
+            Mode::Tasks,
+            Mode::History,
+            Mode::Lists,
+            Mode::Editor,
+            Mode::Filter,
+            Mode::ListName,
+            Mode::Help,
+        ] {
+            assert_eq!(
+                config.action(key(KeyCode::F(3)), mode),
+                Some(Action::Language)
+            );
+        }
+        for mode in [
+            Mode::Language,
+            Mode::ConfirmDiscard,
+            Mode::DeleteListConfirm,
+            Mode::CopyText,
+        ] {
+            assert_eq!(config.action(key(KeyCode::F(3)), mode), None);
+        }
+        assert_eq!(
+            config.action(key(KeyCode::Enter), Mode::Language),
+            Some(Action::Apply)
+        );
+        assert_eq!(
+            config.action(key(KeyCode::Esc), Mode::Language),
+            Some(Action::Back)
+        );
+        assert!(Config::from_toml("[keys]\nlanguage = ['f5']").is_err());
+        assert!(Config::from_toml("[keys]\napply = ['j']").is_err());
+        let config = Config::from_toml("[keys]\nlanguage = ['f6']").unwrap();
+        assert_eq!(config.action(key(KeyCode::F(3)), Mode::Editor), None);
+        assert_eq!(
+            config.action(key(KeyCode::F(6)), Mode::Editor),
+            Some(Action::Language)
+        );
+    }
+
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
@@ -488,8 +746,10 @@ mod tests {
         }
         for mode in [
             Mode::Tasks,
+            Mode::History,
             Mode::Lists,
             Mode::ConfirmDiscard,
+            Mode::DeleteListConfirm,
             Mode::Help,
             Mode::CopyText,
         ] {
@@ -508,6 +768,66 @@ mod tests {
         let disabled = Config::from_toml("[keys]\ncopy_selection = []\nsave = ['ctrl+c']").unwrap();
         assert_eq!(disabled.action(copy, Mode::Editor), Some(Action::Save));
         assert!(Config::from_toml("[keys]\nquit = ['ctrl+c']").is_ok());
+    }
+
+    #[test]
+    fn all_tasks_is_optional_and_accepts_only_one_configuration_name() {
+        let config = Config::default();
+        assert_eq!(config.action(key(KeyCode::Char('a')), Mode::Tasks), None);
+        assert_eq!(config.action(key(KeyCode::Char('p')), Mode::Tasks), None);
+        let legacy = Config::from_toml("[keys]\nplanned = ['p']").unwrap();
+        assert_eq!(
+            legacy.action(key(KeyCode::Char('p')), Mode::History),
+            Some(Action::AllTasks)
+        );
+        assert_eq!(legacy.action(key(KeyCode::Char('a')), Mode::Tasks), None);
+        let disabled = Config::from_toml("[keys]\nplanned = []").unwrap();
+        assert_eq!(disabled.action(key(KeyCode::Char('a')), Mode::Tasks), None);
+        assert!(Config::from_toml("[keys]\nplanned = ['p']\nall_tasks = ['a']").is_err());
+        assert!(Config::example().contains("all_tasks = []"));
+        assert!(!Config::example().contains("planned ="));
+    }
+
+    #[test]
+    fn lifecycle_actions_are_mode_scoped_and_conflicts_are_rejected() {
+        let config = Config::default();
+        assert_eq!(
+            config.action(key(KeyCode::Char('h')), Mode::Tasks),
+            Some(Action::History)
+        );
+        assert_eq!(config.action(key(KeyCode::Char('h')), Mode::Lists), None);
+        assert_eq!(
+            config.action(key(KeyCode::Char('r')), Mode::History),
+            Some(Action::Reopen)
+        );
+        assert_eq!(
+            config.action(key(KeyCode::Char('r')), Mode::Tasks),
+            Some(Action::Restore)
+        );
+        assert_eq!(
+            config.action(key(KeyCode::Delete), Mode::Lists),
+            Some(Action::DeleteList)
+        );
+        assert_eq!(
+            config.action(key(KeyCode::Delete), Mode::Tasks),
+            Some(Action::Trash)
+        );
+        assert_eq!(config.action(key(KeyCode::Char('n')), Mode::History), None);
+        assert_eq!(
+            config.action(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT), Mode::History),
+            None
+        );
+        assert_eq!(
+            config.action(key(KeyCode::Esc), Mode::DeleteListConfirm),
+            Some(Action::Back)
+        );
+        assert_eq!(
+            config.action(key(KeyCode::Char('q')), Mode::DeleteListConfirm),
+            None
+        );
+        assert!(Config::from_toml("[keys]\nhistory = ['a']\nall_tasks = ['a']").is_err());
+        assert!(Config::from_toml("[keys]\nreopen = ['d']").is_err());
+        assert!(Config::from_toml("[keys]\ndelete_list = ['R']").is_err());
     }
 
     #[test]

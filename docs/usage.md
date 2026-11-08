@@ -36,7 +36,8 @@ Esc or Ctrl+G at the prompt also returns to editing.
 An unchanged editor closes without a prompt.
 Navigation shortcuts such as `q`, `d`, and `l` are ordinary text while you edit.
 
-Remove an existing due date to move the task to Sometime.
+Remove an existing due date to move an open task to Sometime.
+A done or cancelled task stays in its status section.
 Write `#shopping` in the title or description if you want to find that text later.
 Husker has no separate tags or readiness fields.
 
@@ -86,15 +87,15 @@ plain task text or when native clipboard access fails.
 
 Press `l` to open the list picker over your current tasks. The picker shows
 All tasks first, your ordinary lists next, and Trash last. It starts with
-your current list selected, or All tasks when you are in Planned.
+your current list selected, or All tasks when you are in All tasks.
 Press Esc or `l` again to close the picker without changing the view.
 
 Choose a list and press Enter. For example, choosing Private shows
-`Planned > Private`. New tasks created there belong to Private.
-Press Esc to return to Planned with its previous filter, selected task,
-and scroll position. Press `p` or choose All tasks for the same result.
-For example, if Planned was filtered by `milk`, that filter returns after
-you leave Private. Esc at Planned leaves the view unchanged.
+`All tasks > Private`. New tasks created there belong to Private.
+Press Esc to return to All tasks with its previous filter, selected task,
+and scroll position. Choosing All tasks in the picker gives the same result.
+For example, if All tasks was filtered by `milk`, that filter returns after
+you leave Private. Esc at All tasks leaves the view unchanged.
 
 Choosing a different list or Trash starts that view without a filter.
 Choosing the current list again preserves its filter, task selection,
@@ -107,8 +108,9 @@ Esc in the list-name form returns to the picker without creating a list.
 
 Select an ordinary list and press Alt+Up or Alt+Down to change its position.
 Husker saves this order for the next session. The default list, initially
-Inbox, stays first among ordinary lists. All tasks and Trash stay fixed.
-New tasks in Planned use the default list.
+Inbox, stays first among ordinary lists and is marked as the default.
+All tasks and Trash stay fixed.
+New tasks in All tasks use the default list.
 
 Press `R` on a list to rename it. Enter the new name and press Enter.
 The tasks stay in the same list. Names are unique without regard to case,
@@ -125,10 +127,36 @@ All tasks has no count because it is a view option. If you name an ordinary
 list All tasks, that list still appears separately with its count.
 Help opened with `?` returns to the picker when you close it with Esc.
 
+## Remove a list without losing its tasks
+
+Press `l`, select an ordinary list, and press Delete or `d`.
+Husker shows the list name and the default list that will receive its tasks.
+The confirmation counts open, done, cancelled, and trashed tasks separately.
+For example, a list with three unfinished tasks warns you before moving them.
+A picker count of zero means there are no open tasks outside Trash.
+The list can still contain completed, cancelled, or trashed tasks.
+
+No is selected first. Press Enter or Esc to keep the list.
+To remove the list, use an arrow key or Tab to choose Yes and press Enter.
+All of the list's tasks move to the default list, including tasks in Trash.
+Their text, dates, and statuses stay unchanged. A trashed task stays in Trash
+and will belong to the default list when you restore it.
+The removed list's name and its task grouping are not retained.
+
+The picker stays open with the default list selected after deletion.
+If you were viewing the removed list, the tasks behind the picker return
+to All tasks. The default list, All tasks, and Trash cannot be deleted.
+
+If another process changes the list or its tasks while you confirm,
+Husker updates the confirmation and selects No again. Review the new names
+and counts before choosing Yes. An editor opened before the move keeps
+your draft. Reopen that task to load its new list before editing again.
+A stale editor cannot overwrite the transferred task.
+
 ## Plan by due date
 
-Set a task's Due date in the editor to place the task in a dated group.
-Husker uses your computer's local calendar date to calculate these groups:
+Set an open task's Due date in the editor to place the task in a dated group.
+Husker uses your computer's local calendar date to group open tasks:
 
 | Group | Tasks shown |
 | --- | --- |
@@ -140,17 +168,22 @@ Husker uses your computer's local calendar date to calculate these groups:
 | Sometime | No due date. Shown as Engang in Danish. |
 
 If today is November 8, Soon covers November 10 through November 15.
-Next starts on November 16. Open tasks appear before done and cancelled tasks
-within each group. Within those two sets, tasks follow due-date order.
-For example, in Soon, an open task due November 15 comes before a done task
-due November 10. An Overdue task still appears before every Today task.
-Sometime is the final group. Tasks completed or cancelled today remain visible.
-Trash is always separate from the planned view.
+Next starts on November 16. Open tasks appear in those groups first.
+Within a dated group, earlier due dates appear first. Sometime is the last
+open-task group.
+
+Done today and Cancelled today follow the open tasks. For example, completing
+an undated task moves it from Sometime to Done today without adding a due date.
+A task completed today appears there even if its stored due date is overdue.
+If a status filter includes older tasks, Done and Cancelled appear afterward.
+Within each finished section, newer status dates appear first. Tasks without
+a recorded status date appear last. Equal dates use descending task ID.
+Trash stays separate from these views.
 
 Task rows use the full navigation width. The selected task has no side
 description preview. Press Enter to open its Description field, or F4 to
 read and copy its plain text.
-Date-group headings are labels. They do not receive selection highlighting,
+Group headings are labels. They do not receive selection highlighting,
 and keyboard navigation skips them.
 
 Date labels include the weekday and ISO week number:
@@ -158,10 +191,10 @@ Date labels include the weekday and ISO week number:
 At a year boundary, `2027-01-01 Fri 2026-W53` shows that January 1 belongs
 to the final ISO week of 2026.
 
-Use Alt+Up or Alt+Down to change the order of tasks sharing the same due
-date. Tasks without dates can move among other tasks in Sometime.
-Open tasks move only among other open tasks. Done and cancelled tasks can
-move among each other, below the open tasks for that date.
+Use Alt+Up or Alt+Down to change the order of open tasks sharing the same
+due date. Undated open tasks can move among other open tasks in Sometime.
+Done and cancelled tasks use their recorded status dates and cannot be
+reordered manually.
 Reordering never changes a due date or moves a task between lists.
 With a filter active, reordering uses neighboring tasks in the visible results.
 
@@ -213,13 +246,48 @@ Use each of `l:`, `due:`, and `s:` at most once. Unknown fields, invalid dates,
 and unfinished quotes produce an error. Husker keeps your previous results
 until you correct and apply the new query.
 
+## Find older completed tasks
+
+Press `h` from All tasks or an ordinary list to open History.
+For example, `h` in Work opens `All tasks > Work > History` and shows Work's
+currently done and cancelled tasks from every date. Tasks do not expire.
+History excludes open tasks and Trash.
+
+The most recent recorded status dates appear first. Headings show Today,
+Yesterday, or the calendar date. Older tasks without a recorded completion
+date appear under Unknown date. Tasks with the same date use descending
+ID because Husker records a date, not an exact completion time.
+
+Press `/` to search History. For example, `s:done milk` finds completed tasks
+containing `milk`. `s:cancelled` shows cancelled tasks. `s:all` keeps both
+closed statuses, and `s:open` matches nothing in History.
+Due filters still check the task's due date. `due:today` does not mean
+completed today.
+
+Press Enter to edit a historical task or F4 to read and copy its text.
+Press `r` to reopen it. The task leaves History and becomes open in its list.
+You can also use the usual status and Trash shortcuts.
+New-task creation and manual reordering are unavailable in History.
+
+Press Esc or `h` to return to the view where you opened History.
+Your previous filter, selected task, and scroll position return.
+Press `l` to choose All tasks or another task list and leave History.
+Choosing the same list restores the view from before you opened History.
+Choosing another list starts with an empty filter.
+
+History shows each task's current status. Reopening clears its recorded
+completion date. Husker does not keep a log of earlier status changes or
+previous versions of task text. To find deleted tasks, open Trash from
+the list picker instead.
+
 ## Complete, cancel, and restore tasks
 
 Press Space to mark a task done. Press `c` to cancel a task.
-The task stays visible for the rest of the local day with its new status.
-It moves below the open tasks within its date group.
-Tomorrow, the default view hides it. Use `s:open` to hide completed and
-cancelled tasks immediately.
+The task moves to Done today or Cancelled today for the rest of the local day.
+Selection moves to the next open task, or the previous open task if none
+follows it. Tomorrow, the default view hides the closed task.
+Press `h` to find it in History. Use `s:open` to hide completed and cancelled
+tasks immediately.
 
 Apply `s:done` to see completed tasks, then press Space on a task to reopen
 it. Apply `s:cancelled` and press `c` to reopen a cancelled task.
@@ -232,10 +300,10 @@ A restored done task stays done. It appears in the default view only if
 it was completed today. Restoring a task does not reset its completion date.
 
 Trash counts every deleted task, regardless of status. Tasks in Trash are
-excluded from planned views even when the query is `s:all`.
+excluded from ordinary task views even when the query is `s:all`.
 Trash keeps the task's title, description, due date, status date, and list membership.
-Trash uses the heading `Planned > Trash` and has no date-group headings.
-Press Esc to return to your previous Planned view.
+Trash uses the heading `All tasks > Trash` and has no date-group headings.
+Press Esc to return to your previous All tasks view.
 
 ## Use the mouse and copy text
 
@@ -303,19 +371,20 @@ when all actions do not fit on screen.
 | Up or `k` | Select the previous row. |
 | Down or `j` | Select the next row. |
 | Enter | Choose a picker entry or edit a task. |
-| `n` | Create a task in a task view. |
+| `n` | Create a task outside History and Trash. |
 | `N` | Create a list from the picker. |
 | `R` | Rename an ordinary list from the picker. |
 | `l` | Open or cancel the list picker. |
-| `p` | Return to Planned with its previous task state. |
+| `h` | Open History, or return to the view where you opened it. |
 | `/` | Edit the task filter. |
-| Esc | Return from scoped tasks to Planned, or cancel the picker. |
+| Esc | Return from a list to All tasks, return from History, or cancel the picker. |
 | Space | Toggle done status. |
 | `c` | Toggle cancelled status. |
-| `d` or Delete | Move a task to Trash. |
-| `r` | Restore a task from Trash. |
-| Alt+Up or Alt+Down | Reorder tasks within their eligible group, or reorder ordinary lists in the picker. |
+| `d` or Delete | Move a task to Trash, or review deleting a list in the picker. |
+| `r` | Restore a task from Trash, or reopen a task in History. |
+| Alt+Up or Alt+Down | Reorder open tasks with the same due date, or ordinary lists in the picker. |
 | F2 | Toggle mouse capture. |
+| F3 | Choose English or Dansk and save the interface language. |
 | F4 | Open plain task text for copying. |
 | F5 | Refresh database contents. |
 | `?` | Open help. Esc closes help. |
@@ -329,7 +398,22 @@ Backspace edits text in an input field. It does not delete a task.
 
 ## Set the language and shortcuts
 
-Create `config.toml` in your profile directory to change the interface.
+Press F3 to open the language picker. Use Up or Down to select English or
+Dansk, then press Enter. The interface changes after Husker saves the choice.
+The next launch uses the same language. Press Esc to cancel without saving.
+
+You can change language while editing a task. Your draft, cursor, and undo
+history stay intact. Language selection also works from task views, the list
+picker, filter and list-name forms, and Help. Close a confirmation or the
+F4 copy view before opening the language picker.
+
+Husker saves the choice to your profile's `config.toml`, or the file selected
+with `--config`. Existing comments and custom shortcuts stay in the file.
+A missing default configuration is created. If saving fails, the picker
+shows an error and keeps the previous language. Esc returns to the unchanged
+screen or draft.
+
+Edit `config.toml` in your profile directory to change shortcuts manually.
 The default profile is `~/.husker`. On Windows, that is normally
 `C:\Users\<your-user-name>\.husker`.
 A missing default configuration uses English and the built-in shortcuts.
@@ -356,6 +440,15 @@ the task editor.
 To copy with Ctrl+Shift+C, add `copy_selection = ["ctrl+shift+c"]` under
 `[keys]`. Set `copy_selection = []` to disable Husker's clipboard shortcut.
 F4 remains available for copying task text through your terminal.
+
+Use `all_tasks` to change the root shortcut, for example
+`all_tasks = ["ctrl+a"]`. The older name `planned` still works for an existing
+override, such as `planned = ["p"]`. Use only one of those two names.
+The All tasks action has no default shortcut. Use Esc to leave a scoped list,
+or choose All tasks in the picker. Neither `a` nor `p` navigates by default.
+The new action names are `history`, `reopen`, `delete_list`, and `language`.
+For example, `delete_list = []` disables removal shortcuts in the picker.
+Under `[keys]`, `language = ["f6"]` changes the language-picker shortcut to F6.
 
 Key strings accept characters such as `q` or `N`, named keys such as `enter`
 or `f2`, and modifiers such as `ctrl+q` or `alt+up`.
@@ -408,7 +501,7 @@ husker restore 1
 ```
 
 `edit` changes only supplied fields. Use `--clear-due` to remove the due date
-and place the task in Sometime:
+and place an open task in Sometime:
 
 ```text
 husker edit 1 --clear-due
@@ -439,7 +532,7 @@ Every command accepts `--profile DIRECTORY` to select its task collection.
 
 ## Update an existing profile
 
-Back up your profile before updating an earlier version to 0.7.0.
+Back up your profile before updating an earlier version to 0.8.0.
 Follow [Back up your tasks](#back-up-your-tasks), then keep every old Husker
 process closed, including MCP clients, until the upgrade is complete.
 
@@ -449,7 +542,7 @@ Install the current version from the repository:
 cargo install --path . --locked
 ```
 
-Version 0.7.0 uses the same database schema as versions 0.4.0 through 0.6.0. Those profiles
+Version 0.8.0 uses the same database schema as versions 0.4.0 through 0.7.0. Those profiles
 need no database conversion, and their saved tasks and list order stay unchanged.
 If an input action already uses Ctrl+C, rebind or disable `copy_selection`
 in `[keys]` to avoid a shortcut conflict. For example, set `copy_selection = []`
@@ -478,9 +571,9 @@ Existing description text stays intact. Existing tags become `#words` in a
 final description paragraph.
 Tasks that gain this text get a new version, so an agent must read them again
 before saving an edit prepared before the upgrade.
-Readiness is removed, so every task without a date appears in Sometime.
+Readiness is removed, so open tasks without dates appear in Sometime.
 Older completed tasks have no recorded completion date and stay hidden from
-the default view. Use `s:done`, `s:cancelled`, or `s:all` to find them.
+the default view. Open History with `h`, or use `s:done`, `s:cancelled`, or `s:all` to find them.
 
 Update scripts that use `--tag`, `--clear-tags`, `--anytime`, or `--readiness`.
 Those options now produce argument errors. Write `#words` in the title or

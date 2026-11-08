@@ -38,7 +38,43 @@ pub fn tr(language: Language, key: &str) -> &'static str {
         "lists" => ("Lists", "Lister"),
         "all_tasks" => ("All tasks", "Alle opgaver"),
         "list_picker" => ("Choose a list", "Vælg en liste"),
-        "planned" => ("Planned", "Planlagt"),
+        "history" => ("History", "Historik"),
+        "language_picker" => ("Choose a language", "Vælg et sprog"),
+        "language_saved" => ("Language saved.", "Sproget er gemt."),
+        "action_language" => ("Language", "Sprog"),
+        "done_today" => ("Done today", "Udført i dag"),
+        "cancelled_today" => ("Cancelled today", "Annulleret i dag"),
+        "yesterday" => ("Yesterday", "I går"),
+        "unknown_date" => ("Unknown date", "Ukendt dato"),
+        "no_history" => (
+            "No completed or cancelled tasks",
+            "Ingen udførte eller annullerede opgaver",
+        ),
+        "default_list" => ("default", "standard"),
+        "delete_list_confirm" => ("Delete this list?", "Slet denne liste?"),
+        "list_delete_hint" => (
+            "Tasks keep their status and dates. Only the list is removed.",
+            "Opgaverne beholder status og datoer. Kun listen fjernes.",
+        ),
+        "move_tasks_to" => ("Move all tasks to", "Flyt alle opgaver til"),
+        "unfinished" => ("Unfinished", "Uafsluttede"),
+        "trashed" => ("In Trash", "I papirkurven"),
+        "list_deleted" => (
+            "List deleted. Tasks kept in the default list.",
+            "Listen er slettet. Opgaverne er bevaret i standardlisten.",
+        ),
+        "list_delete_changed" => (
+            "The list changed. Review the counts and confirm again.",
+            "Listen er ændret. Kontrollér antallene, og bekræft igen.",
+        ),
+        "list_delete_missing" => (
+            "This list was deleted elsewhere.",
+            "Listen blev slettet et andet sted.",
+        ),
+        "default_list_cannot_delete" => (
+            "The default list cannot be deleted.",
+            "Standardlisten kan ikke slettes.",
+        ),
         "trash" => ("Trash", "Papirkurv"),
         "no_tasks" => ("No tasks", "Ingen opgaver"),
         "no_lists" => ("No lists", "Ingen lister"),
@@ -70,6 +106,7 @@ pub fn tr(language: Language, key: &str) -> &'static str {
         "action_copy_selection" => ("Copy selected text", "Kopiér markeret tekst"),
         "created" => ("Created", "Oprettet"),
         "restored" => ("Restored", "Gendannet"),
+        "reopened" => ("Reopened", "Genåbnet"),
         "deleted" => ("Moved to Trash", "Flyttet til papirkurven"),
         "updated" => ("Updated", "Opdateret"),
         "invalid_date" => (
@@ -143,7 +180,10 @@ pub fn tr(language: Language, key: &str) -> &'static str {
         "action_new_list" => ("New list", "Ny liste"),
         "action_rename_list" => ("Rename list", "Omdøb liste"),
         "action_lists" => ("Choose a list", "Vælg en liste"),
-        "action_planned" => ("Show planned tasks", "Vis planlagte opgaver"),
+        "action_all_tasks" => ("Show all tasks", "Vis alle opgaver"),
+        "action_history" => ("Show history", "Vis historik"),
+        "action_reopen" => ("Reopen task", "Genåbn opgave"),
+        "action_delete_list" => ("Delete list", "Slet liste"),
         "action_filter" => ("Filter tasks", "Filtrer opgaver"),
         "action_toggle_done" => ("Toggle done", "Skift udført"),
         "action_toggle_cancelled" => ("Toggle cancelled", "Skift annulleret"),
@@ -191,6 +231,15 @@ pub fn error_message(language: Language, error: &anyhow::Error) -> String {
 fn danish_error(message: &str) -> String {
     let translated = match message {
         "A list name cannot be empty." => "Et listenavn må ikke være tomt.",
+        "The default list cannot be deleted." => "Standardlisten kan ikke slettes.",
+        "Only open tasks can be reordered." => "Kun åbne opgaver kan ændre rækkefølge.",
+        "The configuration file is read-only." => "Konfigurationsfilen er skrivebeskyttet.",
+        "The configuration changed while saving. Try again." => {
+            "Konfigurationen blev ændret under lagring. Prøv igen."
+        }
+        "A list-scoped store cannot create, rename, reorder, or delete lists." => {
+            "Et lager begrænset til én liste kan ikke oprette, omdøbe, flytte eller slette lister."
+        }
         "A task title cannot be empty." => "En opgavetitel må ikke være tom.",
         "Selected text contains a null character." => "Den markerede tekst indeholder et nultegn.",
         "A list with that name already exists." => "Der findes allerede en liste med det navn.",
@@ -223,6 +272,9 @@ fn danish_error(message: &str) -> String {
         " changed in another process. Reload it before saving.",
     ) {
         return format!("Opgave {id} er ændret i en anden proces. Indlæs den igen, før du gemmer.");
+    }
+    if let Some(path) = between(message, "Could not save language to configuration '", "'.") {
+        return format!("Kunne ikke gemme sproget i konfigurationen '{path}'.");
     }
     if let Some(id) = between(message, "Task ", " does not exist.") {
         return format!("Opgave {id} findes ikke.");

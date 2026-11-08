@@ -205,7 +205,7 @@ fn noninteractive_default_launch_fails_without_creating_a_profile() {
 }
 
 #[test]
-fn planning_results_put_open_tasks_first_within_each_group() {
+fn planning_results_put_open_due_groups_before_closed_sections() {
     let directory = tempfile::tempdir().unwrap();
     let profile = directory.path();
     let closed = json(profile, &["add", "Closed earlier", "--due", "2000-01-01"]);
@@ -225,8 +225,8 @@ fn planning_results_put_open_tasks_first_within_each_group() {
         ids,
         [
             open["id"].clone(),
-            closed["id"].clone(),
             sometime_open["id"].clone(),
+            closed["id"].clone(),
             sometime_closed["id"].clone()
         ]
     );

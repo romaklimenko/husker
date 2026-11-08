@@ -11,6 +11,26 @@ use crate::model::{Status, Task, TaskInput, TaskList};
 const TASK_COLUMNS: &str =
     "id, list_id, title, description, due, status, status_changed_on, deleted, position, version";
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ListDeletionPreview {
+    pub list_id: i64,
+    pub list_name: String,
+    pub destination_id: i64,
+    pub destination_name: String,
+    pub open_count: usize,
+    pub done_count: usize,
+    pub cancelled_count: usize,
+    pub trashed_count: usize,
+    task_versions: Vec<(i64, i64)>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ListDeletionOutcome {
+    Deleted,
+    Changed(ListDeletionPreview),
+    Missing,
+}
+
 pub struct Store {
     connection: Connection,
     list_scope: Option<i64>,
@@ -152,7 +172,7 @@ impl Store {
         self.require_writable()?;
         ensure!(
             self.list_scope.is_none(),
-            "A list-scoped store cannot create, rename, or reorder lists."
+            "A list-scoped store cannot create, rename, reorder, or delete lists."
         );
         Ok(())
     }
@@ -281,6 +301,35 @@ impl Store {
         )?;
         transaction.commit()?;
         Ok(())
+    }
+
+    pub fn preview_list_deletion(&self, id: i64) -> Result<ListDeletionPreview> {
+        self.require_list_mutation()?;
+        let transaction = self.connection.unchecked_transaction()?;
+        let preview = list_deletion_preview(&transaction, id)?
+            .with_context(|| format!("List {id} does not exist."))?;
+        transaction.commit()?;
+        Ok(preview)
+    }
+
+    pub fn delete_list(&mut self, preview: &ListDeletionPreview) -> Result<ListDeletionOutcome> {
+        self.require_list_mutation()?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let Some(current) = list_deletion_preview(&transaction, preview.list_id)? else {
+            return Ok(ListDeletionOutcome::Missing);
+        };
+        if &current != preview {
+            return Ok(ListDeletionOutcome::Changed(current));
+        }
+        transaction.execute(
+            "UPDATE tasks SET list_id = ?1, version = version + 1 WHERE list_id = ?2",
+            params![current.destination_id, current.list_id],
+        )?;
+        transaction.execute("DELETE FROM lists WHERE id = ?1", [current.list_id])?;
+        transaction.commit()?;
+        Ok(ListDeletionOutcome::Deleted)
     }
 
     pub fn create_task(&mut self, input: &TaskInput) -> Result<Task> {
@@ -413,8 +462,8 @@ impl Store {
             "Reorder tasks within the same date or undated group."
         );
         ensure!(
-            (stored_first.status == Status::Open) == (stored_second.status == Status::Open),
-            "Reorder tasks within the same open or closed category."
+            stored_first.status == Status::Open && stored_second.status == Status::Open,
+            "Only open tasks can be reordered."
         );
         transaction.execute(
             "UPDATE tasks SET position = ?1, version = version + 1 WHERE id = ?2",
@@ -427,6 +476,52 @@ impl Store {
         transaction.commit()?;
         Ok(())
     }
+}
+
+fn list_deletion_preview(connection: &Connection, id: i64) -> Result<Option<ListDeletionPreview>> {
+    let Some(list_name) = connection
+        .query_row("SELECT name FROM lists WHERE id = ?1", [id], |row| {
+            row.get::<_, String>(0)
+        })
+        .optional()?
+    else {
+        return Ok(None);
+    };
+    let (destination_id, destination_name): (i64, String) = connection.query_row(
+        "SELECT id, name FROM lists ORDER BY id LIMIT 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    ensure!(id != destination_id, "The default list cannot be deleted.");
+    let mut preview = ListDeletionPreview {
+        list_id: id,
+        list_name,
+        destination_id,
+        destination_name,
+        open_count: 0,
+        done_count: 0,
+        cancelled_count: 0,
+        trashed_count: 0,
+        task_versions: Vec::new(),
+    };
+    let mut statement = connection
+        .prepare("SELECT id, version, status, deleted FROM tasks WHERE list_id = ?1 ORDER BY id")?;
+    let mut rows = statement.query([id])?;
+    while let Some(row) = rows.next()? {
+        preview.task_versions.push((row.get(0)?, row.get(1)?));
+        let status: String = row.get(2)?;
+        let deleted: bool = row.get(3)?;
+        if deleted {
+            preview.trashed_count += 1;
+        } else {
+            match status.parse::<Status>()? {
+                Status::Open => preview.open_count += 1,
+                Status::Done => preview.done_count += 1,
+                Status::Cancelled => preview.cancelled_count += 1,
+            }
+        }
+    }
+    Ok(Some(preview))
 }
 
 fn require_current_schema(version: i64) -> Result<()> {
@@ -891,8 +986,9 @@ mod tests {
         let neighbor = store
             .set_status_on(neighbor.id, neighbor.version, Status::Done, today)
             .unwrap();
-        store.swap_positions(&task, &neighbor).unwrap();
-        let task = store.task(task.id).unwrap();
+        assert!(store.swap_positions(&task, &neighbor).is_err());
+        assert_eq!(store.task(task.id).unwrap(), task);
+        assert_eq!(store.task(neighbor.id).unwrap(), neighbor);
         assert_eq!(task.status_changed_on, Some(today));
         let task = store
             .set_status_on(task.id, task.version, Status::Cancelled, tomorrow)
@@ -906,6 +1002,13 @@ mod tests {
             .set_status_on(task.id, task.version, Status::Open, tomorrow)
             .unwrap();
         assert_eq!(task.status_changed_on, None);
+        let neighbor = store
+            .set_status_on(neighbor.id, neighbor.version, Status::Open, tomorrow)
+            .unwrap();
+        store.swap_positions(&task, &neighbor).unwrap();
+        let task = store.task(task.id).unwrap();
+        assert_eq!(task.status_changed_on, None);
+        assert_eq!(store.task(neighbor.id).unwrap().status_changed_on, None);
         let task = store
             .set_status_on(task.id, task.version, Status::Done, tomorrow)
             .unwrap();
@@ -1077,6 +1180,328 @@ mod tests {
     }
 
     #[test]
+    fn list_deletion_preserves_all_tasks_and_invalidates_old_versions() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.db");
+        let mut store = Store::open(&path).unwrap();
+        store.rename_list(1, "Personal").unwrap();
+        let work = store.create_list("Work").unwrap();
+        let other = store.create_list("Other").unwrap();
+        let untouched = store.create_task(&input("Already in Personal")).unwrap();
+        let today = NaiveDate::from_ymd_opt(2026, 11, 8).unwrap();
+        let mut source_tasks = Vec::new();
+        for (index, (status, deleted)) in [
+            (Status::Open, false),
+            (Status::Open, false),
+            (Status::Done, false),
+            (Status::Cancelled, false),
+            (Status::Open, true),
+            (Status::Done, true),
+            (Status::Cancelled, true),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut fields = input(&format!("Task {index}"));
+            fields.list_id = work.id;
+            fields.description = "Keep æbler\nand #shopping".into();
+            fields.due = Some(today);
+            let mut task = store.create_task(&fields).unwrap();
+            if status != Status::Open {
+                task = store
+                    .set_status_on(task.id, task.version, status, today)
+                    .unwrap();
+            }
+            if deleted {
+                task = store.set_deleted(task.id, task.version, true).unwrap();
+            }
+            source_tasks.push(task);
+        }
+        let preview = store.preview_list_deletion(work.id).unwrap();
+        assert_eq!(preview.list_name, "Work");
+        assert_eq!(preview.destination_id, 1);
+        assert_eq!(preview.destination_name, "Personal");
+        assert_eq!(
+            (
+                preview.open_count,
+                preview.done_count,
+                preview.cancelled_count,
+                preview.trashed_count,
+            ),
+            (2, 1, 1, 3)
+        );
+        assert_eq!(
+            store.delete_list(&preview).unwrap(),
+            ListDeletionOutcome::Deleted
+        );
+        assert_eq!(
+            store
+                .lists()
+                .unwrap()
+                .iter()
+                .map(|list| list.id)
+                .collect::<Vec<_>>(),
+            [1, other.id]
+        );
+        assert_eq!(store.lists().unwrap()[0].count, 3);
+        assert_eq!(store.task(untouched.id).unwrap(), untouched);
+        for original in &source_tasks {
+            let mut expected = original.clone();
+            expected.list_id = 1;
+            expected.version += 1;
+            assert_eq!(store.task(original.id).unwrap(), expected);
+            assert!(
+                store
+                    .update_task(original.id, original.version, &TaskInput::from(original))
+                    .unwrap_err()
+                    .to_string()
+                    .contains("changed in another process")
+            );
+        }
+        drop(store);
+        let mut store = Store::open(&path).unwrap();
+        let trashed = store.task(source_tasks[5].id).unwrap();
+        assert!(trashed.deleted);
+        let restored = store
+            .set_deleted(trashed.id, trashed.version, false)
+            .unwrap();
+        assert_eq!(restored.list_id, 1);
+        assert_eq!(restored.status, Status::Done);
+        assert_eq!(restored.status_changed_on, Some(today));
+        let schema: i64 = store
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(schema, 3);
+    }
+
+    #[test]
+    fn list_deletion_reconfirms_names_and_task_edits() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.db");
+        let mut store = Store::open(&path).unwrap();
+        let work = store.create_list("Work").unwrap();
+        let mut fields = input("Original");
+        fields.list_id = work.id;
+        let original = store.create_task(&fields).unwrap();
+        let mut external = Store::open(&path).unwrap();
+        let preview = store.preview_list_deletion(work.id).unwrap();
+        external.rename_list(work.id, "Project").unwrap();
+        let ListDeletionOutcome::Changed(renamed) = store.delete_list(&preview).unwrap() else {
+            panic!("Renaming the source must require confirmation again");
+        };
+        assert_eq!(renamed.list_name, "Project");
+        assert_eq!(store.task(original.id).unwrap(), original);
+        external.rename_list(1, "Personal").unwrap();
+        let ListDeletionOutcome::Changed(destination) = store.delete_list(&renamed).unwrap() else {
+            panic!("Renaming the destination must require confirmation again");
+        };
+        assert_eq!(destination.destination_name, "Personal");
+        fields.description = "New content from another process".into();
+        let saved = external
+            .update_task(original.id, original.version, &fields)
+            .unwrap();
+        let ListDeletionOutcome::Changed(edited) = store.delete_list(&destination).unwrap() else {
+            panic!("Editing a task must require confirmation again");
+        };
+        assert_eq!(edited.open_count, destination.open_count);
+        assert_eq!(store.task(original.id).unwrap(), saved);
+        external.create_task(&fields).unwrap();
+        let ListDeletionOutcome::Changed(added) = store.delete_list(&edited).unwrap() else {
+            panic!("Adding a task must require confirmation again");
+        };
+        assert_eq!(added.open_count, 2);
+        assert_eq!(store.tasks().unwrap().len(), 2);
+        assert!(
+            store
+                .tasks()
+                .unwrap()
+                .iter()
+                .all(|task| task.list_id == work.id)
+        );
+        assert_eq!(store.lists().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn list_deletion_detects_replaced_tasks_with_unchanged_counts() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.db");
+        let mut store = Store::open(&path).unwrap();
+        let work = store.create_list("Work").unwrap();
+        let mut fields = input("Original");
+        fields.list_id = work.id;
+        let original = store.create_task(&fields).unwrap();
+        let preview = store.preview_list_deletion(work.id).unwrap();
+        let mut external = Store::open(&path).unwrap();
+        fields.list_id = 1;
+        let moved = external
+            .update_task(original.id, original.version, &fields)
+            .unwrap();
+        fields.list_id = work.id;
+        let replacement = external.create_task(&fields).unwrap();
+        let ListDeletionOutcome::Changed(current) = store.delete_list(&preview).unwrap() else {
+            panic!("Replacing a task must require confirmation even when counts match");
+        };
+        assert_eq!(current.open_count, preview.open_count);
+        assert_eq!(store.task(original.id).unwrap(), moved);
+        assert_eq!(store.task(replacement.id).unwrap(), replacement);
+        assert_eq!(store.lists().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn list_deletion_rolls_back_when_deleting_metadata_fails() {
+        let mut store = memory_store();
+        let work = store.create_list("Work").unwrap();
+        let mut fields = input("Keep this task");
+        fields.list_id = work.id;
+        store.create_task(&fields).unwrap();
+        let tasks_before = store.tasks().unwrap();
+        let lists_before = store.lists().unwrap();
+        let preview = store.preview_list_deletion(work.id).unwrap();
+        store
+            .connection
+            .execute_batch(
+                "CREATE TRIGGER block_list_deletion BEFORE DELETE ON lists
+             BEGIN SELECT RAISE(ABORT, 'test list deletion failure'); END;",
+            )
+            .unwrap();
+        assert!(store.delete_list(&preview).is_err());
+        assert_eq!(store.tasks().unwrap(), tasks_before);
+        assert_eq!(store.lists().unwrap(), lists_before);
+        store
+            .connection
+            .execute_batch("DROP TRIGGER block_list_deletion")
+            .unwrap();
+        assert_eq!(
+            store.delete_list(&preview).unwrap(),
+            ListDeletionOutcome::Deleted
+        );
+    }
+
+    #[test]
+    fn list_deletion_protects_the_default_and_restricted_stores() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.db");
+        let mut store = Store::open(&path).unwrap();
+        let work = store.create_list("Work").unwrap();
+        store.rename_list(1, "Personal").unwrap();
+        let preview = store.preview_list_deletion(work.id).unwrap();
+        let lists_before = store.lists().unwrap();
+        assert_eq!(
+            store.preview_list_deletion(1).unwrap_err().to_string(),
+            "The default list cannot be deleted."
+        );
+        assert!(store.preview_list_deletion(999).is_err());
+        let mut default_attempt = preview.clone();
+        default_attempt.list_id = 1;
+        assert_eq!(
+            store.delete_list(&default_attempt).unwrap_err().to_string(),
+            "The default list cannot be deleted."
+        );
+        for (scope, read_only) in [(Some("Work"), false), (Some("Work"), true), (None, true)] {
+            let mut restricted = Store::open_for_mcp(&path, scope, read_only).unwrap();
+            let expected = if read_only {
+                "This store is read-only."
+            } else {
+                "A list-scoped store cannot create, rename, reorder, or delete lists."
+            };
+            for id in [work.id, 1, 999] {
+                assert_eq!(
+                    restricted
+                        .preview_list_deletion(id)
+                        .unwrap_err()
+                        .to_string(),
+                    expected
+                );
+            }
+            assert_eq!(
+                restricted.delete_list(&preview).unwrap_err().to_string(),
+                expected
+            );
+        }
+        assert_eq!(store.lists().unwrap(), lists_before);
+        assert!(store.tasks().unwrap().is_empty());
+        assert_eq!(
+            store.delete_list(&preview).unwrap(),
+            ListDeletionOutcome::Deleted
+        );
+        assert_eq!(
+            store.delete_list(&preview).unwrap(),
+            ListDeletionOutcome::Missing
+        );
+        assert_eq!(store.lists().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn removed_list_scopes_do_not_follow_transferred_tasks_or_reused_names() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.db");
+        let mut store = Store::open(&path).unwrap();
+        let work = store.create_list("Work").unwrap();
+        let mut fields = input("Transferred task");
+        fields.list_id = work.id;
+        let original = store.create_task(&fields).unwrap();
+        let trashed = store.create_task(&fields).unwrap();
+        store
+            .set_deleted(trashed.id, trashed.version, true)
+            .unwrap();
+        let mut scoped = Store::open_for_mcp(&path, Some("Work"), false).unwrap();
+        let readonly = Store::open_for_mcp(&path, Some("Work"), true).unwrap();
+        let preview = store.preview_list_deletion(work.id).unwrap();
+        assert_eq!(
+            store.delete_list(&preview).unwrap(),
+            ListDeletionOutcome::Deleted
+        );
+        let replacement = store.create_list("Work").unwrap();
+        assert_ne!(replacement.id, work.id);
+        fields.list_id = replacement.id;
+        let replacement_task = store.create_task(&fields).unwrap();
+        for connection in [&scoped, &readonly] {
+            assert_eq!(connection.list_scope(), Some(work.id));
+            assert!(connection.lists().unwrap().is_empty());
+            assert!(connection.tasks().unwrap().is_empty());
+            assert!(connection.default_list_id().is_err());
+            for id in [original.id, trashed.id, replacement_task.id, 999] {
+                assert_eq!(
+                    connection.task(id).unwrap_err().to_string(),
+                    "Task not found."
+                );
+            }
+        }
+        let transferred = store.task(original.id).unwrap();
+        for version in [original.version, transferred.version] {
+            assert_eq!(
+                scoped
+                    .update_task(original.id, version, &TaskInput::from(&original))
+                    .unwrap_err()
+                    .to_string(),
+                "Task not found."
+            );
+            assert_eq!(
+                scoped
+                    .set_status(original.id, version, Status::Done)
+                    .unwrap_err()
+                    .to_string(),
+                "Task not found."
+            );
+            assert_eq!(
+                scoped
+                    .set_deleted(original.id, version, true)
+                    .unwrap_err()
+                    .to_string(),
+                "Task not found."
+            );
+        }
+        for destination in [work.id, 1, replacement.id] {
+            fields.list_id = destination;
+            assert!(scoped.create_task(&fields).is_err());
+        }
+        assert_eq!(store.task(original.id).unwrap(), transferred);
+        assert_eq!(store.task(replacement_task.id).unwrap(), replacement_task);
+        assert_eq!(store.tasks().unwrap().len(), 3);
+    }
+
+    #[test]
     fn invalid_task_fields_preserve_the_existing_task() {
         let mut store = memory_store();
         let task = store.create_task(&input("Buy milk")).unwrap();
@@ -1182,7 +1607,7 @@ mod tests {
     }
 
     #[test]
-    fn reorder_preserves_open_and_closed_categories() {
+    fn reorder_rejects_every_closed_task_without_changing_either_row() {
         let mut store = memory_store();
         let open = store.create_task(&input("Open")).unwrap();
         let other = store.create_task(&input("Other")).unwrap();
@@ -1195,9 +1620,24 @@ mod tests {
         let cancelled = store
             .set_status(open.id, open.version, Status::Cancelled)
             .unwrap();
-        store.swap_positions(&cancelled, &done).unwrap();
-        assert_eq!(store.task(done.id).unwrap().position, cancelled.position);
-        assert_eq!(store.task(cancelled.id).unwrap().status, Status::Cancelled);
+        assert_eq!(
+            store
+                .swap_positions(&cancelled, &done)
+                .unwrap_err()
+                .to_string(),
+            "Only open tasks can be reordered."
+        );
+        let mut claimed_open = cancelled.clone();
+        claimed_open.status = Status::Open;
+        let mut other_claimed_open = done.clone();
+        other_claimed_open.status = Status::Open;
+        assert!(
+            store
+                .swap_positions(&claimed_open, &other_claimed_open)
+                .is_err()
+        );
+        assert_eq!(store.task(done.id).unwrap(), done);
+        assert_eq!(store.task(cancelled.id).unwrap(), cancelled);
     }
 
     #[test]

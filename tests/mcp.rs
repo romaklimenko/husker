@@ -206,6 +206,67 @@ async fn legacy_client_cannot_read_or_write_outside_its_list() {
 }
 
 #[tokio::test]
+async fn deleted_list_connections_do_not_follow_moved_tasks_or_reused_names() {
+    for discover in [false, true] {
+        let mut fixture = Fixture::new();
+        let client = connect(fixture.path(), &["--list", "Private"], discover).await;
+        let preview = fixture
+            .store
+            .preview_list_deletion(fixture.private)
+            .unwrap();
+        assert_eq!(
+            fixture.store.delete_list(&preview).unwrap(),
+            husker::store::ListDeletionOutcome::Deleted
+        );
+        assert_eq!(fixture.store.task(fixture.visible.id).unwrap().list_id, 1);
+        assert!(
+            data(&client, "list_lists", json!({})).await["lists"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            data(&client, "list_tasks", json!({"query":"s:all"})).await["tasks"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            data(&client, "list_tasks", json!({"trash":true})).await["tasks"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        rejected(&client, "get_task", json!({"id":fixture.visible.id})).await;
+        rejected(&client, "add_task", json!({"title":"Must not go to Inbox"})).await;
+        let replacement = fixture.store.create_list("Private").unwrap();
+        assert_ne!(replacement.id, fixture.private);
+        let task = fixture
+            .store
+            .create_task(&TaskInput {
+                list_id: replacement.id,
+                title: "Replacement list task".into(),
+                ..TaskInput::default()
+            })
+            .unwrap();
+        assert!(
+            data(&client, "list_tasks", json!({"query":"s:all"})).await["tasks"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        rejected(&client, "get_task", json!({"id":task.id})).await;
+        rejected(
+            &client,
+            "add_task",
+            json!({"title":"Cannot follow name", "list_id":replacement.id}),
+        )
+        .await;
+        close(client).await;
+    }
+}
+
+#[tokio::test]
 async fn scoped_pagination_sorts_open_tasks_before_closed_tasks() {
     let mut fixture = Fixture::new();
     fixture

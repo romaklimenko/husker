@@ -87,11 +87,19 @@ impl Query {
         Ok(query)
     }
 
-    fn matches(&self, task: &Task, list_name: &str, trash: bool, today: NaiveDate) -> bool {
+    fn matches(
+        &self,
+        task: &Task,
+        list_name: &str,
+        include_all_statuses: bool,
+        today: NaiveDate,
+    ) -> bool {
         let status_matches = if self.explicit_status {
             self.status.is_none_or(|status| task.status == status)
         } else {
-            trash || task.status == Status::Open || task.status_changed_on == Some(today)
+            include_all_statuses
+                || task.status == Status::Open
+                || task.status_changed_on == Some(today)
         };
         if !status_matches
             || self
@@ -146,6 +154,40 @@ pub fn visible_tasks(
         .collect();
     sort_tasks(&mut visible, today);
     visible
+}
+
+pub fn visible_history(
+    tasks: &[Task],
+    lists: &[TaskList],
+    query: &Query,
+    list_id: Option<i64>,
+    today: NaiveDate,
+) -> Vec<Task> {
+    let mut history = tasks
+        .iter()
+        .filter(|task| {
+            !task.deleted
+                && task.status != Status::Open
+                && list_id.is_none_or(|id| task.list_id == id)
+                && query.matches(
+                    task,
+                    lists
+                        .iter()
+                        .find(|list| list.id == task.list_id)
+                        .map_or("", |list| list.name.as_str()),
+                    true,
+                    today,
+                )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    history.sort_by(|left, right| {
+        right
+            .status_changed_on
+            .cmp(&left.status_changed_on)
+            .then_with(|| right.id.cmp(&left.id))
+    });
+    history
 }
 
 pub fn parse_date(value: &str) -> Result<NaiveDate> {
@@ -255,6 +297,63 @@ mod tests {
     }
 
     #[test]
+    fn history_intersects_scope_filters_and_closed_status_without_trash() {
+        let today = parse_date("2026-11-08").unwrap();
+        let yesterday = today.pred_opt().unwrap();
+        let lists = [
+            TaskList {
+                id: 1,
+                name: "Work".into(),
+                count: 1,
+            },
+            TaskList {
+                id: 2,
+                name: "Other".into(),
+                count: 0,
+            },
+        ];
+        let mut tasks = vec![task(1, "Open")];
+        for (id, list_id, status, changed, deleted, due) in [
+            (2, 1, Status::Done, Some(yesterday), false, None),
+            (3, 1, Status::Cancelled, Some(today), false, Some(yesterday)),
+            (4, 1, Status::Done, Some(today), true, None),
+            (5, 2, Status::Done, Some(yesterday), false, None),
+            (6, 1, Status::Done, None, false, None),
+            (7, 1, Status::Done, Some(today), false, None),
+        ] {
+            let mut value = task(id, "Closed #review");
+            value.list_id = list_id;
+            value.status = status;
+            value.status_changed_on = changed;
+            value.deleted = deleted;
+            value.due = due;
+            tasks.push(value);
+        }
+        let history = |text: &str, scope| {
+            visible_history(&tasks, &lists, &Query::parse(text).unwrap(), scope, today)
+                .iter()
+                .map(|task| task.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(history("", Some(1)), [7, 3, 2, 6]);
+        assert_eq!(history("s:all #review", None), [7, 3, 5, 2, 6]);
+        assert_eq!(history("s:done due:none", Some(1)), [7, 2, 6]);
+        assert_eq!(history("due:overdue", Some(1)), [3]);
+        assert!(history("l:Other", Some(1)).is_empty());
+        assert!(history("s:open", None).is_empty());
+        assert_eq!(history("l:Other", None), [5]);
+        tasks.last_mut().unwrap().status = Status::Open;
+        tasks.last_mut().unwrap().status_changed_on = None;
+        assert_eq!(
+            visible_history(&tasks, &lists, &Query::default(), Some(1), today)
+                .iter()
+                .map(|task| task.id)
+                .collect::<Vec<_>>(),
+            [3, 2, 6]
+        );
+    }
+
+    #[test]
     fn combines_list_phrase_and_literal_hashtags_with_and() {
         let mut first = task(1, "Pay electricity bill");
         first.description = "#Shopping #Monthly".into();
@@ -326,7 +425,7 @@ mod tests {
         assert_eq!(search(&tasks, "s:open", false), [1]);
         assert_eq!(search(&tasks, "s:done", false), [2, 4, 6]);
         assert_eq!(search(&tasks, "s:cancelled", false), [3, 5, 7]);
-        assert_eq!(search(&tasks, "s:all", false), [1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(search(&tasks, "s:all", false), [1, 2, 3, 4, 6, 5, 7]);
         let tomorrow = today + chrono::Duration::days(1);
         let next_day = visible_tasks(&tasks, &[], &Query::default(), None, false, tomorrow);
         assert_eq!(next_day.iter().map(|task| task.id).collect::<Vec<_>>(), [1]);

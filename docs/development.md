@@ -35,10 +35,53 @@ The installed copy does not lock the repository's build executable.
 Close installed Husker processes and disconnect MCP clients before replacing
 the installed copy with `cargo install --path . --locked`.
 
-Use only temporary profiles for migration tests. Starting version 0.7.0
+Use only temporary profiles for migration tests. Starting version 0.8.0
 against a schema version 1 or 2 profile performs a migration on writable access.
-Versions 0.4.0 through 0.7.0 use schema version 3.
+Versions 0.4.0 through 0.8.0 use schema version 3.
 Follow the [upgrade instructions](usage.md#update-an-existing-profile) for a real profile.
+
+## Checks for version 0.8.0
+
+Version 0.8.0 passed these checks on November 8, 2026:
+
+| Check | Result |
+| --- | --- |
+| Unit tests | 149 passed, including finished-task groups, History, list-deletion previews and retention, shortcut compatibility, and language persistence. |
+| CLI integration tests | 8 passed against isolated profiles. |
+| MCP integration tests | 8 passed through child processes. |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.8.0. |
+| OpenSpec | All six capability specs passed strict validation after archiving the lifecycle change. No active changes remain. |
+| Guide examples | Verified default and overridden shortcuts, duplicate root-action rejection, old and unknown-date completions, shared ordering, due filters, clearing dates, reopening, Trash, list JSON, and MCP help. |
+| Documentation | All 15 local links and anchors resolved. All 7 JSON and TOML examples parsed. |
+
+The CLI guide checks used a new scratch profile. Two fixture completion dates
+were set to yesterday and unknown to verify retained records without waiting
+for another day. Explicit status filters returned both records. Default
+results excluded them. Clearing a completed task's due date preserved its
+status and status-change date.
+
+Interactive checks ran in an 80 by 24 Windows pseudo-terminal with isolated
+profiles. The initial English view displayed All tasks, Today, Done today,
+and Cancelled today. F3 opened the language picker. Choosing Dansk changed
+labels and date text immediately and created `config.toml` with `language = "da"`.
+Quitting and reopening Husker retained Danish. History opened with `h` and
+displayed localized labels.
+
+The Danish list-deletion dialog showed one unfinished task, one cancelled
+task, and one task in Trash, with No selected initially. Confirming deletion
+moved all three tasks to Inbox. CLI reads confirmed their statuses, dates,
+and Trash flags were preserved and their versions increased.
+
+A separate run used an explicit `--config shared.toml` file.
+F3 switched from English to Danish while a task editor contained the unsaved
+title `Preserved draft æøå`. The editor returned with that exact draft.
+The shared file changed only its language value and retained both test
+comments and the Ctrl+Q override. The profile's default configuration stayed
+unchanged. Ctrl+S saved the exact Unicode title, and Ctrl+Q quit.
+
+Linux and macOS were not tested in this session.
 
 ## Checks for version 0.7.0
 

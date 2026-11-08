@@ -75,8 +75,9 @@ Failures SHALL return a nonzero exit code and write a message to stderr without 
 ### Requirement: Validate dates before writing
 
 Husker SHALL accept due dates only in `YYYY-MM-DD` format when the date exists.
-`edit ID --clear-due` SHALL remove the date and place the task in the planning group for tasks without due dates.
-The terminal names that group Sometime in English and Engang in Danish. Plain CLI output retains the stable `undated` date token.
+`edit ID --clear-due` SHALL remove the date and assign the undated due bucket.
+Open tasks appear in the no-date display group. Done and cancelled tasks remain in their status sections, as defined by planning-search.
+The terminal names the no-date group Sometime in English and Engang in Danish. Plain CLI output retains the stable `undated` date token.
 Supplying both `--due` and `--clear-due` is an argument error.
 
 #### Scenario: Invalid calendar date
@@ -86,9 +87,15 @@ Supplying both `--due` and `--clear-due` is an argument error.
 
 #### Scenario: Remove a due date
 
-- **WHEN** `husker edit ID --clear-due` runs for a dated task
+- **WHEN** `husker edit ID --clear-due` runs for a dated open task
 - **THEN** the task has no due date and appears under Sometime in the English terminal interface
 - **AND** plain command output uses `undated` and JSON output contains a null `due` value
+
+#### Scenario: Remove a completed task's due date
+
+- **WHEN** `husker edit ID --clear-due` runs for a task completed today
+- **THEN** its due date becomes null and its status and status-change date remain unchanged
+- **AND** the terminal shows it in Done today while plain CLI output uses the `undated` date token
 
 ### Requirement: Explicit configuration inspection
 

@@ -7,7 +7,7 @@ The terminal interface and command line use these same rules. Task storage owns 
 ## Requirements
 ### Requirement: Date groups
 
-Husker SHALL assign every task to exactly one planning group from its due date and the current local calendar date.
+Husker SHALL classify every task into exactly one due-date bucket from its stored due date and the current local calendar date.
 
 | Group | Filter value | Condition |
 | --- | --- | --- |
@@ -21,6 +21,7 @@ Husker SHALL assign every task to exactly one planning group from its due date a
 The terminal displays the undated group as `Sometime` in English and `Engang` in Danish.
 The internal group key remains `undated`. Both `due:none` and `due:undated` match tasks without due dates.
 The display names do not add `due:sometime` or `due:engang` filter values.
+Open tasks use these buckets as display groups. Closed tasks use the status sections defined by Planning order.
 Status and Trash visibility follow the combined-filter rules and selected view.
 Date arithmetic uses calendar days, including across months and years.
 
@@ -32,43 +33,52 @@ Date arithmetic uses calendar days, including across months and years.
 #### Scenario: Classify undated tasks
 
 - **WHEN** a task has no due date
-- **THEN** the task belongs to the group displayed as Sometime in English and Engang in Danish
+- **THEN** the task has the undated due bucket, displayed as Sometime in English and Engang in Danish when open
 - **AND** both `due:none` and `due:undated` match that task
 
 ### Requirement: Planning order
 
-Husker SHALL sort tasks by planning group, then open or closed status category, then ascending due date, saved manual position, and task ID.
-Planning groups appear in the order Overdue, Today, Tomorrow, Soon, Next, and Sometime.
-Within each group, open tasks precede closed tasks.
-Done and cancelled tasks share one closed category and do not receive separate status ordering.
-Tasks in the same status category sort by due date before manual position. Task IDs break remaining ties.
-All undated tasks remain after dated groups, regardless of status or manual position.
-Filtering changes which tasks appear without changing this ordering among the returned tasks.
+Husker SHALL sort ordinary task results using open due-date groups followed by closed-status groups.
+This order is shared by terminal task views, CLI task searches, and MCP task searches.
 
-#### Scenario: Keep open tasks first within Soon
+| Group | Contents |
+| --- | --- |
+| Overdue, Today, Tomorrow, Soon, Next, Sometime | Open tasks, classified by the existing due-date rules. |
+| Done today | Done tasks whose status_changed_on is today. |
+| Cancelled today | Cancelled tasks whose status_changed_on is today. |
+| Done | Other visible done tasks, including unknown status dates. |
+| Cancelled | Other visible cancelled tasks, including unknown status dates. |
 
-- **WHEN** today is `2026-11-08`, an open task is due `2026-11-15`, and a visible done task is due `2026-11-10`
-- **THEN** both tasks appear in Soon with the open task first
+Open tasks sort by ascending due date, manual position, and task ID within their group.
+Closed tasks sort by status_changed_on descending, then task ID descending within their group. Unknown dates follow known dates.
+Grouping never changes a stored due date or the meaning of a due filter.
+Filtering changes which tasks appear without changing this order among the returned tasks.
+Default visibility still excludes older closed tasks. Explicit status filters can include them.
 
-#### Scenario: Keep planning groups ahead of status
+#### Scenario: Keep open work before completed overdue work
 
-- **WHEN** today is `2026-11-08`, a visible done task is due `2026-11-07`, and an open task is due today
-- **THEN** the done task appears in Overdue before the open task in Today
+- **WHEN** an undated open task and a task completed today with an overdue due date are visible
+- **THEN** the open task appears in Sometime before the completed task in Done today
 
-#### Scenario: Keep dates ahead of manual positions within one category
+#### Scenario: Group an undated completion today
 
-- **WHEN** two open tasks are due `2026-11-10` and `2026-11-11`
-- **THEN** the task due `2026-11-10` appears first regardless of their saved manual positions
+- **WHEN** a task without a due date is marked done today
+- **THEN** it appears in Done today and still matches due:none
 
-#### Scenario: Combine closed statuses
+#### Scenario: Keep dates ahead of manual positions for open work
 
-- **WHEN** a cancelled task is due `2026-11-10` and a done task is due `2026-11-11` and both are visible in Soon
-- **THEN** the cancelled task appears first because both tasks belong to the closed category
+- **WHEN** two open tasks are due on consecutive dates within Soon
+- **THEN** the earlier due task appears first regardless of manual position
 
-#### Scenario: Put undated tasks last
+#### Scenario: Separate closed statuses
 
-- **WHEN** task 1 is undated and task 2 is due on `2027-01-01`
-- **THEN** task 2 appears before task 1 regardless of their statuses or manual positions
+- **WHEN** done and cancelled tasks have status dates equal to today
+- **THEN** done tasks appear in Done today and cancelled tasks appear in Cancelled today
+
+#### Scenario: Find older and undated completions
+
+- **WHEN** an explicit status filter includes a task completed yesterday and a completed task with an unknown status date
+- **THEN** both appear in Done, with the known-date task first
 
 ### Requirement: Combined filters
 
@@ -79,7 +89,7 @@ Husker SHALL require every filter term to match a task.
 | `l:private` | The list name equals `private`. |
 | `milk` | The title or description contains `milk`. |
 | `#shopping` | The title or description contains the literal text `#shopping`. |
-| `due:today` | The task belongs to Today. |
+| `due:today` | The stored due date is today. |
 | `due:2026-11-08` | The due date equals `2026-11-08`. |
 | `due:none` or `due:undated` | The task has no due date. |
 | `s:done` | The task status is done. |
@@ -96,9 +106,9 @@ Date groups accept the filter values in the date-groups table.
 | `cancelled` | The task is cancelled, regardless of cancellation date. |
 | `all` | The task has any status. |
 
-Without `s:`, results outside Trash include open tasks and tasks whose current done or cancelled status has `status_changed_on` equal to today.
+Without `s:`, ordinary task results outside History and Trash include open tasks and tasks whose current done or cancelled status has `status_changed_on` equal to today.
 An unknown status-change date does not count as today.
-Without `s:`, results inside Trash include every status.
+Without `s:`, results inside Trash include every status. History uses the closed-record default defined below.
 Explicit status filters replace these defaults.
 Filters never change whether the containing view includes Trash.
 
@@ -173,3 +183,35 @@ Date values use the exact `YYYY-MM-DD` form.
 
 - **WHEN** the query is `due:2026-02-30`
 - **THEN** parsing returns an invalid-date error
+
+### Requirement: Search current closed-task history
+
+Husker SHALL provide History results containing current done and cancelled tasks outside Trash, restricted to the selected ordinary list when one is selected.
+History applies the existing text, list, due, and status filters as additional restrictions.
+Without a status filter, History includes both closed statuses on all dates.
+Explicit s:all includes both closed statuses; s:open returns no History records.
+Due filters continue to inspect stored due dates, not status dates or display headings.
+History sorts by status_changed_on descending, then task ID descending, with unknown dates last.
+History reads current task records and does not invent prior edits or status events.
+Reopening removes the task from History because its current status becomes open.
+
+#### Scenario: Retrieve old completions in a list
+
+- **WHEN** History is opened for Work with an empty query
+- **THEN** it contains Work's currently done and cancelled non-Trash tasks, including records from earlier dates
+- **AND** it excludes open tasks and tasks belonging to other lists
+
+#### Scenario: Combine due and status history filters
+
+- **WHEN** the History query is s:done due:none
+- **THEN** only currently done tasks without due dates remain, regardless of completion date
+
+#### Scenario: Preserve unknown completion dates
+
+- **WHEN** a legacy completed task has no status_changed_on value
+- **THEN** History places it after known-date records without assigning a fabricated date
+
+#### Scenario: Resolve same-day ties
+
+- **WHEN** tasks 12 and 15 have the same status date
+- **THEN** History places task 15 before task 12 without claiming an exact completion-time order
