@@ -50,58 +50,135 @@ The restriction applies to this MCP connection.
 An agent with separate shell or filesystem access can still open the same task database through those tools.
 Another unrestricted Husker connection also gives access to the other lists.
 
-## Connect Codex
+## Use one installation across projects
 
-Run this command in PowerShell to register access to `Private` in your default profile:
+Install Husker once and configure each project to pass its own `--list`.
+For this example, create any lists you do not already have:
 
-```powershell
-codex mcp add husker-private -- "$env:USERPROFILE\.cargo\bin\husker.exe" mcp --list Private
-codex mcp list
+```text
+husker list-add Private
+husker list-add Work
 ```
 
-The executable path assumes Cargo's default installation directory.
-If you installed Husker elsewhere, replace that path with the absolute path to `husker.exe`.
-For Bash on macOS or Linux, use this command instead:
+| Project directory | Server command |
+| --- | --- |
+| `project-a` | `husker mcp --list Private` |
+| `project-b` | `husker mcp --list Work` |
 
-```bash
-codex mcp add husker-private -- "$HOME/.cargo/bin/husker" mcp --list Private
-codex mcp list
+Both clients can run at the same time. Each starts a separate Husker process
+from the same installed executable. Both use `~/.husker/tasks.db` unless you
+choose a [different profile](#select-a-different-profile).
+Each process enforces its own list restriction. The terminal can stay open too.
+
+The examples below use `husker` from the client's `PATH`.
+If the client cannot find it, use the installed executable's absolute path.
+Project configuration selects where a connection is available. Husker's
+`--list` selects which tasks that connection can access.
+
+## Connect Claude Code for one project
+
+Run this command from the project directory to keep the registration private
+to you and available only in that project:
+
+```text
+claude mcp add --transport stdio --scope local husker-project -- husker mcp --list Private
 ```
 
-Start a new Codex session and use `/mcp` to inspect the connection.
-Codex records everything after `--` as the server command and its arguments.
-See the [Codex MCP guide](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) for client settings.
+Claude stores this local registration under the project's path in
+`~/.claude.json`. To share the setup in the repository instead, use project scope:
 
-## Connect Claude Code
-
-Run this command in PowerShell to register the same list in Claude Code:
-
-```powershell
-claude mcp add --transport stdio --scope user husker-private -- "$env:USERPROFILE\.cargo\bin\husker.exe" mcp --list Private
-claude mcp list
+```text
+claude mcp add --transport stdio --scope project husker-project -- husker mcp --list Private
 ```
 
-Replace the executable path if you installed Husker elsewhere.
-For Bash on macOS or Linux:
+Project scope writes `.mcp.json` at the project root. You can also create or
+merge this entry into that file:
 
-```bash
-claude mcp add --transport stdio --scope user husker-private -- "$HOME/.cargo/bin/husker" mcp --list Private
-claude mcp list
+```json
+{
+  "mcpServers": {
+    "husker-project": {
+      "type": "stdio",
+      "command": "husker",
+      "args": ["mcp", "--list", "Private"]
+    }
+  }
+}
 ```
 
-`--scope user` makes the connection available to you across projects.
-Use `--scope local` instead to keep the client registration local to the current project.
-This client setting is separate from Husker's `--list` task restriction.
-Start a new Claude Code session and use `/mcp` to inspect the connection.
-See the [Claude Code MCP guide](https://code.claude.com/docs/en/mcp) for client settings.
+Use `Work` in the second project's `args`. Commit `.mcp.json` when you want
+teammates to use the same setup. Each teammate needs Husker and that list in
+their own profile. The file does not share your task database.
+
+On Windows, the default Cargo installation also supports this command value:
+`"command": "${USERPROFILE}/.cargo/bin/husker.exe"`.
+Claude expands `${USERPROFILE}` from the environment.
+See [Claude Code's MCP guide](https://code.claude.com/docs/en/mcp#environment-variable-expansion-in-mcpjson)
+for variable expansion and [installation scopes](https://code.claude.com/docs/en/mcp#mcp-installation-scopes).
+
+Run `claude mcp list` from the project directory, then start Claude and inspect
+`/mcp`. Interactive sessions ask you to approve shared project servers.
+Use either local or project scope for this entry, so a local registration
+does not override a later edit to the shared file.
+
+## Connect Codex for one project
+
+Create or update `.codex/config.toml` in the project directory:
+
+```toml
+[mcp_servers.husker-project]
+command = "husker"
+args = ["mcp", "--list", "Private"]
+```
+
+Use `Work` in the second project's `args`. If Husker is not on the client's
+`PATH`, replace `command` with its absolute executable path, such as
+`"C:/path/to/husker.exe"` or `"/path/to/husker"`. Replace these placeholders
+with your installation path.
+
+Codex loads project configuration only for trusted projects. Start Codex in
+the project directory, trust the project if appropriate, and check `/mcp`.
+Use `.codex/config.toml` for this setup. The Claude `.mcp.json` example above
+does not configure Codex. See [Codex configuration](https://learn.chatgpt.com/docs/config-file/config-basic)
+and the [MCP settings guide](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
+
+`codex mcp add` writes a user-level registration in `~/.codex/config.toml`.
+Use the project file above when the connection should belong to one project.
+The [Codex CLI reference](https://learn.chatgpt.com/docs/cli/reference#codex-mcp)
+describes user-level registration commands.
+
+## Remove other Husker connections
+
+Check `/mcp` for every available Husker connection. Adding a project connection
+does not remove user-level registrations. A second connection to another
+list, or one without `--list`, still gives the agent that connection's access.
+
+Remove an unwanted user-level registration with the matching client command:
+
+```text
+claude mcp remove --scope user husker-all
+codex mcp remove husker-all
+```
+
+Replace `husker-all` with the registered name. To keep a global Codex server
+but disable it in this project, add this override to `.codex/config.toml`:
+
+```toml
+[mcp_servers.husker-all]
+enabled = false
+```
+
+The [Codex MCP settings guide](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)
+documents `enabled`. Restart the client after changing connections.
+These settings restrict MCP access. They do not remove an agent's separate
+shell or filesystem access to your profile.
 
 ## Allow reading without changes
 
-Add `--read-only` to the Husker arguments when you register the connection.
-For example, use this Codex command instead of the writable registration above:
+Add `--read-only` to the Husker arguments in your project configuration:
 
-```powershell
-codex mcp add husker-private -- "$env:USERPROFILE\.cargo\bin\husker.exe" mcp --list Private --read-only
+```text
+["mcp", "--list", "Private", "--read-only"]
 ```
 
 The agent receives only `list_lists`, `list_tasks`, and `get_task`.
@@ -111,7 +188,6 @@ The profile and database must already exist at the current schema version.
 After upgrading an older profile, run `husker lists` once with the updated
 executable before starting a read-only server.
 
-For Claude Code or another MCP client, append `--read-only` to the same Husker server arguments.
 If you previously registered a writable connection, [replace that registration](#change-a-saved-connection) and restart the client.
 Leaving both connections available still gives the agent a way to write.
 
@@ -119,10 +195,10 @@ Leaving both connections available still gives the agent a way to write.
 
 Put `--profile` before `mcp` in the server command to select another task collection.
 Use an absolute profile path because the client's working directory can differ from your terminal's directory.
-For example, this PowerShell command selects `Private` from `C:\Tasks\Husker`:
+For example, use these arguments to select `Private` from `C:\Tasks\Husker`:
 
-```powershell
-codex mcp add husker-private -- "$env:USERPROFILE\.cargo\bin\husker.exe" --profile "C:\Tasks\Husker" mcp --list Private
+```text
+["--profile", "C:/Tasks/Husker", "mcp", "--list", "Private"]
 ```
 
 Replace `C:\Tasks\Husker` with the directory containing your `tasks.db`.
@@ -133,20 +209,14 @@ For example, `husker mcp --read-only` can read every list in the default profile
 
 ## Change a saved connection
 
-Remove the old client registration before adding changed arguments under the same name.
-For Codex, run:
+Edit `args` in `.mcp.json` or `.codex/config.toml` to change a project connection.
+For a Claude Code local registration, run this command from the project directory:
 
 ```text
-codex mcp remove husker-private
+claude mcp remove --scope local husker-project
 ```
 
-For the Claude Code user registration above, run:
-
-```text
-claude mcp remove --scope user husker-private
-```
-
-Run the client's `mcp add` command again with the new Husker arguments.
+Then repeat the local `mcp add` command with the new Husker arguments.
 For example, change `--list Private` to `--list Home` after renaming the list.
 Restart the client session so its server process uses the new arguments.
 Removing a client registration does not delete your Husker tasks.

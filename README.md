@@ -57,8 +57,12 @@ client settings. Replace `Private` with an existing list name.
 Every tool is restricted to that list, including searches and Trash.
 Add `--read-only` if the agent should only read tasks.
 
-Read [Connect an agent to Husker](docs/mcp.md) for Codex and Claude Code setup,
-custom profiles, and the available access settings.
+Use one Husker installation for several projects. Each project can start its
+own MCP process with a different `--list` while using the same task database.
+Configure Claude Code through a local registration or a shared `.mcp.json`.
+Configure Codex through the project's `.codex/config.toml`.
+Read [Connect an agent to Husker](docs/mcp.md#use-one-installation-across-projects)
+for project setup, custom profiles, and access settings.
 
 ## Configure the interface
 
