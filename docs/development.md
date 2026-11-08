@@ -35,10 +35,46 @@ The installed copy does not lock the repository's build executable.
 Close installed Husker processes and disconnect MCP clients before replacing
 the installed copy with `cargo install --path . --locked`.
 
-Use only temporary profiles for migration tests. Starting version 0.6.0
+Use only temporary profiles for migration tests. Starting version 0.7.0
 against a schema version 1 or 2 profile performs a migration on writable access.
-Versions 0.4.0 through 0.6.0 use schema version 3.
+Versions 0.4.0 through 0.7.0 use schema version 3.
 Follow the [upgrade instructions](usage.md#update-an-existing-profile) for a real profile.
+
+## Checks for version 0.7.0
+
+Version 0.7.0 passed these checks on November 8, 2026:
+
+| Check | Result |
+| --- | --- |
+| Unit tests | 120 passed, including list picker navigation, saved Planned state, list forms, help return, and modal mouse handling. |
+| CLI integration tests | 8 passed against isolated profiles. |
+| MCP integration tests | 7 passed through child processes. |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.7.0. |
+| OpenSpec | All six capability specs passed strict validation after archiving the navigation change. No active changes remain. |
+| Guide examples | Verified default and rebound picker shortcuts, ordinary list ordering and JSON fields, task commands, and MCP help. The virtual All tasks entry did not appear in CLI list output. |
+| Documentation | All 15 local links and anchors resolved. All 7 JSON and TOML examples parsed. |
+
+Interactive checks ran in an 80 by 24 pseudo-terminal with isolated profiles.
+The English check opened Work and Trash through the picker and showed their
+`Planned > Work` and `Planned > Trash` headings. Returning to a filtered
+Planned view restored the same task and scroll position. Trash kept its
+ungrouped task rows.
+
+Help and a canceled list-name form returned to the scrolled picker.
+Creating and renaming a list kept the saved list selected in the picker.
+A separate CLI read confirmed the renamed list existed and the canceled
+draft list did not. Discarding changed task text returned to Work.
+A CLI read confirmed that task's description and version stayed unchanged.
+
+The Danish check displayed `Planlagt`, `Vælg en liste`, and `Alle opgaver`.
+Choosing Work displayed `Planlagt > Work`, and Esc returned to Planlagt.
+The footer used Danish text. Both terminal checks exited cleanly.
+
+The checks ran on Windows. Mouse behavior was checked by automated tests.
+Physical mouse gestures were not tested in this session. Linux and macOS
+were not tested in this session.
 
 ## Checks for version 0.6.0
 

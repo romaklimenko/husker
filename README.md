@@ -13,7 +13,7 @@ cargo install --path . --locked
 husker
 ```
 
-Husker opens your planned tasks. Press `n` to create a task, enter a title,
+Husker opens Planned. Press `n` to create a task, enter a title,
 and press Ctrl+S to save. Esc asks before discarding changed task fields.
 Press `?` to see the shortcuts or `q` to quit.
 
@@ -92,8 +92,12 @@ Use Ctrl+Left and Ctrl+Right to move by word, Shift with movement keys to
 select text, Ctrl+C to copy the selection, and Ctrl+Z to undo.
 The editor heading shows an existing task's ID.
 
-In the list chooser, use Alt+Up and Alt+Down to arrange your lists.
-The default list stays first and Trash stays last. Husker remembers the order.
+Press `l` to open the list picker over your tasks. Choose a list to show a
+view such as `Planned > Work`. Esc returns to Planned with your previous
+filter, selected task, and scroll position. Esc inside the picker cancels it.
+All tasks is the first picker entry and Trash is last.
+Use Alt+Up and Alt+Down in the picker to arrange ordinary lists.
+The default list stays first among them. Husker remembers their order.
 
 ## Current scope
 

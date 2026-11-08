@@ -84,30 +84,46 @@ plain task text or when native clipboard access fails.
 
 ## Organize tasks into lists
 
-Press `l` to open the list chooser. Press `N` to create a list, type its name,
-and press Enter. For example, create `Private`.
-Press Esc instead to cancel the list-name form.
+Press `l` to open the list picker over your current tasks. The picker shows
+All tasks first, your ordinary lists next, and Trash last. It starts with
+your current list selected, or All tasks when you are in Planned.
+Press Esc or `l` again to close the picker without changing the view.
 
-Select a list and press Enter to see its planned tasks. New tasks created in
-that view belong to the selected list. Press Esc to return to the list
-chooser with that list still selected, or `p` to show tasks from every list.
-The default list, initially Inbox, stays first. Trash stays last.
-New tasks in the global view use the default list.
+Choose a list and press Enter. For example, choosing Private shows
+`Planned > Private`. New tasks created there belong to Private.
+Press Esc to return to Planned with its previous filter, selected task,
+and scroll position. Press `p` or choose All tasks for the same result.
+For example, if Planned was filtered by `milk`, that filter returns after
+you leave Private. Esc at Planned leaves the view unchanged.
 
-Select another list and press Alt+Up or Alt+Down to change its position.
-Husker saves this order for the next session. Lists cannot move above the
-default list or below Trash. New lists appear immediately before Trash.
+Choosing a different list or Trash starts that view without a filter.
+Choosing the current list again preserves its filter, task selection,
+and scroll position.
+
+To create a list, press `N` in the picker, enter a name such as `Private`,
+and press Enter. The picker returns with the new list selected immediately
+before Trash. Press Enter again to open the list.
+Esc in the list-name form returns to the picker without creating a list.
+
+Select an ordinary list and press Alt+Up or Alt+Down to change its position.
+Husker saves this order for the next session. The default list, initially
+Inbox, stays first among ordinary lists. All tasks and Trash stay fixed.
+New tasks in Planned use the default list.
 
 Press `R` on a list to rename it. Enter the new name and press Enter.
 The tasks stay in the same list. Names are unique without regard to case,
 so `Private` and `PRIVATE` cannot be separate lists.
 `Trash` and `Papirkurv` are reserved names.
-Renaming a list keeps its position. Renaming the default list keeps that
-same list first and keeps it as the default destination for new tasks.
+Renaming a list keeps its position and returns to the picker with that list
+selected. Renaming the default list keeps it first among ordinary lists
+and keeps it as the default destination for new tasks.
 
 The number beside an ordinary list counts its open tasks outside Trash.
 For example, `Private (4)` means that list has four open tasks.
 Done and cancelled tasks do not contribute to that count.
+All tasks has no count because it is a view option. If you name an ordinary
+list All tasks, that list still appears separately with its count.
+Help opened with `?` returns to the picker when you close it with Esc.
 
 ## Plan by due date
 
@@ -218,6 +234,8 @@ it was completed today. Restoring a task does not reset its completion date.
 Trash counts every deleted task, regardless of status. Tasks in Trash are
 excluded from planned views even when the query is `s:all`.
 Trash keeps the task's title, description, due date, status date, and list membership.
+Trash uses the heading `Planned > Trash` and has no date-group headings.
+Press Esc to return to your previous Planned view.
 
 ## Use the mouse and copy text
 
@@ -233,6 +251,8 @@ Text containing a null character cannot be copied through Ctrl+C.
 Click a task or list to select it. Double-click the same row within 400 ms
 to open it. The mouse wheel moves through the rows. In an editor, click
 a field to focus it and place the text cursor.
+When the picker is open, clicks and wheel movements outside the popup do
+nothing. Scroll inside the picker to move through its entries.
 
 Press F2 to turn mouse capture off when you want to select text with your
 terminal. Press F2 again to restore Husker's mouse navigation.
@@ -282,19 +302,19 @@ when all actions do not fit on screen.
 | --- | --- |
 | Up or `k` | Select the previous row. |
 | Down or `j` | Select the next row. |
-| Enter | Open a list or edit a task. |
+| Enter | Choose a picker entry or edit a task. |
 | `n` | Create a task in a task view. |
-| `N` | Create a list from the list chooser. |
-| `R` | Rename a list from the list chooser. |
-| `l` | Show lists. |
-| `p` | Show planned tasks from all lists. |
+| `N` | Create a list from the picker. |
+| `R` | Rename an ordinary list from the picker. |
+| `l` | Open or cancel the list picker. |
+| `p` | Return to Planned with its previous task state. |
 | `/` | Edit the task filter. |
-| Esc | Return to the list chooser. |
+| Esc | Return from scoped tasks to Planned, or cancel the picker. |
 | Space | Toggle done status. |
 | `c` | Toggle cancelled status. |
 | `d` or Delete | Move a task to Trash. |
 | `r` | Restore a task from Trash. |
-| Alt+Up or Alt+Down | Reorder tasks within the same date or undated group, or reorder lists in the chooser. |
+| Alt+Up or Alt+Down | Reorder tasks within their eligible group, or reorder ordinary lists in the picker. |
 | F2 | Toggle mouse capture. |
 | F4 | Open plain task text for copying. |
 | F5 | Refresh database contents. |
@@ -412,13 +432,14 @@ changing the task. Errors go to stderr and return a nonzero exit code.
 
 Run `husker lists` to see list IDs and counts in the order you chose in the
 terminal. The default list stays first and Trash stays last.
+The terminal picker's virtual All tasks entry is not included in command output.
 Rename a list with `husker list-rename 2 Home`, replacing `2` with the list's ID.
 The renamed list keeps its position.
 Every command accepts `--profile DIRECTORY` to select its task collection.
 
 ## Update an existing profile
 
-Back up your profile before updating an earlier version to 0.6.0.
+Back up your profile before updating an earlier version to 0.7.0.
 Follow [Back up your tasks](#back-up-your-tasks), then keep every old Husker
 process closed, including MCP clients, until the upgrade is complete.
 
@@ -428,7 +449,7 @@ Install the current version from the repository:
 cargo install --path . --locked
 ```
 
-Version 0.6.0 uses the same database schema as 0.4.0 and 0.5.0. Those profiles
+Version 0.7.0 uses the same database schema as versions 0.4.0 through 0.6.0. Those profiles
 need no database conversion, and their saved tasks and list order stay unchanged.
 If an input action already uses Ctrl+C, rebind or disable `copy_selection`
 in `[keys]` to avoid a shortcut conflict. For example, set `copy_selection = []`
@@ -448,7 +469,7 @@ A read-only MCP connection cannot perform the upgrade.
 The upgrade adds saved list positions.
 The default list moves to the top. Other existing lists start in
 case-insensitive alphabetical order. Use Alt+Up and Alt+Down in the
-list chooser to arrange them after the upgrade.
+list picker to arrange them after the upgrade.
 For a profile from version 0.3.0, every task field and task version stays unchanged.
 
 For profiles from version 0.1 or 0.2, the upgrade also simplifies task fields.

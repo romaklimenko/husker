@@ -199,13 +199,40 @@ impl TaskEditor {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum View {
-    Lists,
-    Tasks { list_id: Option<i64>, trash: bool },
+    Planned,
+    List(i64),
+    Trash,
+}
+
+impl View {
+    fn scope(self) -> (Option<i64>, bool) {
+        match self {
+            Self::Planned => (None, false),
+            Self::List(id) => (Some(id), false),
+            Self::Trash => (None, true),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct ListPicker {
+    selection: usize,
+    state: ListState,
+    area: Option<Rect>,
+}
+
+struct PlannedBookmark {
+    filter: String,
+    query: Query,
+    selected_task: Option<i64>,
+    selection: usize,
+    list_state: ListState,
 }
 
 #[derive(Debug)]
 enum Screen {
     Navigation,
+    ListPicker,
     Editor(Box<TaskEditor>),
     ConfirmDiscard {
         editor: Box<TaskEditor>,
@@ -216,7 +243,9 @@ enum Screen {
         id: Option<i64>,
         buffer: TextBuffer,
     },
-    Help,
+    Help {
+        previous: Box<Screen>,
+    },
     CopyText {
         text: String,
         row: u16,
@@ -227,6 +256,7 @@ enum Screen {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RowIdentity {
+    AllTasks,
     List(i64),
     Task(i64),
     Trash,
@@ -235,6 +265,7 @@ enum RowIdentity {
 #[derive(Clone, Copy, Debug)]
 enum MouseTarget {
     Row(usize),
+    PickerRow(usize),
     EditorField {
         index: usize,
         scroll_row: usize,
@@ -268,7 +299,8 @@ struct App {
     mouse_enabled: bool,
     mouse_targets: Vec<(Rect, MouseTarget)>,
     last_click: Option<(RowIdentity, Instant)>,
-    remembered_list: Option<RowIdentity>,
+    picker: ListPicker,
+    planned_bookmark: Option<PlannedBookmark>,
     description_width: usize,
 }
 
@@ -276,10 +308,7 @@ impl App {
     fn new(store: &Store, today: NaiveDate) -> Result<Self> {
         let mut app = Self {
             clipboard: Box::new(SystemClipboard::default()),
-            view: View::Tasks {
-                list_id: None,
-                trash: false,
-            },
+            view: View::Planned,
             screen: Screen::Navigation,
             lists: Vec::new(),
             tasks: Vec::new(),
@@ -296,7 +325,8 @@ impl App {
             mouse_enabled: true,
             mouse_targets: Vec::new(),
             last_click: None,
-            remembered_list: None,
+            picker: ListPicker::default(),
+            planned_bookmark: None,
             description_width: 79,
         };
         app.refresh(store)?;
@@ -305,19 +335,14 @@ impl App {
 
     fn mode(&self) -> Mode {
         match self.screen {
+            Screen::ListPicker => Mode::Lists,
             Screen::Editor(_) => Mode::Editor,
             Screen::ConfirmDiscard { .. } => Mode::ConfirmDiscard,
             Screen::Filter(_) => Mode::Filter,
             Screen::ListName { .. } => Mode::ListName,
-            Screen::Help => Mode::Help,
+            Screen::Help { .. } => Mode::Help,
             Screen::CopyText { .. } => Mode::CopyText,
-            Screen::Navigation => {
-                if self.view == View::Lists {
-                    Mode::Lists
-                } else {
-                    Mode::Tasks
-                }
-            }
+            Screen::Navigation => Mode::Tasks,
         }
     }
 
@@ -325,38 +350,32 @@ impl App {
         let data_version = store.data_version()?;
         self.external_update |= data_version != self.data_version;
         let selected_task = self.selected_task().map(|task| task.id);
-        let selected_list = self.lists.get(self.selection).map(|list| list.id);
-        let selected_trash = self.view == View::Lists && self.selection == self.lists.len();
+        let selected_list = self.picker_identity(self.picker.selection);
         let lists = store.lists()?;
         let tasks = store.tasks()?;
         self.lists = lists;
         self.tasks = tasks;
-        if let View::Tasks { list_id, trash } = self.view {
-            self.visible = visible_tasks(
-                &self.tasks,
-                &self.lists,
-                &self.query,
-                list_id,
-                trash,
-                self.today,
-            );
-            if let Some(index) = self
-                .visible
-                .iter()
-                .position(|task| Some(task.id) == selected_task)
-            {
-                self.selection = index;
-            }
-        } else if selected_trash {
-            self.selection = self.lists.len();
-        } else if let Some(index) = self
-            .lists
+        let (list_id, trash) = self.view.scope();
+        self.visible = visible_tasks(
+            &self.tasks,
+            &self.lists,
+            &self.query,
+            list_id,
+            trash,
+            self.today,
+        );
+        if let Some(index) = self
+            .visible
             .iter()
-            .position(|list| Some(list.id) == selected_list)
+            .position(|task| Some(task.id) == selected_task)
         {
             self.selection = index;
         }
         self.clamp_selection();
+        if let Some(identity) = selected_list {
+            self.select_picker_identity(identity);
+        }
+        self.clamp_picker();
         self.data_version = data_version;
         Ok(())
     }
@@ -414,16 +433,65 @@ impl App {
     }
 
     fn row_identity(&self, index: usize) -> Option<RowIdentity> {
-        if self.view == View::Lists {
-            self.lists
-                .get(index)
-                .map(|list| RowIdentity::List(list.id))
-                .or_else(|| (index == self.lists.len()).then_some(RowIdentity::Trash))
+        self.visible
+            .get(index)
+            .map(|task| RowIdentity::Task(task.id))
+    }
+
+    fn picker_identity(&self, index: usize) -> Option<RowIdentity> {
+        if index == 0 {
+            Some(RowIdentity::AllTasks)
+        } else if index == self.lists.len() + 1 {
+            Some(RowIdentity::Trash)
         } else {
-            self.visible
-                .get(index)
-                .map(|task| RowIdentity::Task(task.id))
+            self.lists
+                .get(index - 1)
+                .map(|list| RowIdentity::List(list.id))
         }
+    }
+
+    fn select_picker_identity(&mut self, identity: RowIdentity) {
+        let index = match identity {
+            RowIdentity::AllTasks => Some(0),
+            RowIdentity::Trash => Some(self.lists.len() + 1),
+            RowIdentity::List(id) => self
+                .lists
+                .iter()
+                .position(|list| list.id == id)
+                .map(|index| index + 1),
+            RowIdentity::Task(_) => None,
+        };
+        if let Some(index) = index {
+            self.picker.selection = index;
+        }
+        self.clamp_picker();
+    }
+
+    fn clamp_picker(&mut self) {
+        self.picker.selection = self.picker.selection.min(self.lists.len() + 1);
+        self.picker.state.select(Some(self.picker.selection));
+    }
+
+    fn open_picker(&mut self) {
+        let identity = match self.view {
+            View::Planned => RowIdentity::AllTasks,
+            View::List(id) => RowIdentity::List(id),
+            View::Trash => RowIdentity::Trash,
+        };
+        self.picker = ListPicker::default();
+        self.select_picker_identity(identity);
+        self.screen = Screen::ListPicker;
+        self.last_click = None;
+    }
+
+    fn choose_picker(&mut self, store: &Store) -> Result<()> {
+        let view = match self.picker_identity(self.picker.selection) {
+            Some(RowIdentity::AllTasks) => View::Planned,
+            Some(RowIdentity::List(id)) => View::List(id),
+            Some(RowIdentity::Trash) => View::Trash,
+            _ => return Ok(()),
+        };
+        self.set_view(view, store)
     }
 
     fn handle_mouse(
@@ -451,7 +519,22 @@ impl App {
                     };
                     self.clamp_selection();
                 }
-                Screen::Help => {
+                Screen::ListPicker => {
+                    if self.picker.area.is_some_and(|area| {
+                        mouse.column >= area.x
+                            && mouse.column < area.right()
+                            && mouse.row >= area.y
+                            && mouse.row < area.bottom()
+                    }) {
+                        self.picker.selection = if down {
+                            self.picker.selection.saturating_add(1)
+                        } else {
+                            self.picker.selection.saturating_sub(1)
+                        };
+                        self.clamp_picker();
+                    }
+                }
+                Screen::Help { .. } => {
                     let selected = self.help_state.selected().unwrap_or(0);
                     self.help_state.select(Some(if down {
                         selected.saturating_add(1).min(Action::ALL.len() - 1)
@@ -481,6 +564,23 @@ impl App {
             return Ok(());
         };
         match target {
+            MouseTarget::PickerRow(index) if matches!(self.screen, Screen::ListPicker) => {
+                let Some(identity) = self.picker_identity(index) else {
+                    return Ok(());
+                };
+                let double_click = self.last_click.is_some_and(|(previous, at)| {
+                    previous == identity
+                        && now.saturating_duration_since(at) <= Duration::from_millis(400)
+                });
+                self.picker.selection = index;
+                self.clamp_picker();
+                if double_click {
+                    self.last_click = None;
+                    self.choose_picker(store)?;
+                } else {
+                    self.last_click = Some((identity, now));
+                }
+            }
             MouseTarget::Row(index) if matches!(self.screen, Screen::Navigation) => {
                 let Some(identity) = self.row_identity(index) else {
                     return Ok(());
@@ -519,7 +619,7 @@ impl App {
                     }
                 }
             }
-            MouseTarget::HelpRow(index) if matches!(self.screen, Screen::Help) => {
+            MouseTarget::HelpRow(index) if matches!(self.screen, Screen::Help { .. }) => {
                 self.last_click = None;
                 self.help_state.select(Some(index));
             }
@@ -529,26 +629,15 @@ impl App {
     }
 
     fn row_count(&self) -> usize {
-        if self.view == View::Lists {
-            self.lists.len() + 1
-        } else {
-            self.visible.len()
-        }
+        self.visible.len()
     }
 
     fn clamp_selection(&mut self) {
         self.selection = self.selection.min(self.row_count().saturating_sub(1));
-        if self.view == View::Lists {
-            self.list_state.select(Some(self.selection));
-        }
     }
 
     fn selected_task(&self) -> Option<&Task> {
-        if self.view == View::Lists {
-            None
-        } else {
-            self.visible.get(self.selection)
-        }
+        self.visible.get(self.selection)
     }
 
     fn show_message(&mut self, text: impl Into<String>, is_error: bool, now: Instant) {
@@ -597,6 +686,7 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent, store: &mut Store, config: &Config) -> bool {
+        self.last_click = None;
         match self.dispatch_key(key, store, config) {
             Ok(quit) => quit,
             Err(error) => {
@@ -641,6 +731,58 @@ impl App {
             _ => {}
         }
         match &mut self.screen {
+            Screen::ListPicker => {
+                match action {
+                    Some(Action::Quit) => return Ok(true),
+                    Some(Action::Back | Action::Lists) => {
+                        self.screen = Screen::Navigation;
+                        self.refresh(store)?;
+                    }
+                    Some(Action::Planned) => self.set_view(View::Planned, store)?,
+                    Some(Action::Open) => self.choose_picker(store)?,
+                    Some(Action::Up) => {
+                        self.picker.selection = self.picker.selection.saturating_sub(1);
+                        self.clamp_picker();
+                    }
+                    Some(Action::Down) => {
+                        self.picker.selection = self.picker.selection.saturating_add(1);
+                        self.clamp_picker();
+                    }
+                    Some(Action::NewList) => {
+                        self.screen = Screen::ListName {
+                            id: None,
+                            buffer: TextBuffer::default(),
+                        };
+                    }
+                    Some(Action::RenameList) => {
+                        if let Some(RowIdentity::List(id)) =
+                            self.picker_identity(self.picker.selection)
+                            && let Some(list) = self.lists.iter().find(|list| list.id == id)
+                        {
+                            self.screen = Screen::ListName {
+                                id: Some(id),
+                                buffer: TextBuffer::new(&list.name),
+                            };
+                        }
+                    }
+                    Some(Action::MoveUp | Action::MoveDown) => {
+                        if let Some(RowIdentity::List(id)) =
+                            self.picker_identity(self.picker.selection)
+                        {
+                            store.move_list(id, action == Some(Action::MoveDown))?;
+                            self.refresh(store)?;
+                        }
+                    }
+                    Some(Action::Help) => {
+                        self.screen = Screen::Help {
+                            previous: Box::new(Screen::ListPicker),
+                        };
+                        self.help_state.select(Some(0));
+                    }
+                    _ => {}
+                }
+                return Ok(false);
+            }
             Screen::ConfirmDiscard { discard, .. } => {
                 if action == Some(Action::Discard) {
                     self.finish_discard_confirmation(false, store)?;
@@ -768,17 +910,13 @@ impl App {
                         } else {
                             store.create_list(&buffer.text)?
                         };
-                        self.screen = Screen::Navigation;
+                        self.screen = Screen::ListPicker;
                         self.refresh(store)?;
-                        if let Some(index) = self.lists.iter().position(|value| value.id == list.id)
-                        {
-                            self.selection = index;
-                            self.clamp_selection();
-                        }
+                        self.select_picker_identity(RowIdentity::List(list.id));
                         self.show_message(tr(config.language, "saved"), false, Instant::now());
                     }
                     Some(Action::Discard | Action::Back) => {
-                        self.screen = Screen::Navigation;
+                        self.screen = Screen::ListPicker;
                         self.refresh(store)?;
                     }
                     _ => {
@@ -787,10 +925,15 @@ impl App {
                 }
                 return Ok(false);
             }
-            Screen::Help => {
+            Screen::Help { .. } => {
                 match action {
                     Some(Action::Close | Action::Back) => {
-                        self.screen = Screen::Navigation;
+                        let Screen::Help { previous } =
+                            std::mem::replace(&mut self.screen, Screen::Navigation)
+                        else {
+                            unreachable!()
+                        };
+                        self.screen = *previous;
                         self.refresh(store)?;
                     }
                     Some(Action::Up) => self.help_state.select(Some(
@@ -818,54 +961,19 @@ impl App {
                 self.selection = self.selection.saturating_add(1);
                 self.clamp_selection();
             }
-            Action::Lists => self.set_view(View::Lists, store)?,
-            Action::Planned => self.set_view(
-                View::Tasks {
-                    list_id: None,
-                    trash: false,
-                },
-                store,
-            )?,
-            Action::Back
-                if matches!(
-                    self.view,
-                    View::Tasks {
-                        list_id: Some(_),
-                        ..
-                    } | View::Tasks { trash: true, .. }
-                ) =>
-            {
-                self.set_view(View::Lists, store)?
+            Action::Lists => {
+                self.refresh(store)?;
+                self.open_picker();
             }
+            Action::Planned => self.set_view(View::Planned, store)?,
+            Action::Back if self.view != View::Planned => self.set_view(View::Planned, store)?,
             Action::Open => self.open_selection(store)?,
-            Action::NewTask if !matches!(self.view, View::Tasks { trash: true, .. }) => {
-                self.new_task()
-            }
-            Action::NewList if self.view == View::Lists => {
-                self.screen = Screen::ListName {
-                    id: None,
-                    buffer: TextBuffer::default(),
-                }
-            }
-            Action::RenameList if self.view == View::Lists => {
-                if let Some(list) = self.lists.get(self.selection) {
-                    self.screen = Screen::ListName {
-                        id: Some(list.id),
-                        buffer: TextBuffer::new(&list.name),
-                    };
-                }
-            }
-            Action::MoveUp | Action::MoveDown if self.view == View::Lists => {
-                if let Some(list) = self.lists.get(self.selection) {
-                    store.move_list(list.id, action == Action::MoveDown)?;
-                    self.refresh(store)?;
-                }
-            }
-            Action::Filter if self.view != View::Lists => {
-                self.screen = Screen::Filter(TextBuffer::new(&self.filter))
-            }
+            Action::NewTask if self.view != View::Trash => self.new_task(),
+            Action::Filter => self.screen = Screen::Filter(TextBuffer::new(&self.filter)),
             Action::Help => {
-                self.screen = Screen::Help;
+                self.screen = Screen::Help {
+                    previous: Box::new(Screen::Navigation),
+                };
                 self.help_state.select(Some(0));
             }
             _ => self.task_action(action, store, config)?,
@@ -906,56 +1014,54 @@ impl App {
     }
 
     fn set_view(&mut self, view: View, store: &Store) -> Result<()> {
-        self.remembered_list = match self.view {
-            View::Lists => self
-                .lists
-                .get(self.selection)
-                .map(|list| RowIdentity::List(list.id))
-                .or(Some(RowIdentity::Trash)),
-            View::Tasks { trash: true, .. } => Some(RowIdentity::Trash),
-            View::Tasks {
-                list_id: Some(id), ..
-            } => Some(RowIdentity::List(id)),
-            _ => self.remembered_list,
-        };
+        self.screen = Screen::Navigation;
+        self.last_click = None;
+        if view == self.view {
+            return self.refresh(store);
+        }
+        if self.view == View::Planned {
+            self.planned_bookmark = Some(PlannedBookmark {
+                filter: self.filter.clone(),
+                query: self.query.clone(),
+                selected_task: self.selected_task().map(|task| task.id),
+                selection: self.selection,
+                list_state: self.list_state,
+            });
+        }
         self.view = view;
         self.selection = 0;
         self.list_state = ListState::default();
         self.visible.clear();
-        self.last_click = None;
         self.filter.clear();
         self.query = Query::default();
-        self.refresh(store)?;
-        if view == View::Lists {
-            self.selection = match self.remembered_list {
-                Some(RowIdentity::List(id)) => self
-                    .lists
-                    .iter()
-                    .position(|list| list.id == id)
-                    .unwrap_or(0),
-                Some(RowIdentity::Trash) => self.lists.len(),
-                _ => 0,
-            };
-            self.clamp_selection();
+        let bookmark = if view == View::Planned {
+            self.planned_bookmark.take()
+        } else {
+            None
+        };
+        let selected_task = bookmark
+            .as_ref()
+            .and_then(|bookmark| bookmark.selected_task);
+        if let Some(bookmark) = bookmark {
+            self.selection = bookmark.selection;
+            self.list_state = bookmark.list_state;
+            self.filter = bookmark.filter;
+            self.query = bookmark.query;
         }
+        self.refresh(store)?;
+        if let Some(index) = self
+            .visible
+            .iter()
+            .position(|task| Some(task.id) == selected_task)
+        {
+            self.selection = index;
+        }
+        self.clamp_selection();
         Ok(())
     }
 
-    fn open_selection(&mut self, store: &Store) -> Result<()> {
-        if self.view == View::Lists {
-            let view = if let Some(list) = self.lists.get(self.selection) {
-                View::Tasks {
-                    list_id: Some(list.id),
-                    trash: false,
-                }
-            } else {
-                View::Tasks {
-                    list_id: None,
-                    trash: true,
-                }
-            };
-            self.set_view(view, store)?;
-        } else if let Some(task) = self.selected_task().filter(|task| !task.deleted).cloned() {
+    fn open_selection(&mut self, _store: &Store) -> Result<()> {
+        if let Some(task) = self.selected_task().filter(|task| !task.deleted).cloned() {
             let list_name = self
                 .lists
                 .iter()
@@ -969,13 +1075,7 @@ impl App {
 
     fn new_task(&mut self) {
         let list = match self.view {
-            View::Tasks {
-                list_id: Some(id), ..
-            } => self.lists.iter().find(|list| list.id == id),
-            View::Lists => self
-                .lists
-                .get(self.selection)
-                .or_else(|| self.lists.iter().min_by_key(|list| list.id)),
+            View::List(id) => self.lists.iter().find(|list| list.id == id),
             _ => self.lists.iter().min_by_key(|list| list.id),
         };
         if let Some(list) = list {
@@ -1063,6 +1163,7 @@ impl App {
 
     fn draw(&mut self, frame: &mut Frame<'_>, config: &Config) {
         self.mouse_targets.clear();
+        self.picker.area = None;
         let area = frame.area();
         let language = config.language;
         if area.width < 38
@@ -1087,15 +1188,18 @@ impl App {
             ])
             .split(area);
         let view_title = match self.view {
-            View::Lists => tr(language, "lists").to_owned(),
-            View::Tasks { trash: true, .. } => tr(language, "trash").to_owned(),
-            View::Tasks {
-                list_id: Some(id), ..
-            } => self.lists.iter().find(|list| list.id == id).map_or_else(
+            View::Planned => tr(language, "planned").to_owned(),
+            View::Trash => format!("{} > {}", tr(language, "planned"), tr(language, "trash")),
+            View::List(id) => self.lists.iter().find(|list| list.id == id).map_or_else(
                 || tr(language, "planned").to_owned(),
-                |list| list.name.clone(),
+                |list| {
+                    format!(
+                        "{} > {}",
+                        tr(language, "planned"),
+                        list.name.replace(['\r', '\n'], " ")
+                    )
+                },
             ),
-            _ => tr(language, "planned").to_owned(),
         };
         let editor = match &self.screen {
             Screen::Editor(editor) | Screen::ConfirmDiscard { editor, .. } => Some(editor),
@@ -1129,6 +1233,13 @@ impl App {
             sections[0],
         );
         match &self.screen {
+            Screen::ListPicker => {
+                let list_state = self.list_state;
+                self.draw_task_view(frame, sections[1], language);
+                self.list_state = list_state;
+                self.mouse_targets.clear();
+                self.draw_list_picker(frame, sections[1], language);
+            }
             Screen::ConfirmDiscard { editor, discard } => {
                 let _ = draw_editor(frame, sections[1], editor, language);
                 draw_discard_confirmation(frame, sections[1], *discard, language);
@@ -1143,7 +1254,7 @@ impl App {
                     self.description_width = usize::from(rect.width.saturating_sub(1));
                 }
             }
-            Screen::Help => {
+            Screen::Help { .. } => {
                 let help_area = draw_help(frame, sections[1], config, &mut self.help_state);
                 for (row, index) in (self.help_state.offset()..Action::ALL.len())
                     .take(usize::from(help_area.height))
@@ -1207,6 +1318,17 @@ impl App {
             }
         }
         let hint = match self.screen {
+            Screen::ListPicker => format!(
+                "{} {}  |  {} {}  |  {} {}  |  {} {}",
+                config.keys_for(Action::Open),
+                tr(language, "action_open"),
+                config.keys_for(Action::Back),
+                tr(language, "action_back"),
+                config.keys_for(Action::NewList),
+                tr(language, "new_list"),
+                config.keys_for(Action::Help),
+                tr(language, "help"),
+            ),
             Screen::ConfirmDiscard { .. } => format!(
                 "{}  |  {} {}",
                 tr(language, "discard_confirm_hint"),
@@ -1237,37 +1359,43 @@ impl App {
                 config.keys_for(Action::CopySelection),
                 tr(language, "copy_short")
             ),
-            Screen::Help => format!(
+            Screen::Help { .. } => format!(
                 "{} / {}  |  {} {}",
                 config.keys_for(Action::Up),
                 config.keys_for(Action::Down),
                 config.keys_for(Action::Close),
                 tr(language, "action_close")
             ),
-            Screen::Navigation if self.view == View::Lists => format!(
-                "{} {}  |  {} {}  |  {} {}",
-                config.keys_for(Action::Help),
-                tr(language, "help"),
-                config.keys_for(Action::NewList),
-                tr(language, "new_list"),
-                config.keys_for(Action::Quit),
-                tr(language, "action_quit")
-            ),
-            Screen::Navigation if matches!(self.view, View::Tasks { trash: true, .. }) => format!(
-                "{} {}  |  {} {}  |  {} {}",
-                config.keys_for(Action::Help),
-                tr(language, "help"),
+            Screen::Navigation if self.view == View::Trash => format!(
+                "{} {}  |  {} {}  |  {} {}  |  {} {}",
+                config.keys_for(Action::Lists),
+                tr(language, "action_lists"),
+                config.keys_for(Action::Back),
+                tr(language, "action_back"),
                 config.keys_for(Action::Restore),
                 tr(language, "action_restore"),
-                config.keys_for(Action::Quit),
-                tr(language, "action_quit")
-            ),
-            _ => format!(
-                "{} {}  |  {} {}  |  {} {}",
                 config.keys_for(Action::Help),
                 tr(language, "help"),
+            ),
+            Screen::Navigation if matches!(self.view, View::List(_)) => format!(
+                "{} {}  |  {} {}  |  {} {}  |  {} {}",
+                config.keys_for(Action::Lists),
+                tr(language, "action_lists"),
+                config.keys_for(Action::Back),
+                tr(language, "action_back"),
                 config.keys_for(Action::NewTask),
                 tr(language, "new_task"),
+                config.keys_for(Action::Help),
+                tr(language, "help"),
+            ),
+            _ => format!(
+                "{} {}  |  {} {}  |  {} {}  |  {} {}",
+                config.keys_for(Action::Lists),
+                tr(language, "action_lists"),
+                config.keys_for(Action::NewTask),
+                tr(language, "new_task"),
+                config.keys_for(Action::Help),
+                tr(language, "help"),
                 config.keys_for(Action::Quit),
                 tr(language, "action_quit")
             ),
@@ -1309,46 +1437,84 @@ impl App {
         );
     }
 
-    fn draw_navigation(&mut self, frame: &mut Frame<'_>, area: Rect, language: Language) {
-        if self.view == View::Lists {
-            let mut rows: Vec<ListItem<'_>> = self
-                .lists
-                .iter()
-                .map(|list| ListItem::new(format!("{} ({})", list.name, list.count)))
-                .collect();
-            rows.push(ListItem::new(format!(
-                "{} ({})",
-                tr(language, "trash"),
-                self.tasks.iter().filter(|task| task.deleted).count()
-            )));
-            frame.render_stateful_widget(
-                List::new(rows)
-                    .highlight_style(
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    )
-                    .highlight_symbol("> "),
-                area,
-                &mut self.list_state,
+    fn draw_task_view(&mut self, frame: &mut Frame<'_>, area: Rect, language: Language) {
+        let body = if !self.filter.is_empty() {
+            let parts = Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).split(area);
+            frame.render_widget(
+                Paragraph::new(self.filter.as_str()).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(tr(language, "filter")),
+                ),
+                parts[0],
             );
-            for (row, index) in (self.list_state.offset()..self.row_count())
-                .take(usize::from(area.height))
-                .enumerate()
-            {
-                self.mouse_targets.push((
-                    Rect::new(area.x, area.y + row as u16, area.width, 1),
-                    MouseTarget::Row(index),
-                ));
-            }
-            return;
+            parts[1]
+        } else {
+            area
+        };
+        self.draw_navigation(frame, body, language);
+    }
+
+    fn draw_list_picker(&mut self, frame: &mut Frame<'_>, area: Rect, language: Language) {
+        let width = area.width.saturating_sub(4).min(60);
+        let height = area
+            .height
+            .min((self.lists.len() + 4).min(u16::MAX as usize) as u16);
+        let popup = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(tr(language, "list_picker"));
+        let inner = block.inner(popup);
+        let mut rows = vec![ListItem::new(tr(language, "all_tasks"))];
+        rows.extend(self.lists.iter().map(|list| {
+            ListItem::new(format!(
+                "{} ({})",
+                list.name.replace(['\r', '\n'], " "),
+                list.count
+            ))
+        }));
+        rows.push(ListItem::new(format!(
+            "{} ({})",
+            tr(language, "trash"),
+            self.tasks.iter().filter(|task| task.deleted).count()
+        )));
+        frame.render_widget(Clear, popup);
+        frame.render_stateful_widget(
+            List::new(rows)
+                .block(block)
+                .highlight_style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .highlight_symbol("> "),
+            popup,
+            &mut self.picker.state,
+        );
+        self.picker.area = Some(inner);
+        for (row, index) in (self.picker.state.offset()..self.lists.len() + 2)
+            .take(usize::from(inner.height))
+            .enumerate()
+        {
+            self.mouse_targets.push((
+                Rect::new(inner.x, inner.y + row as u16, inner.width, 1),
+                MouseTarget::PickerRow(index),
+            ));
         }
+    }
+
+    fn draw_navigation(&mut self, frame: &mut Frame<'_>, area: Rect, language: Language) {
         if self.visible.is_empty() {
             self.list_state.select(None);
             frame.render_widget(Paragraph::new(tr(language, "no_tasks")), area);
             return;
         }
-        let trash = matches!(self.view, View::Tasks { trash: true, .. });
+        let trash = self.view == View::Trash;
         let mut previous_bucket = None;
         let mut rows = Vec::new();
         let mut row_tasks = Vec::new();
@@ -1866,17 +2032,12 @@ mod tests {
         app.show_message("Saved", false, now);
         app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
         app.handle_key(key(KeyCode::Down), &mut store, &config);
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         assert_eq!(app.message.as_ref().unwrap().created_at, now);
         let view = app.view;
         let selection = app.selection;
-        assert_eq!(
-            view,
-            View::Tasks {
-                list_id: Some(list.id),
-                trash: false
-            }
-        );
+        assert_eq!(view, View::List(list.id));
         app.expire_message(now + Duration::from_secs(5));
         assert!(app.message.is_none());
         assert_eq!(app.view, view);
@@ -2130,11 +2291,19 @@ mod tests {
         app.handle_key(key(KeyCode::Char('N')), &mut store, &config);
         app.paste("Ærinder");
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
-        app.selection = app
-            .lists
-            .iter()
-            .position(|list| list.name == "Ærinder")
-            .unwrap();
+        assert!(matches!(app.screen, Screen::ListPicker));
+        assert_eq!(
+            app.picker_identity(app.picker.selection),
+            Some(RowIdentity::List(
+                store
+                    .lists()
+                    .unwrap()
+                    .iter()
+                    .find(|list| list.name == "Ærinder")
+                    .unwrap()
+                    .id
+            ))
+        );
         app.handle_key(key(KeyCode::Char('R')), &mut store, &config);
         if let Screen::ListName { buffer, .. } = &mut app.screen {
             *buffer = TextBuffer::new("Shopping");
@@ -2150,7 +2319,7 @@ mod tests {
         app.handle_key(key(KeyCode::Char('N')), &mut store, &config);
         app.paste("Discarded");
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
-        assert!(matches!(app.screen, Screen::Navigation));
+        assert!(matches!(app.screen, Screen::ListPicker));
         assert!(
             !store
                 .lists()
@@ -2206,14 +2375,7 @@ mod tests {
         let mut app = App::new(&store, today()).unwrap();
         app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
         assert!(app.visible.is_empty());
-        app.set_view(
-            View::Tasks {
-                list_id: None,
-                trash: true,
-            },
-            &store,
-        )
-        .unwrap();
+        app.set_view(View::Trash, &store).unwrap();
         app.handle_key(key(KeyCode::Char(' ')), &mut store, &config);
         assert_eq!(store.task(task.id).unwrap().status, Status::Open);
         app.handle_key(key(KeyCode::Char('r')), &mut store, &config);
@@ -2227,7 +2389,7 @@ mod tests {
         let mut app = App::new(&store, today()).unwrap();
         assert!(rendered(&mut app, &config, 80, 24).contains(tr(config.language, "no_tasks")));
         config.language = Language::Da;
-        app.set_view(View::Lists, &store).unwrap();
+        app.open_picker();
         assert!(rendered(&mut app, &config, 80, 24).contains("Papirkurv"));
         let small = rendered(&mut app, &config, 20, 5);
         assert!(!small.trim().is_empty());
@@ -2566,37 +2728,29 @@ mod tests {
     }
 
     #[test]
-    fn list_selection_tracks_identity_after_back_rename_and_external_insert() {
+    fn picker_selection_tracks_scope_and_external_list_changes() {
         let (_directory, mut store, config) = fixture();
         store.create_list("Zulu").unwrap();
         let selected = store.create_list("Private").unwrap();
         let mut app = App::new(&store, today()).unwrap();
-        app.set_view(View::Lists, &store).unwrap();
-        app.selection = app
-            .lists
-            .iter()
-            .position(|list| list.id == selected.id)
-            .unwrap();
+        app.open_picker();
+        app.select_picker_identity(RowIdentity::List(selected.id));
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         store.rename_list(selected.id, "Home").unwrap();
         store.create_list("AAA").unwrap();
-        app.handle_key(key(KeyCode::Esc), &mut store, &config);
-        assert_eq!(app.lists[app.selection].id, selected.id);
-        app.selection = app.lists.len();
+        app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
+        assert_eq!(
+            app.picker_identity(app.picker.selection),
+            Some(RowIdentity::List(selected.id))
+        );
+        app.select_picker_identity(RowIdentity::Trash);
         store.create_list("Another").unwrap();
         app.refresh(&store).unwrap();
-        assert_eq!(app.selection, app.lists.len());
+        assert_eq!(app.picker.selection, app.lists.len() + 1);
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
-        assert_eq!(app.selection, app.lists.len());
-        app.set_view(
-            View::Tasks {
-                list_id: None,
-                trash: false,
-            },
-            &store,
-        )
-        .unwrap();
+        assert_eq!(app.view, View::Planned);
+        app.set_view(View::Planned, &store).unwrap();
         app.new_task();
         assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[3].text == "Inbox"));
     }
@@ -2670,9 +2824,9 @@ mod tests {
         store.create_task(&value).unwrap();
         store.create_task(&input(1, "Second")).unwrap();
         let mut app = App::new(&store, today()).unwrap();
-        app.set_view(View::Lists, &store).unwrap();
+        app.open_picker();
         rendered(&mut app, &config, 80, 24);
-        let (rect, _) = app.mouse_targets[0];
+        let (rect, _) = app.mouse_targets[1];
         let now = Instant::now();
         for elapsed in [0, 100] {
             app.handle_mouse(
@@ -2683,13 +2837,7 @@ mod tests {
             )
             .unwrap();
         }
-        assert_eq!(
-            app.view,
-            View::Tasks {
-                list_id: Some(1),
-                trash: false
-            }
-        );
+        assert_eq!(app.view, View::List(1));
         app.handle_mouse(
             mouse(MouseEventKind::ScrollDown, 0, 0),
             now,
@@ -2836,7 +2984,7 @@ mod tests {
         let mut app = App::new(&store, today()).unwrap();
         let mut external = Store::open(&directory.path().join("tasks.db")).unwrap();
         external.create_list("Created elsewhere").unwrap();
-        app.set_view(View::Lists, &store).unwrap();
+        app.set_view(View::Planned, &store).unwrap();
         assert!(app.external_update);
         assert!(
             app.lists
@@ -3022,19 +3170,16 @@ mod tests {
         let first = store.create_list("Work").unwrap();
         let second = store.create_list("Home").unwrap();
         let mut app = App::new(&store, today()).unwrap();
-        app.set_view(View::Lists, &store).unwrap();
+        app.open_picker();
         assert_eq!(app.lists[0].id, 1);
+        app.select_picker_identity(RowIdentity::List(1));
         app.handle_key(
             KeyEvent::new(KeyCode::Down, KeyModifiers::ALT),
             &mut store,
             &config,
         );
         assert_eq!(app.lists[0].id, 1);
-        app.selection = app
-            .lists
-            .iter()
-            .position(|list| list.id == second.id)
-            .unwrap();
+        app.select_picker_identity(RowIdentity::List(second.id));
         app.handle_key(
             KeyEvent::new(KeyCode::Up, KeyModifiers::ALT),
             &mut store,
@@ -3044,26 +3189,348 @@ mod tests {
             app.lists.iter().map(|list| list.id).collect::<Vec<_>>(),
             [1, second.id, first.id]
         );
-        assert_eq!(app.lists[app.selection].id, second.id);
+        assert_eq!(
+            app.picker_identity(app.picker.selection),
+            Some(RowIdentity::List(second.id))
+        );
         app.handle_key(
             KeyEvent::new(KeyCode::Up, KeyModifiers::ALT),
             &mut store,
             &config,
         );
-        assert_eq!(app.lists[app.selection].id, second.id);
-        assert_eq!(app.selection, 1);
-        app.selection = app.lists.len();
+        assert_eq!(
+            app.picker_identity(app.picker.selection),
+            Some(RowIdentity::List(second.id))
+        );
+        assert_eq!(app.picker.selection, 2);
+        app.select_picker_identity(RowIdentity::Trash);
         app.handle_key(
             KeyEvent::new(KeyCode::Up, KeyModifiers::ALT),
             &mut store,
             &config,
         );
-        assert_eq!(app.selection, app.lists.len());
+        assert_eq!(app.picker.selection, app.lists.len() + 1);
         app.handle_key(
             KeyEvent::new(KeyCode::Down, KeyModifiers::ALT),
             &mut store,
             &config,
         );
-        assert_eq!(app.selection, app.lists.len());
+        assert_eq!(app.picker.selection, app.lists.len() + 1);
+    }
+
+    #[test]
+    fn picker_open_cancel_and_same_scope_choice_preserve_task_scroll_and_filter() {
+        let (_directory, mut store, config) = fixture();
+        for index in 0..30 {
+            store
+                .create_task(&input(1, &format!("Keep task {index}")))
+                .unwrap();
+        }
+        let mut app = App::new(&store, today()).unwrap();
+        app.filter = "keep".into();
+        app.query = Query::parse(&app.filter).unwrap();
+        app.refresh(&store).unwrap();
+        app.selection = 22;
+        rendered(&mut app, &config, 80, 12);
+        let task_id = app.selected_task().unwrap().id;
+        let offset = app.list_state.offset();
+        let selected_row = app.list_state.selected();
+        assert!(offset > 0);
+        for close in [KeyCode::Esc, KeyCode::Char('l'), KeyCode::Enter] {
+            app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
+            rendered(&mut app, &config, 80, 12);
+            assert_eq!(app.list_state.offset(), offset);
+            assert_eq!(app.list_state.selected(), selected_row);
+            assert!(
+                app.mouse_targets
+                    .iter()
+                    .all(|(_, target)| matches!(target, MouseTarget::PickerRow(_)))
+            );
+            app.handle_key(key(close), &mut store, &config);
+            assert!(matches!(app.screen, Screen::Navigation));
+            assert_eq!(app.view, View::Planned);
+            assert_eq!(app.filter, "keep");
+            assert_eq!(app.selected_task().unwrap().id, task_id);
+            assert_eq!(app.list_state.offset(), offset);
+        }
+        app.handle_key(key(KeyCode::Char('p')), &mut store, &config);
+        assert_eq!(app.selected_task().unwrap().id, task_id);
+        assert_eq!(app.list_state.offset(), offset);
+    }
+
+    #[test]
+    fn every_parent_route_restores_planned_bookmark_across_child_switches() {
+        let (_directory, mut store, config) = fixture();
+        let work = store.create_list("Work").unwrap();
+        for index in 0..30 {
+            store
+                .create_task(&input(1, &format!("Keep task {index}")))
+                .unwrap();
+        }
+        store.create_task(&input(work.id, "Child task")).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.filter = "keep".into();
+        app.query = Query::parse(&app.filter).unwrap();
+        app.refresh(&store).unwrap();
+        app.selection = 20;
+        rendered(&mut app, &config, 80, 12);
+        let task_id = app.selected_task().unwrap().id;
+        let offset = app.list_state.offset();
+        for route in 0..3 {
+            app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
+            app.select_picker_identity(RowIdentity::List(work.id));
+            app.handle_key(key(KeyCode::Enter), &mut store, &config);
+            assert_eq!(app.view, View::List(work.id));
+            assert!(app.filter.is_empty());
+            assert_eq!(app.selection, 0);
+            assert!(rendered(&mut app, &config, 80, 12).contains("Planned > Work"));
+            app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
+            app.select_picker_identity(RowIdentity::Trash);
+            app.handle_key(key(KeyCode::Enter), &mut store, &config);
+            assert_eq!(app.view, View::Trash);
+            if route == 0 {
+                app.handle_key(key(KeyCode::Esc), &mut store, &config);
+            } else {
+                app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
+                if route == 1 {
+                    app.handle_key(key(KeyCode::Char('p')), &mut store, &config);
+                } else {
+                    app.select_picker_identity(RowIdentity::AllTasks);
+                    app.handle_key(key(KeyCode::Enter), &mut store, &config);
+                }
+            }
+            assert_eq!(app.view, View::Planned);
+            assert!(matches!(app.screen, Screen::Navigation));
+            assert_eq!(app.filter, "keep");
+            assert_eq!(app.visible.len(), 30);
+            assert_eq!(app.selected_task().unwrap().id, task_id);
+            rendered(&mut app, &config, 80, 12);
+            assert_eq!(app.list_state.offset(), offset);
+        }
+    }
+
+    #[test]
+    fn planned_bookmark_restores_by_id_and_clamps_when_the_saved_task_leaves_results() {
+        let (directory, mut store, config) = fixture();
+        let work = store.create_list("Work").unwrap();
+        let first = store.create_task(&input(1, "Keep first")).unwrap();
+        let second = store.create_task(&input(1, "Keep second")).unwrap();
+        let third = store.create_task(&input(1, "Keep third")).unwrap();
+        let mut external = Store::open(&directory.path().join("tasks.db")).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.filter = "keep".into();
+        app.query = Query::parse(&app.filter).unwrap();
+        app.refresh(&store).unwrap();
+        app.set_view(View::List(work.id), &store).unwrap();
+        external.swap_positions(&first, &second).unwrap();
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert_eq!(app.selected_task().unwrap().id, first.id);
+        assert_eq!(app.selection, 1);
+        app.selection = 2;
+        app.set_view(View::List(work.id), &store).unwrap();
+        external
+            .update_task(third.id, third.version, &input(1, "No longer matching"))
+            .unwrap();
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert_eq!(app.filter, "keep");
+        assert_eq!(app.visible.len(), 2);
+        assert_eq!(app.selection, 1);
+        assert_eq!(app.selected_task().unwrap().id, first.id);
+        assert!(app.external_update);
+    }
+
+    #[test]
+    fn picker_forms_help_and_external_refresh_keep_selection_by_list_id() {
+        let (directory, mut store, config) = fixture();
+        for index in 0..25 {
+            store.create_list(&format!("List {index}")).unwrap();
+        }
+        let selected = store.lists().unwrap()[20].clone();
+        let mut external = Store::open(&directory.path().join("tasks.db")).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.open_picker();
+        app.select_picker_identity(RowIdentity::List(selected.id));
+        rendered(&mut app, &config, 80, 12);
+        let offset = app.picker.state.offset();
+        assert!(offset > 0);
+        app.handle_key(key(KeyCode::Char('?')), &mut store, &config);
+        rendered(&mut app, &config, 80, 12);
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(matches!(app.screen, Screen::ListPicker));
+        assert_eq!(app.picker.state.offset(), offset);
+        for action in ['N', 'R'] {
+            app.handle_key(key(KeyCode::Char(action)), &mut store, &config);
+            app.paste("Cancel this edit");
+            app.handle_key(key(KeyCode::Esc), &mut store, &config);
+            assert!(matches!(app.screen, Screen::ListPicker));
+            assert_eq!(
+                app.picker_identity(app.picker.selection),
+                Some(RowIdentity::List(selected.id))
+            );
+            assert_eq!(app.picker.state.offset(), offset);
+        }
+        app.handle_key(key(KeyCode::Char('N')), &mut store, &config);
+        app.paste("New list");
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        let created = store
+            .lists()
+            .unwrap()
+            .into_iter()
+            .find(|list| list.name == "New list")
+            .unwrap();
+        assert_eq!(
+            app.picker_identity(app.picker.selection),
+            Some(RowIdentity::List(created.id))
+        );
+        external
+            .rename_list(created.id, "Renamed elsewhere")
+            .unwrap();
+        external.move_list(created.id, false).unwrap();
+        external.create_list("Added elsewhere").unwrap();
+        app.refresh_changes(&store, &config, today(), true).unwrap();
+        assert_eq!(
+            app.picker_identity(app.picker.selection),
+            Some(RowIdentity::List(created.id))
+        );
+        assert!(app.external_update);
+        assert!(matches!(app.screen, Screen::ListPicker));
+    }
+
+    #[test]
+    fn virtual_picker_rows_are_distinct_from_same_named_ordinary_lists() {
+        let (_directory, mut store, config) = fixture();
+        let ordinary = store.create_list("All tasks").unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.open_picker();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| app.draw(frame, &config)).unwrap();
+        let (rect, _) = app.mouse_targets[0];
+        let first_row = (rect.x..rect.right())
+            .map(|x| terminal.backend().buffer()[(x, rect.y)].symbol())
+            .collect::<String>();
+        assert!(first_row.contains("All tasks"));
+        assert!(!first_row.contains('('));
+        for identity in [RowIdentity::AllTasks, RowIdentity::Trash] {
+            app.select_picker_identity(identity);
+            app.handle_key(key(KeyCode::Char('R')), &mut store, &config);
+            assert!(matches!(app.screen, Screen::ListPicker));
+            for code in [KeyCode::Up, KeyCode::Down] {
+                app.handle_key(KeyEvent::new(code, KeyModifiers::ALT), &mut store, &config);
+                assert_eq!(app.picker_identity(app.picker.selection), Some(identity));
+            }
+        }
+        assert_eq!(store.lists().unwrap().len(), 2);
+        app.select_picker_identity(RowIdentity::List(ordinary.id));
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert_eq!(app.view, View::List(ordinary.id));
+        assert!(rendered(&mut app, &config, 80, 24).contains("Planned > All tasks"));
+    }
+
+    #[test]
+    fn picker_mouse_stays_inside_scrolled_and_resized_popup() {
+        let (_directory, mut store, config) = fixture();
+        for index in 0..30 {
+            store.create_list(&format!("List {index}")).unwrap();
+        }
+        store.create_task(&input(1, "Background task")).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.open_picker();
+        rendered(&mut app, &config, 80, 12);
+        let area = app.picker.area.unwrap();
+        let now = Instant::now();
+        for event in [
+            mouse(MouseEventKind::ScrollDown, 0, 0),
+            mouse(MouseEventKind::Down(MouseButton::Left), area.x, area.y - 1),
+        ] {
+            app.handle_mouse(event, now, &mut store, &config).unwrap();
+        }
+        assert_eq!(app.picker.selection, 0);
+        assert_eq!(app.selection, 0);
+        for _ in 0..20 {
+            app.handle_mouse(
+                mouse(MouseEventKind::ScrollDown, area.x, area.y),
+                now,
+                &mut store,
+                &config,
+            )
+            .unwrap();
+        }
+        rendered(&mut app, &config, 60, 18);
+        assert!(app.picker.state.offset() > 0);
+        let (rect, MouseTarget::PickerRow(index)) = app.mouse_targets[0] else {
+            panic!()
+        };
+        let Some(RowIdentity::List(expected)) = app.picker_identity(index) else {
+            panic!()
+        };
+        app.handle_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), rect.x, rect.y),
+            now,
+            &mut store,
+            &config,
+        )
+        .unwrap();
+        assert!(matches!(app.screen, Screen::ListPicker));
+        app.handle_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), rect.x, rect.y),
+            now + Duration::from_millis(100),
+            &mut store,
+            &config,
+        )
+        .unwrap();
+        assert_eq!(app.view, View::List(expected));
+        assert!(matches!(app.screen, Screen::Navigation));
+    }
+
+    #[test]
+    fn picker_and_parent_navigation_use_configured_actions() {
+        let (_directory, mut store, _) = fixture();
+        let work = store.create_list("Work").unwrap();
+        let config = Config::from_toml("[keys]\nlists = ['ctrl+l']\nback = ['ctrl+b']\nplanned = ['ctrl+p']\nopen = ['ctrl+o']").unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        assert!(rendered(&mut app, &config, 100, 24).contains("ctrl+l"));
+        app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        let control = |letter| KeyEvent::new(KeyCode::Char(letter), KeyModifiers::CONTROL);
+        app.handle_key(control('l'), &mut store, &config);
+        app.select_picker_identity(RowIdentity::List(work.id));
+        app.handle_key(control('o'), &mut store, &config);
+        assert_eq!(app.view, View::List(work.id));
+        assert!(rendered(&mut app, &config, 100, 24).contains("ctrl+b"));
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert_eq!(app.view, View::List(work.id));
+        app.handle_key(control('l'), &mut store, &config);
+        app.handle_key(control('b'), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        assert_eq!(app.view, View::List(work.id));
+        app.handle_key(control('l'), &mut store, &config);
+        app.handle_key(control('p'), &mut store, &config);
+        assert_eq!(app.view, View::Planned);
+        assert!(matches!(app.screen, Screen::Navigation));
+    }
+
+    #[test]
+    fn editor_discard_confirmation_remains_above_the_selected_list() {
+        let (_directory, mut store, config) = fixture();
+        let work = store.create_list("Work").unwrap();
+        let task = store.create_task(&input(work.id, "Child task")).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.set_view(View::List(work.id), &store).unwrap();
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        app.paste("Unsaved description");
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].text == "Unsaved description")
+        );
+        assert_eq!(app.view, View::List(work.id));
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        app.handle_key(key(KeyCode::Right), &mut store, &config);
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        assert_eq!(app.view, View::List(work.id));
+        assert_eq!(store.task(task.id).unwrap(), task);
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert_eq!(app.view, View::Planned);
     }
 }

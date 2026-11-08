@@ -113,7 +113,7 @@ Husker SHALL reject unknown action names, invalid key strings, and shortcuts ass
 | Mode | Purpose |
 | --- | --- |
 | Task navigation | Select tasks and invoke task actions. |
-| List navigation | Select, create, and rename lists. |
+| List picker | Select a scope and create, rename, or reorder ordinary lists in a modal popup. |
 | Task editor | Enter task fields. |
 | Filter editor | Enter a task filter. |
 | List-name editor | Enter a new or replacement list name. |
@@ -122,6 +122,7 @@ Husker SHALL reject unknown action names, invalid key strings, and shortcuts ass
 | Copy text | Scroll plain task text for native terminal selection. |
 
 The same key may trigger different actions in different modes.
+The list picker retains the existing list-mode action names, configurable bindings, and conflict checks.
 Text input modes do not execute navigation actions.
 Configured actions take precedence over built-in text-editing shortcuts in their active mode.
 Discard confirmation uses fixed choice keys defined by the terminal-interface spec and retains configured Discard and Refresh actions.
@@ -147,3 +148,8 @@ Existing configuration files must remove those overrides before loading.
 
 - **WHEN** the user assigns an otherwise unclaimed Ctrl+A shortcut to Save in the task editor
 - **THEN** Ctrl+A invokes Save in that mode instead of selecting field text
+
+#### Scenario: Use a configured picker shortcut
+
+- **WHEN** `[keys]` assigns the `lists` action to Ctrl+L
+- **THEN** Ctrl+L opens or cancels the picker and its hint shows Ctrl+L
