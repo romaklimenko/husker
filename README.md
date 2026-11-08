@@ -68,7 +68,7 @@ for project setup, custom profiles, and access settings.
 
 Press F3, choose English or Dansk, and press Enter to change the interface
 language. Husker saves the choice for the next launch. Esc cancels the picker.
-An open task draft stays intact.
+An open task draft stays intact. The language shortcut is listed in Help (`?`).
 
 Create or edit `config.toml` in your profile directory to override shortcuts:
 

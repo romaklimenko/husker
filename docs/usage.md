@@ -401,6 +401,7 @@ Backspace edits text in an input field. It does not delete a task.
 Press F3 to open the language picker. Use Up or Down to select English or
 Dansk, then press Enter. The interface changes after Husker saves the choice.
 The next launch uses the same language. Press Esc to cancel without saving.
+The language shortcut is listed in Help (`?`).
 
 You can change language while editing a task. Your draft, cursor, and undo
 history stay intact. Language selection also works from task views, the list

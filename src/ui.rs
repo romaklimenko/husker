@@ -1464,7 +1464,11 @@ impl App {
         let sections = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),
+                Constraint::Length(if matches!(self.screen, Screen::Editor(_)) {
+                    3
+                } else {
+                    2
+                }),
                 Constraint::Min(1),
                 Constraint::Length(if matches!(self.screen, Screen::ListPicker) {
                     4
@@ -1511,20 +1515,13 @@ impl App {
             )
         };
         let mut header_lines = vec![Line::from(header)];
-        let language_hint = format!(
-            "{} {}",
-            config.keys_for(Action::Language),
-            tr(language, "action_language")
-        );
         if matches!(self.screen, Screen::Editor(_)) {
             header_lines.push(Line::from(format!(
-                "{language_hint} | {} {} | {}",
+                "{} {} | {}",
                 config.keys_for(Action::CopySelection),
                 tr(language, "copy_short"),
                 tr(language, "editor_keys_hint"),
             )));
-        } else if Action::Language.available_in(self.mode()) {
-            header_lines.push(Line::from(language_hint));
         }
         frame.render_widget(
             Paragraph::new(header_lines)
