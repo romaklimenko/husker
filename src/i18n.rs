@@ -59,6 +59,13 @@ pub fn tr(language: Language, key: &str) -> &'static str {
         "done" => ("Done", "Udført"),
         "cancelled" => ("Cancelled", "Annulleret"),
         "saved" => ("Saved", "Gemt"),
+        "copied" => ("Copied selection", "Markering kopieret"),
+        "copy_failed" => (
+            "Could not copy selected text",
+            "Kunne ikke kopiere markeret tekst",
+        ),
+        "copy_short" => ("Copy", "Kopiér"),
+        "action_copy_selection" => ("Copy selected text", "Kopiér markeret tekst"),
         "created" => ("Created", "Oprettet"),
         "restored" => ("Restored", "Gendannet"),
         "deleted" => ("Moved to Trash", "Flyttet til papirkurven"),
@@ -106,8 +113,8 @@ pub fn tr(language: Language, key: &str) -> &'static str {
             "Rediger felterne. En tom forfaldsdato fjerner datoen.",
         ),
         "editor_keys_hint" => (
-            "Ctrl+Left/Right word | Shift select | Ctrl+A all | Ctrl+Z/Y undo/redo",
-            "Ctrl+Venstre/Højre ord | Shift markér | Ctrl+A alt | Ctrl+Z/Y fortryd/gentag",
+            "Ctrl+Left/Right word | Shift select | Ctrl+Z/Y undo/redo",
+            "Ctrl+Venstre/Højre ord | Shift markér | Ctrl+Z/Y fortryd/gentag",
         ),
         "discard_confirm" => ("Discard unsaved changes?", "Kassér ugemte ændringer?"),
         "discard_confirm_hint" => ("Arrows choose | Enter confirm", "Pile vælg | Enter bekræft"),
@@ -183,6 +190,7 @@ fn danish_error(message: &str) -> String {
     let translated = match message {
         "A list name cannot be empty." => "Et listenavn må ikke være tomt.",
         "A task title cannot be empty." => "En opgavetitel må ikke være tom.",
+        "Selected text contains a null character." => "Den markerede tekst indeholder et nultegn.",
         "A list with that name already exists." => "Der findes allerede en liste med det navn.",
         "Trash and Papirkurv are reserved list names." => {
             "Trash og Papirkurv er reserverede listenavne."
@@ -308,5 +316,10 @@ mod tests {
         assert!(!error_message(Language::Da, &duplicate).contains("filter may"));
         let external = anyhow::anyhow!("OS error 123");
         assert_eq!(error_message(Language::Da, &external), "OS error 123");
+        let null_text = anyhow::anyhow!("Selected text contains a null character.");
+        assert_eq!(
+            error_message(Language::Da, &null_text),
+            "Den markerede tekst indeholder et nultegn."
+        );
     }
 }

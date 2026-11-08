@@ -62,6 +62,7 @@ Use these shortcuts in task fields, the filter input, or a list-name form:
 | Ctrl+Shift+Left or Ctrl+Shift+Right | Extend the selection by word. |
 | Ctrl+Shift+Home or Ctrl+Shift+End | Select to the start or end of the field. |
 | Ctrl+A | Select the whole current field. |
+| Ctrl+C | Copy selected text to the system clipboard. |
 | Ctrl+Z | Undo the last text edit in this field. |
 | Ctrl+Y or Ctrl+Shift+Z | Redo an undone edit. |
 
@@ -74,7 +75,12 @@ Undo belongs to the current field. If you change Title and then Description,
 Ctrl+Z in Description leaves the Title change in place. A paste is one undo
 step. Typing new text after undo removes the previous redo choices.
 Saving or discarding a form ends its undo history.
-Use [F4 and your terminal's Copy command](#use-the-mouse-and-copy-text) to copy task text.
+Press Ctrl+C to copy selected text without changing it or adding an undo step.
+For example, select `æbler` in `Køb æbler` and press Ctrl+C to copy that word.
+The selection stays highlighted. Without a selection, Ctrl+C leaves the
+clipboard unchanged.
+Use [F4 and your terminal's Copy command](#use-the-mouse-and-copy-text) to copy
+plain task text or when native clipboard access fails.
 
 ## Organize tasks into lists
 
@@ -215,6 +221,15 @@ Trash keeps the task's title, description, due date, status date, and list membe
 
 ## Use the mouse and copy text
 
+Select text with the keyboard in a task field, filter input, or list-name
+form, then press Ctrl+C to copy that selection. A message confirms success.
+Copying preserves your unsaved text, cursor, and selection.
+Ctrl+C has no Husker clipboard action outside those inputs.
+
+If copying fails, the error leaves the selection intact. From a task editor,
+press F4 and use your terminal's Copy command instead.
+Text containing a null character cannot be copied through Ctrl+C.
+
 Click a task or list to select it. Double-click the same row within 400 ms
 to open it. The mouse wheel moves through the rows. In an editor, click
 a field to focus it and place the text cursor.
@@ -231,6 +246,13 @@ Press Esc to return to the previous screen without saving or discarding edits.
 
 The copy view turns mouse capture off automatically and restores your
 previous mouse setting when you leave it.
+
+Ctrl+C uses the system clipboard available to the computer running Husker.
+Native clipboard access is supported on Windows, macOS, and Linux when a
+desktop clipboard is available. On Linux, keep Husker open until you paste.
+Clipboard contents after quitting depend on the desktop's clipboard manager.
+Husker does not forward clipboard contents through SSH to your local terminal.
+For a remote session, use F4 and the local terminal's Copy command.
 
 ## Refresh changes from an agent
 
@@ -311,6 +333,9 @@ both shortcuts. Actions omitted from `[keys]` keep their defaults.
 An action override takes precedence over a built-in text-editing shortcut.
 For example, `save = ["ctrl+a"]` makes Ctrl+A save instead of select all in
 the task editor.
+To copy with Ctrl+Shift+C, add `copy_selection = ["ctrl+shift+c"]` under
+`[keys]`. Set `copy_selection = []` to disable Husker's clipboard shortcut.
+F4 remains available for copying task text through your terminal.
 
 Key strings accept characters such as `q` or `N`, named keys such as `enter`
 or `f2`, and modifiers such as `ctrl+q` or `alt+up`.
@@ -393,7 +418,7 @@ Every command accepts `--profile DIRECTORY` to select its task collection.
 
 ## Update an existing profile
 
-Back up your profile before updating an earlier version to 0.5.0.
+Back up your profile before updating an earlier version to 0.6.0.
 Follow [Back up your tasks](#back-up-your-tasks), then keep every old Husker
 process closed, including MCP clients, until the upgrade is complete.
 
@@ -403,8 +428,11 @@ Install the current version from the repository:
 cargo install --path . --locked
 ```
 
-Version 0.5.0 uses the same database schema as 0.4.0. A profile from 0.4.0
-needs no database conversion, and its saved tasks and list order stay unchanged.
+Version 0.6.0 uses the same database schema as 0.4.0 and 0.5.0. Those profiles
+need no database conversion, and their saved tasks and list order stay unchanged.
+If an input action already uses Ctrl+C, rebind or disable `copy_selection`
+in `[keys]` to avoid a shortcut conflict. For example, set `copy_selection = []`
+to keep your existing Ctrl+C action.
 The steps below apply when upgrading older profiles or old shortcut overrides.
 
 If your `config.toml` overrides the old `anytime` or `maybe` actions, remove

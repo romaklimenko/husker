@@ -47,12 +47,13 @@ pub enum Action {
     Refresh,
     ToggleMouse,
     CopyText,
+    CopySelection,
     ScrollLeft,
     ScrollRight,
 }
 
 impl Action {
-    pub const ALL: [Self; 29] = [
+    pub const ALL: [Self; 30] = [
         Self::Up,
         Self::Down,
         Self::Open,
@@ -80,6 +81,7 @@ impl Action {
         Self::Refresh,
         Self::ToggleMouse,
         Self::CopyText,
+        Self::CopySelection,
         Self::ScrollLeft,
         Self::ScrollRight,
     ];
@@ -113,6 +115,7 @@ impl Action {
             Self::Refresh => "refresh",
             Self::ToggleMouse => "toggle_mouse",
             Self::CopyText => "copy_text",
+            Self::CopySelection => "copy_selection",
             Self::ScrollLeft => "scroll_left",
             Self::ScrollRight => "scroll_right",
         }
@@ -148,6 +151,7 @@ impl Action {
             Self::Refresh => true,
             Self::ToggleMouse => mode != Mode::CopyText,
             Self::CopyText => matches!(mode, Mode::Tasks | Mode::Editor),
+            Self::CopySelection => matches!(mode, Mode::Editor | Mode::Filter | Mode::ListName),
             Self::ScrollLeft | Self::ScrollRight => mode == Mode::CopyText,
         }
     }
@@ -181,6 +185,7 @@ impl Action {
             Self::Refresh => &["f5"],
             Self::ToggleMouse => &["f2"],
             Self::CopyText => &["f4"],
+            Self::CopySelection => &["ctrl+c"],
             Self::ScrollLeft => &["left"],
             Self::ScrollRight => &["right"],
         }
@@ -472,6 +477,37 @@ mod tests {
             config.action(key(KeyCode::Char('N')), Mode::Lists),
             Some(Action::NewList)
         );
+    }
+
+    #[test]
+    fn copy_selection_is_input_only_and_can_be_rebound_or_disabled() {
+        let copy = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        let config = Config::default();
+        for mode in [Mode::Editor, Mode::Filter, Mode::ListName] {
+            assert_eq!(config.action(copy, mode), Some(Action::CopySelection));
+        }
+        for mode in [
+            Mode::Tasks,
+            Mode::Lists,
+            Mode::ConfirmDiscard,
+            Mode::Help,
+            Mode::CopyText,
+        ] {
+            assert_eq!(config.action(copy, mode), None);
+        }
+        let config = Config::from_toml("[keys]\ncopy_selection = ['ctrl+k']").unwrap();
+        assert_eq!(config.action(copy, Mode::Editor), None);
+        assert_eq!(
+            config.action(
+                KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL),
+                Mode::Editor
+            ),
+            Some(Action::CopySelection)
+        );
+        assert!(Config::from_toml("[keys]\nsave = ['ctrl+c']").is_err());
+        let disabled = Config::from_toml("[keys]\ncopy_selection = []\nsave = ['ctrl+c']").unwrap();
+        assert_eq!(disabled.action(copy, Mode::Editor), Some(Action::Save));
+        assert!(Config::from_toml("[keys]\nquit = ['ctrl+c']").is_ok());
     }
 
     #[test]

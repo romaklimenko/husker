@@ -22,6 +22,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use ratatui::{Frame, Terminal};
 use unicode_width::UnicodeWidthStr;
 
+use crate::clipboard::{SystemClipboard, TextClipboard};
 use crate::config::{Action, Config, Mode};
 use crate::i18n::{Language, error_message, tr};
 use crate::model::{Status, Task, TaskInput, TaskList};
@@ -249,6 +250,7 @@ struct TransientMessage {
 }
 
 struct App {
+    clipboard: Box<dyn TextClipboard>,
     view: View,
     screen: Screen,
     lists: Vec<TaskList>,
@@ -273,6 +275,7 @@ struct App {
 impl App {
     fn new(store: &Store, today: NaiveDate) -> Result<Self> {
         let mut app = Self {
+            clipboard: Box::new(SystemClipboard::default()),
             view: View::Tasks {
                 list_id: None,
                 trash: false,
@@ -576,6 +579,23 @@ impl App {
         );
     }
 
+    fn copy_selection(&mut self, config: &Config) -> Result<()> {
+        let buffer = match &self.screen {
+            Screen::Editor(editor) => &editor.fields[editor.active],
+            Screen::Filter(buffer) | Screen::ListName { buffer, .. } => buffer,
+            _ => return Ok(()),
+        };
+        let Some(selection) = buffer.selection() else {
+            return Ok(());
+        };
+        let text = buffer.text[selection].to_owned();
+        self.clipboard
+            .set_text(&text)
+            .with_context(|| tr(config.language, "copy_failed"))?;
+        self.show_message(tr(config.language, "copied"), false, Instant::now());
+        Ok(())
+    }
+
     fn handle_key(&mut self, key: KeyEvent, store: &mut Store, config: &Config) -> bool {
         match self.dispatch_key(key, store, config) {
             Ok(quit) => quit,
@@ -589,6 +609,10 @@ impl App {
     fn dispatch_key(&mut self, key: KeyEvent, store: &mut Store, config: &Config) -> Result<bool> {
         let action = config.action(key, self.mode());
         match action {
+            Some(Action::CopySelection) => {
+                self.copy_selection(config)?;
+                return Ok(false);
+            }
             Some(Action::Refresh) => {
                 self.refresh_changes(store, config, Local::now().date_naive(), true)?;
                 return Ok(false);
@@ -636,7 +660,9 @@ impl App {
                         }
                         _ => {}
                     }
-                } else if key.code == KeyCode::BackTab && key.modifiers == KeyModifiers::SHIFT {
+                } else if matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
+                    && key.modifiers == KeyModifiers::SHIFT
+                {
                     *discard = !*discard;
                 }
                 return Ok(false);
@@ -1088,8 +1114,13 @@ impl App {
             )
         };
         let mut header_lines = vec![Line::from(header)];
-        if editor.is_some() {
-            header_lines.push(Line::from(tr(language, "editor_keys_hint")));
+        if matches!(self.screen, Screen::Editor(_)) {
+            header_lines.push(Line::from(format!(
+                "{} {} | {}",
+                config.keys_for(Action::CopySelection),
+                tr(language, "copy_short"),
+                tr(language, "editor_keys_hint"),
+            )));
         }
         frame.render_widget(
             Paragraph::new(header_lines)
@@ -1198,11 +1229,13 @@ impl App {
                 tr(language, "action_close"),
             ),
             Screen::Filter(_) | Screen::ListName { .. } => format!(
-                "{} {}  |  {} {}",
+                "{} {}  |  {} {}  |  {} {}",
                 config.keys_for(Action::Apply),
                 tr(language, "action_apply"),
                 config.keys_for(Action::Back),
-                tr(language, "action_discard")
+                tr(language, "action_discard"),
+                config.keys_for(Action::CopySelection),
+                tr(language, "copy_short")
             ),
             Screen::Help => format!(
                 "{} / {}  |  {} {}",
@@ -1592,6 +1625,173 @@ mod tests {
     use super::*;
     use ratatui::backend::TestBackend;
     use tempfile::TempDir;
+
+    struct RecordingClipboard {
+        writes: Arc<std::sync::Mutex<Vec<String>>>,
+        fail: bool,
+    }
+
+    impl TextClipboard for RecordingClipboard {
+        fn set_text(&mut self, text: &str) -> Result<()> {
+            if self.fail {
+                bail!("Clipboard unavailable in test");
+            }
+            self.writes.lock().unwrap().push(text.to_owned());
+            Ok(())
+        }
+    }
+
+    fn record_clipboard(app: &mut App, fail: bool) -> Arc<std::sync::Mutex<Vec<String>>> {
+        let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        app.clipboard = Box::new(RecordingClipboard {
+            writes: writes.clone(),
+            fail,
+        });
+        writes
+    }
+
+    #[test]
+    fn copy_selection_uses_source_text_without_changing_editor_state() {
+        let (_directory, mut store, config) = fixture();
+        let mut value = input(1, "Copy test");
+        value.description =
+            "Skip Køb æbler og pærer fra den lange indkøbsliste\n👩‍💻 e\u{301} End".into();
+        let task = store.create_task(&value).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        let writes = record_clipboard(&mut app, false);
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        let Screen::Editor(editor) = &mut app.screen else {
+            panic!()
+        };
+        editor.fields[1].set_cursor(5, false);
+        editor.fields[1].set_cursor(value.description.len() - 4, true);
+        let before = editor.fields.clone();
+        rendered(&mut app, &config, 38, 24);
+        assert!(!app.handle_key(
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            &mut store,
+            &config
+        ));
+        assert_eq!(
+            *writes.lock().unwrap(),
+            ["Køb æbler og pærer fra den lange indkøbsliste\n👩‍💻 e\u{301}"]
+        );
+        let Screen::Editor(editor) = &app.screen else {
+            panic!()
+        };
+        assert_eq!(editor.fields, before);
+        assert!(!editor.is_dirty());
+        assert_eq!(store.task(task.id).unwrap(), task);
+        assert_eq!(
+            app.message.as_ref().unwrap().text,
+            tr(config.language, "copied")
+        );
+        assert!(!app.message.as_ref().unwrap().is_error);
+    }
+
+    #[test]
+    fn copy_failure_keeps_selection_history_and_unsaved_text() {
+        let (_directory, mut store, mut config) = fixture();
+        config.language = Language::Da;
+        let mut app = App::new(&store, today()).unwrap();
+        let writes = record_clipboard(&mut app, true);
+        app.handle_key(key(KeyCode::Char('n')), &mut store, &config);
+        app.paste("Unsaved draft");
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        let Screen::Editor(editor) = &app.screen else {
+            panic!()
+        };
+        let before = editor.fields.clone();
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        let Screen::Editor(editor) = &app.screen else {
+            panic!()
+        };
+        assert_eq!(editor.fields, before);
+        assert!(editor.is_dirty());
+        assert!(writes.lock().unwrap().is_empty());
+        let message = app.message.as_ref().unwrap();
+        assert!(message.is_error);
+        assert!(message.text.contains(tr(Language::Da, "copy_failed")));
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        assert!(matches!(&app.screen, Screen::Editor(editor) if !editor.is_dirty()));
+    }
+
+    #[test]
+    fn copying_filter_and_list_selections_preserves_terminal_paste() {
+        let (_directory, mut store, config) = fixture();
+        let mut app = App::new(&store, today()).unwrap();
+        let writes = record_clipboard(&mut app, false);
+        for list_input in [false, true] {
+            let mut buffer = TextBuffer::new("first second");
+            buffer.set_cursor(6, false);
+            buffer.set_cursor(12, true);
+            app.screen = if list_input {
+                Screen::ListName { id: None, buffer }
+            } else {
+                Screen::Filter(buffer)
+            };
+            app.handle_key(
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                &mut store,
+                &config,
+            );
+            app.paste("replacement");
+            let buffer = match &app.screen {
+                Screen::ListName { buffer, .. } | Screen::Filter(buffer) => buffer,
+                _ => panic!(),
+            };
+            assert_eq!(buffer.text, "first replacement");
+            app.handle_key(
+                KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
+                &mut store,
+                &config,
+            );
+            let buffer = match &app.screen {
+                Screen::ListName { buffer, .. } | Screen::Filter(buffer) => buffer,
+                _ => panic!(),
+            };
+            assert_eq!(buffer.text, "first second");
+            assert_eq!(buffer.selection(), Some(6..12));
+        }
+        assert_eq!(*writes.lock().unwrap(), ["second", "second"]);
+    }
+
+    #[test]
+    fn copy_without_selection_and_outside_inputs_never_writes_clipboard() {
+        let (_directory, mut store, config) = fixture();
+        let mut app = App::new(&store, today()).unwrap();
+        let writes = record_clipboard(&mut app, false);
+        let copy = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        app.handle_key(copy, &mut store, &config);
+        app.handle_key(key(KeyCode::Char('n')), &mut store, &config);
+        app.paste("Draft");
+        app.handle_key(copy, &mut store, &config);
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        app.handle_key(copy, &mut store, &config);
+        assert!(matches!(app.screen, Screen::ConfirmDiscard { .. }));
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        app.handle_key(key(KeyCode::F(4)), &mut store, &config);
+        app.handle_key(copy, &mut store, &config);
+        assert!(matches!(app.screen, Screen::CopyText { .. }));
+        assert!(writes.lock().unwrap().is_empty());
+    }
 
     fn today() -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 11, 8).unwrap()
@@ -2132,6 +2332,37 @@ mod tests {
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         assert!(matches!(app.screen, Screen::Navigation));
         assert_eq!(store.tasks().unwrap(), vec![task]);
+    }
+
+    #[test]
+    fn discard_confirmation_accepts_both_shift_tab_event_forms() {
+        let (_directory, mut store, config) = fixture();
+        let mut app = App::new(&store, today()).unwrap();
+        app.handle_key(key(KeyCode::Char('n')), &mut store, &config);
+        app.paste("Keep this draft");
+        for code in [KeyCode::BackTab, KeyCode::Tab] {
+            app.handle_key(key(KeyCode::Esc), &mut store, &config);
+            assert!(matches!(
+                app.screen,
+                Screen::ConfirmDiscard { discard: false, .. }
+            ));
+            let shift_tab = KeyEvent::new(code, KeyModifiers::SHIFT);
+            app.handle_key(shift_tab, &mut store, &config);
+            assert!(matches!(
+                app.screen,
+                Screen::ConfirmDiscard { discard: true, .. }
+            ));
+            app.handle_key(shift_tab, &mut store, &config);
+            assert!(matches!(
+                app.screen,
+                Screen::ConfirmDiscard { discard: false, .. }
+            ));
+            app.handle_key(key(KeyCode::Enter), &mut store, &config);
+            assert!(
+                matches!(&app.screen, Screen::Editor(editor) if editor.fields[0].text == "Keep this draft")
+            );
+        }
+        assert!(store.tasks().unwrap().is_empty());
     }
 
     #[test]

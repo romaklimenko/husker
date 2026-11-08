@@ -89,7 +89,8 @@ stay until you acknowledge them with F5.
 Task rows use the full width. Press Enter to read or edit the description.
 Long descriptions wrap in the editor without adding line breaks to your text.
 Use Ctrl+Left and Ctrl+Right to move by word, Shift with movement keys to
-select text, and Ctrl+Z to undo. The editor heading shows an existing task's ID.
+select text, Ctrl+C to copy the selection, and Ctrl+Z to undo.
+The editor heading shows an existing task's ID.
 
 In the list chooser, use Alt+Up and Alt+Down to arrange your lists.
 The default list stays first and Trash stays last. Husker remembers the order.

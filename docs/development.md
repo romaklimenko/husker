@@ -35,10 +35,41 @@ The installed copy does not lock the repository's build executable.
 Close installed Husker processes and disconnect MCP clients before replacing
 the installed copy with `cargo install --path . --locked`.
 
-Use only temporary profiles for migration tests. Starting version 0.5.0
+Use only temporary profiles for migration tests. Starting version 0.6.0
 against a schema version 1 or 2 profile performs a migration on writable access.
-Versions 0.4.0 and 0.5.0 both use schema version 3.
+Versions 0.4.0 through 0.6.0 use schema version 3.
 Follow the [upgrade instructions](usage.md#update-an-existing-profile) for a real profile.
+
+## Checks for version 0.6.0
+
+Version 0.6.0 passed these checks on November 8, 2026:
+
+| Check | Result |
+| --- | --- |
+| Unit tests | 112 passed, including exact selected-text copying, all input modes, clipboard failures, NUL rejection, preserved editing state, and shortcut configuration. |
+| CLI integration tests | 8 passed against isolated profiles. |
+| MCP integration tests | 7 passed through child processes. |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.6.0. |
+| OpenSpec | All six capability specs passed strict validation after archiving the clipboard change. No active changes remain. |
+| Guide examples | Verified default, rebound, and disabled copy shortcuts, conflicting Ctrl+C bindings, task commands, no-date filters, and MCP help. |
+| Native clipboard | A Windows clipboard read matched the selected multiline text exactly, including LF newlines, Danish letters, and a joined emoji. |
+
+The native clipboard check ran against a scratch profile in the terminal.
+Ctrl+A selected Description and Ctrl+C displayed `Copied selection` while
+keeping the editor open. `Get-Clipboard -Raw` returned the expected text,
+including `Køb æbler` and `👩‍💻`. Esc then closed the unchanged editor without
+a discard prompt. The test harness restored the previous clipboard text
+after the check.
+
+Automated UI tests use recording and failing clipboard implementations.
+They do not read or overwrite the system clipboard. The discard-confirmation
+tests also cover both terminal event encodings of Shift+Tab.
+
+The checks ran on Windows with Rust 1.91.1 and isolated profiles.
+Linux and macOS native clipboard behavior was not tested in this session.
+No SSH clipboard forwarding was tested or added.
 
 ## Checks for version 0.5.0
 

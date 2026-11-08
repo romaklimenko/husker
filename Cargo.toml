@@ -1,6 +1,6 @@
 [package]
 name = "husker"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.88"
 description = "A keyboard-first terminal todo app"
@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 anyhow = "1"
+arboard = { version = "3.7", default-features = false, features = ["wayland-data-control"] }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
