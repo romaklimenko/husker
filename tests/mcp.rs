@@ -347,6 +347,9 @@ async fn current_discovery_handles_versioned_task_workflow_and_pagination() {
         .clone();
     assert_eq!(done["status"], "done");
     assert!(done["status_changed_on"].is_string());
+    let instant =
+        chrono::DateTime::parse_from_rfc3339(done["status_changed_at"].as_str().unwrap()).unwrap();
+    assert_eq!(instant.offset().local_minus_utc(), 0);
     assert_eq!(data(&client, "list_tasks", json!({})).await["total"], 2);
     assert_eq!(
         data(&client, "list_tasks", json!({"query":"s:open"})).await["total"],
@@ -354,10 +357,12 @@ async fn current_discovery_handles_versioned_task_workflow_and_pagination() {
     );
     let deleted = data(&client, "trash_task", json!({"id":id,"version":3})).await["task"].clone();
     assert_eq!(deleted["deleted"], true);
+    assert_eq!(deleted["status_changed_at"], done["status_changed_at"]);
     let restored =
         data(&client, "restore_task", json!({"id":id,"version":4})).await["task"].clone();
     assert_eq!(restored["status"], "done");
     assert_eq!(restored["version"], 5);
+    assert_eq!(restored["status_changed_at"], done["status_changed_at"]);
     let first = data(&client, "list_tasks", json!({"query":"s:all","limit":1})).await;
     assert_eq!(first["total"], 2);
     assert_eq!(first["next_offset"], 1);
@@ -395,6 +400,7 @@ async fn current_discovery_handles_versioned_task_workflow_and_pagination() {
     )
     .await;
     assert!(reopened["task"]["status_changed_on"].is_null());
+    assert!(reopened["task"]["status_changed_at"].is_null());
     close(client).await;
 }
 

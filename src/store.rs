@@ -1,15 +1,14 @@
 use std::{io, path::Path, time::Duration};
 
 use anyhow::{Context, Result, bail, ensure};
-use chrono::{Local, NaiveDate};
+use chrono::{DateTime, Local, NaiveDate, Utc};
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Row, TransactionBehavior, params, types::Type,
 };
 
 use crate::model::{Status, Task, TaskInput, TaskList};
 
-const TASK_COLUMNS: &str =
-    "id, list_id, title, description, due, status, status_changed_on, deleted, position, version";
+const TASK_COLUMNS: &str = "id, list_id, title, description, due, status, status_changed_on, deleted, position, version, status_changed_at";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListDeletionPreview {
@@ -76,6 +75,7 @@ impl Store {
                             due TEXT,
                             status TEXT NOT NULL CHECK(status IN ('open', 'done', 'cancelled')),
                             status_changed_on TEXT,
+                            status_changed_at TEXT,
                             deleted INTEGER NOT NULL CHECK(deleted IN (0, 1)),
                             position INTEGER NOT NULL,
                             version INTEGER NOT NULL CHECK(version > 0)
@@ -83,17 +83,22 @@ impl Store {
                         CREATE INDEX tasks_list ON tasks(list_id);
                         CREATE INDEX tasks_planning ON tasks(deleted, status, due, position);
                         INSERT INTO lists(name, name_key) VALUES ('Inbox', 'inbox');
-                        PRAGMA user_version = 3;",
+                        PRAGMA user_version = 4;",
                     )?;
                 }
                 1 => {
                     migrate_schema_one(&transaction)?;
                     migrate_schema_two(&transaction)?;
+                    migrate_schema_three(&transaction)?;
                 }
-                2 => migrate_schema_two(&transaction)?,
-                3 => {}
+                2 => {
+                    migrate_schema_two(&transaction)?;
+                    migrate_schema_three(&transaction)?;
+                }
+                3 => migrate_schema_three(&transaction)?,
+                4 => {}
                 _ => bail!(
-                    "Unsupported database schema version {version}. This Husker supports version 3."
+                    "Unsupported database schema version {version}. This Husker supports version 4."
                 ),
             }
             transaction.commit()?;
@@ -388,8 +393,35 @@ impl Store {
         Ok(task)
     }
 
+    pub fn set_due(&mut self, id: i64, version: i64, due: Option<NaiveDate>) -> Result<Task> {
+        self.require_writable()?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored = find_task(&transaction, id, self.list_scope)?;
+        require_version(&stored, version)?;
+        if stored.due == due {
+            transaction.commit()?;
+            return Ok(stored);
+        }
+        transaction.execute(
+            "UPDATE tasks SET due = ?1, version = version + 1 WHERE id = ?2 AND version = ?3",
+            params![due.map(|date| date.to_string()), id, version],
+        )?;
+        let task = find_task(&transaction, id, self.list_scope)?;
+        transaction.commit()?;
+        Ok(task)
+    }
+
     pub fn set_status(&mut self, id: i64, version: i64, status: Status) -> Result<Task> {
-        self.set_status_on(id, version, status, Local::now().date_naive())
+        let now = Local::now();
+        self.set_status_at(
+            id,
+            version,
+            status,
+            now.date_naive(),
+            now.with_timezone(&Utc),
+        )
     }
 
     pub fn set_status_on(
@@ -399,23 +431,35 @@ impl Store {
         status: Status,
         today: NaiveDate,
     ) -> Result<Task> {
+        self.set_status_at(id, version, status, today, Utc::now())
+    }
+
+    pub fn set_status_at(
+        &mut self,
+        id: i64,
+        version: i64,
+        status: Status,
+        today: NaiveDate,
+        now: DateTime<Utc>,
+    ) -> Result<Task> {
         self.require_writable()?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let stored = find_task(&transaction, id, self.list_scope)?;
         require_version(&stored, version)?;
-        let status_changed_on = match status {
-            Status::Open => None,
-            _ if status == stored.status => stored.status_changed_on,
-            _ => Some(today),
+        let (status_changed_on, status_changed_at) = match status {
+            Status::Open => (None, None),
+            _ if status == stored.status => (stored.status_changed_on, stored.status_changed_at),
+            _ => (Some(today), Some(now)),
         };
         transaction.execute(
-            "UPDATE tasks SET status = ?1, status_changed_on = ?2,
-                 version = version + 1 WHERE id = ?3 AND version = ?4",
+            "UPDATE tasks SET status = ?1, status_changed_on = ?2, status_changed_at = ?3,
+                 version = version + 1 WHERE id = ?4 AND version = ?5",
             params![
                 status.as_str(),
                 status_changed_on.map(|date| date.to_string()),
+                status_changed_at.map(|instant| instant.to_rfc3339()),
                 id,
                 version
             ],
@@ -525,14 +569,14 @@ fn list_deletion_preview(connection: &Connection, id: i64) -> Result<Option<List
 }
 
 fn require_current_schema(version: i64) -> Result<()> {
-    if version == 1 || version == 2 {
+    if (1..=3).contains(&version) {
         bail!(
             "Database schema version {version} needs an upgrade. Open this profile with writable Husker before connecting read-only."
         );
     }
     ensure!(
-        version == 3,
-        "Unsupported database schema version {version}. This Husker supports version 3."
+        version == 4,
+        "Unsupported database schema version {version}. This Husker supports version 4."
     );
     Ok(())
 }
@@ -599,6 +643,14 @@ fn migrate_schema_two(connection: &Connection) -> Result<()> {
         )?;
     }
     connection.pragma_update(None, "user_version", 3)?;
+    Ok(())
+}
+
+fn migrate_schema_three(connection: &Connection) -> Result<()> {
+    connection.execute_batch(
+        "ALTER TABLE tasks ADD COLUMN status_changed_at TEXT;
+         PRAGMA user_version = 4;",
+    )?;
     Ok(())
 }
 
@@ -708,6 +760,7 @@ fn read_task(row: &Row<'_>) -> rusqlite::Result<Task> {
         due: read_date(row, 4)?,
         status,
         status_changed_on: read_date(row, 6)?,
+        status_changed_at: read_timestamp(row, 10)?,
         deleted: row.get(7)?,
         position: row.get(8)?,
         version: row.get(9)?,
@@ -721,6 +774,19 @@ fn read_date(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<NaiveDate>>
             NaiveDate::parse_from_str(&value, "%Y-%m-%d").map_err(|error| {
                 rusqlite::Error::FromSqlConversionFailure(index, Type::Text, Box::new(error))
             })
+        })
+        .transpose()
+}
+
+fn read_timestamp(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<DateTime<Utc>>> {
+    let value: Option<String> = row.get(index)?;
+    value
+        .map(|value| {
+            DateTime::parse_from_rfc3339(&value)
+                .map(|instant| instant.with_timezone(&Utc))
+                .map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(index, Type::Text, Box::new(error))
+                })
         })
         .transpose()
 }
@@ -740,6 +806,23 @@ mod tests {
 
     fn memory_store() -> Store {
         Store::open(Path::new(":memory:")).unwrap()
+    }
+
+    fn tasks_without_recorded_times(connection: &Connection) -> Vec<Task> {
+        let columns = TASK_COLUMNS.replace("status_changed_at", "NULL AS status_changed_at");
+        connection
+            .prepare(&format!("SELECT {columns} FROM tasks ORDER BY id"))
+            .unwrap()
+            .query_map([], read_task)
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    fn timestamp(value: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .with_timezone(&Utc)
     }
 
     fn legacy_database(path: &Path) -> Connection {
@@ -793,6 +876,7 @@ mod tests {
         assert_eq!(milk.due, NaiveDate::from_ymd_opt(2026, 11, 8));
         assert_eq!(milk.status, Status::Open);
         assert_eq!(milk.status_changed_on, None);
+        assert_eq!(milk.status_changed_at, None);
         assert!(!milk.deleted);
         assert_eq!((milk.position, milk.version), (5, 4));
         let mut before_upgrade = TaskInput::from(&milk);
@@ -802,11 +886,13 @@ mod tests {
         let done = store.task(9).unwrap();
         assert_eq!(done.status, Status::Done);
         assert_eq!(done.status_changed_on, None);
+        assert_eq!(done.status_changed_at, None);
         assert_eq!(done.description, "#archive");
         assert_eq!((done.position, done.version), (8, 5));
         let cancelled = store.task(10).unwrap();
         assert_eq!(cancelled.status, Status::Cancelled);
         assert_eq!(cancelled.status_changed_on, None);
+        assert_eq!(cancelled.status_changed_at, None);
         assert_eq!(cancelled.description, "Exact original text");
         assert!(cancelled.deleted);
         assert_eq!((cancelled.position, cancelled.version), (9, 6));
@@ -824,7 +910,7 @@ mod tests {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
         drop(store);
         let scoped = Store::open_for_mcp(&path, Some("Home"), true).unwrap();
         assert_eq!(scoped.default_list_id().unwrap(), 2);
@@ -882,13 +968,7 @@ mod tests {
             "INSERT INTO lists VALUES (3, 'Zebra', 'zebra'), (4, 'apple', 'apple'), (5, 'Beta', 'beta');
              UPDATE tasks SET status_changed_on = '2026-11-08' WHERE id = 9;",
         ).unwrap();
-        let before: Vec<Task> = connection
-            .prepare(&format!("SELECT {TASK_COLUMNS} FROM tasks ORDER BY id"))
-            .unwrap()
-            .query_map([], read_task)
-            .unwrap()
-            .collect::<rusqlite::Result<_>>()
-            .unwrap();
+        let before = tasks_without_recorded_times(&connection);
         assert!(Store::open_for_mcp(&path, None, true).is_err());
         let old_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -921,6 +1001,154 @@ mod tests {
                 .collect::<Vec<_>>(),
             [1, 4, 5, 2, 3]
         );
+    }
+
+    #[test]
+    fn schema_three_migration_preserves_tasks_lists_and_unknown_completion_times() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.db");
+        let mut connection = legacy_database(&path);
+        {
+            let transaction = connection.transaction().unwrap();
+            migrate_schema_one(&transaction).unwrap();
+            migrate_schema_two(&transaction).unwrap();
+            transaction.commit().unwrap();
+        }
+        connection.execute_batch(
+            "UPDATE lists SET name = 'Personal', name_key = 'personal', position = 99 WHERE id = 1;
+             INSERT INTO lists(id, name, name_key, position) VALUES (3, 'Alpha', 'alpha', -8);
+             UPDATE tasks SET status_changed_on = '2026-11-08' WHERE id = 9;",
+        ).unwrap();
+        let before = tasks_without_recorded_times(&connection);
+        let list_rows = |connection: &Connection| {
+            connection
+                .prepare("SELECT id, name, name_key, position FROM lists ORDER BY id")
+                .unwrap()
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                })
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        let before_lists = list_rows(&connection);
+        let error = Store::open_for_mcp(&path, Some("Home"), true)
+            .err()
+            .unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("Open this profile with writable Husker")
+        );
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 3);
+        assert!(
+            connection
+                .prepare("SELECT status_changed_at FROM tasks")
+                .is_err()
+        );
+        assert_eq!(tasks_without_recorded_times(&connection), before);
+        assert_eq!(list_rows(&connection), before_lists);
+        drop(connection);
+
+        let mut store = Store::open(&path).unwrap();
+        assert_eq!(store.tasks().unwrap(), before);
+        assert_eq!(list_rows(&store.connection), before_lists);
+        assert_eq!(
+            store
+                .lists()
+                .unwrap()
+                .iter()
+                .map(|list| list.id)
+                .collect::<Vec<_>>(),
+            [1, 3, 2]
+        );
+        let version: i64 = store
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 4);
+        assert_eq!(store.create_task(&input("Next task")).unwrap().id, 100);
+        drop(store);
+        let readonly = Store::open_for_mcp(&path, Some("Home"), true).unwrap();
+        assert_eq!(readonly.list_scope(), Some(2));
+        assert_eq!(
+            readonly.task(9).unwrap(),
+            before.iter().find(|task| task.id == 9).unwrap().clone()
+        );
+        assert!(readonly.task(10).is_err());
+    }
+
+    #[test]
+    fn failed_timestamp_migration_rolls_back_every_prior_upgrade_stage() {
+        let directory = tempfile::tempdir().unwrap();
+        for version in [1, 2, 3] {
+            let path = directory.path().join(format!("schema-{version}.db"));
+            let mut connection = legacy_database(&path);
+            {
+                let transaction = connection.transaction().unwrap();
+                if version >= 2 {
+                    migrate_schema_one(&transaction).unwrap();
+                }
+                if version >= 3 {
+                    migrate_schema_two(&transaction).unwrap();
+                }
+                transaction.commit().unwrap();
+            }
+            // This conflicting column fails only the final migration stage.
+            connection
+                .execute_batch(
+                    "ALTER TABLE tasks ADD COLUMN status_changed_at TEXT DEFAULT 'untouched';",
+                )
+                .unwrap();
+            let schema = |connection: &Connection| {
+                connection
+                    .prepare(
+                        "SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name",
+                    )
+                    .unwrap()
+                    .query_map([], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    })
+                    .unwrap()
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .unwrap()
+            };
+            let rows = |connection: &Connection| {
+                connection
+                    .prepare(
+                        "SELECT id, description, version, status_changed_at FROM tasks ORDER BY id",
+                    )
+                    .unwrap()
+                    .query_map([], |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, i64>(2)?,
+                            row.get::<_, String>(3)?,
+                        ))
+                    })
+                    .unwrap()
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .unwrap()
+            };
+            let original_schema = schema(&connection);
+            let original_rows = rows(&connection);
+            assert!(Store::open(&path).is_err());
+            let actual: i64 = connection
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .unwrap();
+            assert_eq!(actual, version);
+            assert_eq!(schema(&connection), original_schema);
+            assert_eq!(rows(&connection), original_rows);
+        }
     }
 
     #[test]
@@ -1013,6 +1241,103 @@ mod tests {
             .set_status_on(task.id, task.version, Status::Done, tomorrow)
             .unwrap();
         assert_eq!(task.status_changed_on, Some(tomorrow));
+    }
+
+    #[test]
+    fn closure_timestamps_follow_transitions_and_survive_unrelated_writes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.db");
+        let mut store = Store::open(&path).unwrap();
+        let list = store.create_list("Work").unwrap();
+        let today = NaiveDate::from_ymd_opt(2026, 11, 8).unwrap();
+        let tomorrow = NaiveDate::from_ymd_opt(2026, 11, 9).unwrap();
+        let first = timestamp("2026-11-07T23:30:00.123456789Z");
+        let second = timestamp("2026-11-08T15:30:00Z");
+        let third = timestamp("2026-11-08T15:31:00Z");
+        let mut fields = input("Original");
+        fields.list_id = list.id;
+        let mut task = store.create_task(&fields).unwrap();
+        assert_eq!(task.status_changed_at, None);
+        task = store
+            .set_status_at(task.id, task.version, Status::Done, today, first)
+            .unwrap();
+        assert_eq!(task.status_changed_on, Some(today));
+        assert_eq!(task.status_changed_at, Some(first));
+        task = store
+            .set_status_at(task.id, task.version, Status::Done, tomorrow, second)
+            .unwrap();
+        fields.title = "Edited".into();
+        task = store.update_task(task.id, task.version, &fields).unwrap();
+        task = store
+            .set_due(task.id, task.version, Some(tomorrow))
+            .unwrap();
+        task = store.set_deleted(task.id, task.version, true).unwrap();
+        task = store.set_deleted(task.id, task.version, false).unwrap();
+        let preview = store.preview_list_deletion(list.id).unwrap();
+        assert_eq!(
+            store.delete_list(&preview).unwrap(),
+            ListDeletionOutcome::Deleted
+        );
+        let moved = store.task(task.id).unwrap();
+        assert_eq!(moved.version, task.version + 1);
+        assert_eq!(moved.list_id, 1);
+        task = moved;
+        assert_eq!(task.status_changed_on, Some(today));
+        assert_eq!(task.status_changed_at, Some(first));
+        task = store
+            .set_status_at(task.id, task.version, Status::Cancelled, today, second)
+            .unwrap();
+        assert_eq!(task.status_changed_on, Some(today));
+        assert_eq!(task.status_changed_at, Some(second));
+        task = store
+            .set_status_at(task.id, task.version, Status::Cancelled, tomorrow, third)
+            .unwrap();
+        assert_eq!(task.status_changed_on, Some(today));
+        assert_eq!(task.status_changed_at, Some(second));
+        task = store
+            .set_status_at(task.id, task.version, Status::Done, today, third)
+            .unwrap();
+        assert_eq!(task.status_changed_at, Some(third));
+        task = store
+            .set_status_at(task.id, task.version, Status::Open, tomorrow, third)
+            .unwrap();
+        assert_eq!(task.status_changed_on, None);
+        assert_eq!(task.status_changed_at, None);
+        let final_instant = timestamp("2026-11-09T11:00:00.987654321Z");
+        task = store
+            .set_status_at(task.id, task.version, Status::Done, tomorrow, final_instant)
+            .unwrap();
+        assert_eq!(task.status_changed_on, Some(tomorrow));
+        assert_eq!(task.status_changed_at, Some(final_instant));
+        drop(store);
+        let reopened = Store::open(&path).unwrap();
+        assert_eq!(reopened.task(task.id).unwrap(), task);
+        let json = serde_json::to_value(&task).unwrap();
+        assert_eq!(json["status_changed_at"], "2026-11-09T11:00:00.987654321Z");
+    }
+
+    #[test]
+    fn repeated_closed_status_does_not_invent_an_unknown_completion_time() {
+        let mut store = memory_store();
+        let original_date = NaiveDate::from_ymd_opt(2026, 11, 7).unwrap();
+        let later_date = NaiveDate::from_ymd_opt(2026, 11, 8).unwrap();
+        let now = timestamp("2026-11-08T15:30:00Z");
+        for status in [Status::Done, Status::Cancelled] {
+            let task = store.create_task(&input("Legacy completion")).unwrap();
+            store
+                .connection
+                .execute(
+                    "UPDATE tasks SET status = ?1, status_changed_on = ?2 WHERE id = ?3",
+                    params![status.as_str(), original_date.to_string(), task.id],
+                )
+                .unwrap();
+            let changed = store
+                .set_status_at(task.id, task.version, status, later_date, now)
+                .unwrap();
+            assert_eq!(changed.status_changed_on, Some(original_date));
+            assert_eq!(changed.status_changed_at, None);
+            assert_eq!(changed.version, task.version + 1);
+        }
     }
 
     #[test]
@@ -1272,7 +1597,7 @@ mod tests {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(schema, 3);
+        assert_eq!(schema, 4);
     }
 
     #[test]
@@ -1672,9 +1997,141 @@ mod tests {
     }
 
     #[test]
+    fn due_only_updates_preserve_exact_fields_for_all_statuses_and_trash() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.db");
+        let mut store = Store::open(&path).unwrap();
+        let list = store.create_list("Work").unwrap();
+        let mut fields = input("Original");
+        fields.list_id = list.id;
+        let mut expected_tasks = Vec::new();
+        for status in [Status::Open, Status::Done, Status::Cancelled] {
+            for deleted in [false, true] {
+                let task = store.create_task(&fields).unwrap();
+                if status != Status::Open {
+                    store
+                        .set_status_at(
+                            task.id,
+                            task.version,
+                            status,
+                            NaiveDate::from_ymd_opt(2026, 11, 7).unwrap(),
+                            timestamp("2026-11-07T15:30:00.123456789Z"),
+                        )
+                        .unwrap();
+                }
+                store
+                    .connection
+                    .execute(
+                        "UPDATE tasks SET title = ?1, description = ?2, status = ?3,
+                         status_changed_on = ?4, deleted = ?5, position = -19 WHERE id = ?6",
+                        params![
+                            "\t Legacy title \r\n",
+                            "One\r\næble\0界",
+                            status.as_str(),
+                            (status != Status::Open).then_some("2026-11-07"),
+                            deleted,
+                            task.id,
+                        ],
+                    )
+                    .unwrap();
+                let mut expected = store.task(task.id).unwrap();
+                for due in [
+                    NaiveDate::from_ymd_opt(2026, 11, 8),
+                    NaiveDate::from_ymd_opt(2027, 1, 4),
+                    None,
+                ] {
+                    let changed = store.set_due(expected.id, expected.version, due).unwrap();
+                    expected.due = due;
+                    expected.version += 1;
+                    assert_eq!(changed, expected);
+                    assert_eq!(store.task(expected.id).unwrap(), expected);
+                }
+                expected_tasks.push(expected);
+            }
+        }
+        drop(store);
+        let reopened = Store::open(&path).unwrap();
+        for expected in expected_tasks {
+            assert_eq!(reopened.task(expected.id).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn due_noops_write_nothing_but_still_reject_stale_versions() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.db");
+        let mut first = Store::open(&path).unwrap();
+        let mut second = Store::open(&path).unwrap();
+        let original = first.create_task(&input("Original")).unwrap();
+        let mut current = original.clone();
+        for due in [None, NaiveDate::from_ymd_opt(2026, 11, 8)] {
+            if current.due != due {
+                current = first.set_due(current.id, current.version, due).unwrap();
+            }
+            let data_version = second.data_version().unwrap();
+            let writes: i64 = first
+                .connection
+                .query_row("SELECT total_changes()", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(
+                first.set_due(current.id, current.version, due).unwrap(),
+                current
+            );
+            assert_eq!(second.data_version().unwrap(), data_version);
+            let writes_after: i64 = first
+                .connection
+                .query_row("SELECT total_changes()", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(writes_after, writes);
+        }
+        for due in [current.due, None] {
+            let error = second
+                .set_due(current.id, original.version, due)
+                .unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "Task {} changed in another process. Reload it before saving.",
+                    current.id,
+                )
+            );
+            assert_eq!(second.task(current.id).unwrap(), current);
+        }
+    }
+
+    #[test]
+    fn failed_due_write_rolls_back_the_task_and_trigger_changes() {
+        let mut store = memory_store();
+        let task = store.create_task(&input("Original")).unwrap();
+        let neighbor = store.create_task(&input("Neighbor")).unwrap();
+        let baseline = store.tasks().unwrap();
+        store
+            .connection
+            .execute_batch(
+                "CREATE TRIGGER fail_due AFTER UPDATE OF due ON tasks
+             BEGIN
+                 UPDATE tasks SET description = 'Must roll back';
+                 SELECT RAISE(ABORT, 'Reject due write');
+             END;",
+            )
+            .unwrap();
+        let due = NaiveDate::from_ymd_opt(2026, 11, 8);
+        assert!(store.set_due(task.id, task.version, due).is_err());
+        assert_eq!(store.tasks().unwrap(), baseline);
+        store
+            .connection
+            .execute_batch("DROP TRIGGER fail_due;")
+            .unwrap();
+        let changed = store.set_due(task.id, task.version, due).unwrap();
+        assert_eq!(changed.due, due);
+        assert_eq!(changed.version, task.version + 1);
+        assert_eq!(store.task(neighbor.id).unwrap(), neighbor);
+    }
+
+    #[test]
     fn newer_and_unversioned_databases_are_not_changed() {
         let directory = tempfile::tempdir().unwrap();
-        for (name, version) in [("newer.db", 4), ("unversioned.db", 0)] {
+        for (name, version) in [("newer.db", 5), ("unversioned.db", 0)] {
             let path = directory.path().join(name);
             let connection = Connection::open(&path).unwrap();
             connection
@@ -1772,6 +2229,15 @@ mod tests {
         let task = scoped.create_task(&fields).unwrap();
         let baseline = unrestricted.tasks().unwrap();
         let missing = scoped.task(999).unwrap_err().to_string();
+        for due in [None, NaiveDate::from_ymd_opt(2026, 11, 8)] {
+            assert_eq!(
+                scoped
+                    .set_due(forbidden.id, forbidden.version, due)
+                    .unwrap_err()
+                    .to_string(),
+                missing,
+            );
+        }
         assert_eq!(
             scoped
                 .update_task(forbidden.id, forbidden.version, &fields)
@@ -1846,6 +2312,15 @@ mod tests {
         let mut attempt = TaskInput::from(&captured);
         attempt.title = "Must not save".into();
         for version in [captured.version, moved.version] {
+            for due in [None, NaiveDate::from_ymd_opt(2026, 11, 8)] {
+                assert_eq!(
+                    scoped
+                        .set_due(captured.id, version, due)
+                        .unwrap_err()
+                        .to_string(),
+                    "Task not found.",
+                );
+            }
             assert_eq!(
                 scoped
                     .update_task(captured.id, version, &attempt)
@@ -1915,7 +2390,10 @@ mod tests {
             .unwrap();
         let first = scoped.set_deleted(first.id, first.version, true).unwrap();
         let first = scoped.set_deleted(first.id, first.version, false).unwrap();
+        let due = NaiveDate::from_ymd_opt(2026, 11, 8);
+        let first = scoped.set_due(first.id, first.version, due).unwrap();
         assert_eq!(other.task(first.id).unwrap(), first);
+        assert_eq!(first.due, due);
         assert_eq!(first.title, "Changed");
         assert_eq!(first.status, Status::Done);
         assert!(!first.deleted);
@@ -1946,6 +2424,14 @@ mod tests {
             readonly.create_task(&input("New")).unwrap_err(),
             readonly
                 .update_task(first.id, first.version, &TaskInput::from(&first))
+                .unwrap_err(),
+            readonly.set_due(first.id, first.version, None).unwrap_err(),
+            readonly
+                .set_due(
+                    first.id,
+                    first.version,
+                    NaiveDate::from_ymd_opt(2026, 11, 8),
+                )
                 .unwrap_err(),
             readonly
                 .set_status(first.id, first.version, Status::Open)
@@ -1989,7 +2475,7 @@ mod tests {
         assert_eq!(mode, "delete");
         assert!(readonly.list_scope().is_none());
         drop(readonly);
-        for version in [0, 1, 2, 4] {
+        for version in [0, 1, 2, 3, 5] {
             let connection = Connection::open(&path).unwrap();
             connection
                 .pragma_update(None, "user_version", version)

@@ -16,6 +16,9 @@ husker
 Husker opens All tasks. Press `n` to create a task, enter a title,
 and press Ctrl+S to save. Esc asks before discarding changed task fields.
 Press `?` to see the shortcuts or `q` to quit.
+With a task selected, press `t` for today, `T` for tomorrow, `w` for next
+Monday, or `x` to clear its due date. These changes save immediately.
+The same shortcuts in the editor's Due date field change the draft until you save.
 
 Run the installed `husker` command while someone edits or builds the repository.
 On Windows, you can select that copy explicitly:
@@ -100,6 +103,8 @@ Press `l` to open the list picker over your tasks. Choose a list to show a
 view such as `All tasks > Work`. Esc returns to All tasks with your previous
 filter, selected task, and scroll position. Esc inside the picker cancels it.
 All tasks is the first picker entry and Trash is last.
+All tasks and all-list History prefix task titles with their list, such as
+`[Work] Review`. A view scoped to Work does not repeat that label.
 Use Alt+Up and Alt+Down in the picker to arrange ordinary lists.
 The default list stays first among them and is marked as the default. Husker remembers their order.
 Use Esc to return from a list to All tasks. Press Delete on a list to review its removal.
@@ -117,7 +122,8 @@ Open tasks appear in due-date groups. Open tasks without dates appear under
 Sometime, or Engang in Danish. Tasks completed or cancelled today appear in
 Done today or Cancelled today after the open tasks.
 Press `h` to see older completed and cancelled tasks in History. Press `r`
-there to reopen a task. History retains current task records, not every past edit or status change.
+there to reopen a task. Same-day completions use their recorded completion
+times, newest first. History retains current task records, not every past edit or status change.
 
 Recurrence, reminders, subtasks, priorities, synchronization, an event log,
 and permanent task deletion are not included.

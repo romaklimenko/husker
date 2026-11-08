@@ -27,7 +27,7 @@ use crate::clipboard::{SystemClipboard, TextClipboard};
 use crate::config::{Action, Config, Mode};
 use crate::i18n::{Language, error_message, tr};
 use crate::model::{Status, Task, TaskInput, TaskList};
-use crate::planning::{date_label, planned_group};
+use crate::planning::{DuePreset, date_label, planned_group};
 use crate::query::{Query, parse_date, visible_history, visible_tasks};
 use crate::store::{ListDeletionOutcome, ListDeletionPreview, Store};
 use crate::text_buffer::TextBuffer;
@@ -101,7 +101,7 @@ pub fn run(store: &mut Store, config: &Config, config_path: &Path) -> Result<()>
         if event::poll(Duration::from_millis(200))? {
             match event::read()? {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
-                    if app.handle_key(key, store, &config) {
+                    if app.handle_key_on_date(key, store, &config, Local::now().date_naive()) {
                         break;
                     }
                 }
@@ -138,6 +138,16 @@ pub fn run(store: &mut Store, config: &Config, config_path: &Path) -> Result<()>
 }
 
 const FIELD_KEYS: [&str; 4] = ["title", "description", "due", "list"];
+
+fn due_preset(action: Action) -> Option<DuePreset> {
+    match action {
+        Action::DueToday => Some(DuePreset::Today),
+        Action::DueTomorrow => Some(DuePreset::Tomorrow),
+        Action::DueNextWeek => Some(DuePreset::NextMonday),
+        Action::ClearDue => Some(DuePreset::Clear),
+        _ => None,
+    }
+}
 
 #[derive(Clone, Debug)]
 struct TaskEditor {
@@ -358,6 +368,7 @@ impl App {
         match self.screen {
             Screen::ListPicker => Mode::Lists,
             Screen::DeleteListConfirm { .. } => Mode::DeleteListConfirm,
+            Screen::Editor(ref editor) if editor.active == 2 => Mode::DueField,
             Screen::Editor(_) => Mode::Editor,
             Screen::ConfirmDiscard { .. } => Mode::ConfirmDiscard,
             Screen::Filter(_) => Mode::Filter,
@@ -779,8 +790,41 @@ impl App {
         }
     }
 
+    fn handle_key_on_date(
+        &mut self,
+        key: KeyEvent,
+        store: &mut Store,
+        config: &Config,
+        today: NaiveDate,
+    ) -> bool {
+        let date_changed = self.today != today;
+        self.today = today;
+        let quit = self.handle_key(key, store, config);
+        if date_changed
+            && let Err(error) = self.refresh(store)
+            && !self
+                .message
+                .as_ref()
+                .is_some_and(|message| message.is_error)
+        {
+            self.set_error(error, config);
+        }
+        quit
+    }
+
     fn dispatch_key(&mut self, key: KeyEvent, store: &mut Store, config: &Config) -> Result<bool> {
         let action = config.action(key, self.mode());
+        if let Some(preset) = action.and_then(due_preset)
+            && let Screen::Editor(editor) = &mut self.screen
+            && editor.active == 2
+        {
+            let value = preset
+                .resolve(self.today)?
+                .map(|date| date.to_string())
+                .unwrap_or_default();
+            editor.fields[2].replace_all(&value);
+            return Ok(false);
+        }
         match action {
             Some(Action::Language) => {
                 let previous = Box::new(std::mem::replace(&mut self.screen, Screen::Navigation));
@@ -1360,6 +1404,14 @@ impl App {
         if task.deleted && !matches!(action, Action::Restore) {
             return Ok(());
         }
+        if let Some(preset) = due_preset(action) {
+            let updated = store.set_due(task.id, task.version, preset.resolve(self.today)?)?;
+            self.refresh(store)?;
+            if updated.version != task.version {
+                self.show_message(tr(config.language, "updated"), false, Instant::now());
+            }
+            return Ok(());
+        }
         let closing = task.status == Status::Open
             && matches!(action, Action::ToggleDone | Action::ToggleCancelled);
         let next_open = closing
@@ -1515,7 +1567,19 @@ impl App {
             )
         };
         let mut header_lines = vec![Line::from(header)];
-        if matches!(self.screen, Screen::Editor(_)) {
+        if matches!(&self.screen, Screen::Editor(editor) if editor.active == 2) {
+            header_lines.push(Line::from(format!(
+                "{} {} | {} {} | {} {} | {} {}",
+                config.keys_for(Action::DueToday),
+                tr(language, "today"),
+                config.keys_for(Action::DueTomorrow),
+                tr(language, "tomorrow"),
+                config.keys_for(Action::DueNextWeek),
+                tr(language, "next_monday"),
+                config.keys_for(Action::ClearDue),
+                tr(language, "clear_due"),
+            )));
+        } else if matches!(self.screen, Screen::Editor(_)) {
             header_lines.push(Line::from(format!(
                 "{} {} | {}",
                 config.keys_for(Action::CopySelection),
@@ -1920,7 +1984,20 @@ impl App {
                 .map(|date| format!("  {}", date_label(date, language)))
                 .unwrap_or_default();
             let title = task.title.replace(['\r', '\n'], " ");
-            rows.push(ListItem::new(Line::from(format!("{marker} {title}{date}"))));
+            let list_label = if matches!(self.view, View::Planned | View::History(None)) {
+                let name = self
+                    .lists
+                    .iter()
+                    .find(|list| list.id == task.list_id)
+                    .map(|list| list.name.replace(['\r', '\n'], " "))
+                    .unwrap_or_else(|| format!("#{}", task.list_id));
+                format!("[{name}] ")
+            } else {
+                String::new()
+            };
+            rows.push(ListItem::new(Line::from(format!(
+                "{marker} {list_label}{title}{date}"
+            ))));
             row_tasks.push(Some(index));
         }
         frame.render_stateful_widget(
@@ -4225,7 +4302,7 @@ mod tests {
         rusqlite::Connection::open(directory.path().join("tasks.db"))
             .unwrap()
             .execute(
-                "UPDATE tasks SET status_changed_on = NULL WHERE id = ?1",
+                "UPDATE tasks SET status_changed_on = NULL, status_changed_at = NULL WHERE id = ?1",
                 [ids[3]],
             )
             .unwrap();
@@ -4826,6 +4903,370 @@ mod tests {
         app.handle_key(key(KeyCode::F(3)), &mut store, &config);
         assert!(matches!(app.screen, Screen::DeleteListConfirm { .. }));
         assert_eq!(store.task(task.id).unwrap(), task);
+    }
+
+    #[test]
+    fn due_presets_change_only_due_and_keep_selected_task_for_open_and_history_rows() {
+        let (_directory, mut store, config) = fixture();
+        let monday = parse_date("2026-11-09").unwrap();
+        let work = store.create_list("Work").unwrap();
+        let mut original_input = input(work.id, "Preserve this title #tag");
+        original_input.description = "First line\nSecond line æble".into();
+        let task = store.create_task(&original_input).unwrap();
+        store.create_task(&input(1, "Other task")).unwrap();
+        let mut app = App::new(&store, monday).unwrap();
+        for status in [Status::Open, Status::Done, Status::Cancelled] {
+            let current = store.task(task.id).unwrap();
+            store
+                .set_status_on(task.id, current.version, status, monday.pred_opt().unwrap())
+                .unwrap();
+            app.set_view(View::List(work.id), &store).unwrap();
+            if status != Status::Open {
+                app.open_history(&store).unwrap();
+            }
+            app.refresh(&store).unwrap();
+            assert_eq!(app.selected_task().unwrap().id, task.id);
+            for (key_code, due) in [
+                (KeyCode::Char('t'), Some(monday)),
+                (KeyCode::Char('T'), Some(parse_date("2026-11-10").unwrap())),
+                (KeyCode::Char('w'), Some(parse_date("2026-11-16").unwrap())),
+                (KeyCode::Char('x'), None),
+            ] {
+                let mut expected = store.task(task.id).unwrap();
+                expected.due = due;
+                expected.version += 1;
+                app.handle_key(key(key_code), &mut store, &config);
+                assert_eq!(store.task(task.id).unwrap(), expected);
+                assert_eq!(app.selected_task().unwrap().id, task.id);
+                app.handle_key(key(key_code), &mut store, &config);
+                assert_eq!(store.task(task.id).unwrap(), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn due_preset_filter_departure_clamps_and_stale_noop_does_not_overwrite() {
+        let (directory, mut store, config) = fixture();
+        let first = store.create_task(&input(1, "First")).unwrap();
+        let second = store.create_task(&input(1, "Second")).unwrap();
+        let mut external = Store::open(&directory.path().join("tasks.db")).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.filter = "due:none".into();
+        app.query = Query::parse(&app.filter).unwrap();
+        app.refresh(&store).unwrap();
+        app.handle_key(key(KeyCode::Char('t')), &mut store, &config);
+        assert_eq!(store.task(first.id).unwrap().due, Some(today()));
+        assert_eq!(app.visible.len(), 1);
+        assert_eq!(app.selected_task().unwrap().id, second.id);
+        let mut external_input = input(1, "Changed elsewhere");
+        external_input.due = Some(today());
+        let updated = external
+            .update_task(second.id, second.version, &external_input)
+            .unwrap();
+        app.handle_key(key(KeyCode::Char('x')), &mut store, &config);
+        assert_eq!(store.task(second.id).unwrap(), updated);
+        assert!(
+            app.message
+                .as_ref()
+                .unwrap()
+                .text
+                .contains("changed in another process")
+        );
+        assert_eq!(app.selected_task().unwrap().version, second.version);
+        app.refresh(&store).unwrap();
+        assert!(app.selected_task().is_none());
+        let before = store.tasks().unwrap();
+        app.handle_key(key(KeyCode::Char('t')), &mut store, &config);
+        assert_eq!(store.tasks().unwrap(), before);
+        let removed = store
+            .set_deleted(first.id, store.task(first.id).unwrap().version, true)
+            .unwrap();
+        app.set_view(View::Trash, &store).unwrap();
+        for letter in ['t', 'T', 'w', 'x'] {
+            app.handle_key(key(KeyCode::Char(letter)), &mut store, &config);
+        }
+        assert_eq!(store.task(first.id).unwrap(), removed);
+    }
+
+    #[test]
+    fn due_field_presets_are_single_undo_edits_and_save_only_when_requested() {
+        let (_directory, mut store, config) = fixture();
+        let mut value = input(1, "Keep title");
+        value.due = Some(parse_date("2026-11-12").unwrap());
+        let task = store.create_task(&value).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.open_selection(&store).unwrap();
+        app.handle_key(key(KeyCode::Tab), &mut store, &config);
+        assert_eq!(app.mode(), Mode::DueField);
+        let Screen::Editor(editor) = &mut app.screen else {
+            panic!()
+        };
+        editor.fields[2].insert("3");
+        editor.fields[2].set_cursor(2, false);
+        editor.fields[2].set_cursor(5, true);
+        let old_text = editor.fields[2].text.clone();
+        let old_cursor = editor.fields[2].cursor;
+        let old_selection = editor.fields[2].selection();
+        let title = editor.fields[0].clone();
+        let description = editor.fields[1].clone();
+        let list = editor.fields[3].clone();
+        app.handle_key(key(KeyCode::Char('t')), &mut store, &config);
+        let Screen::Editor(editor) = &app.screen else {
+            panic!()
+        };
+        assert_eq!(editor.fields[2].text, "2026-11-08");
+        assert_eq!(editor.fields[2].cursor, 10);
+        assert!(editor.fields[2].selection().is_none());
+        assert_eq!(editor.fields[0], title);
+        assert_eq!(editor.fields[1], description);
+        assert_eq!(editor.fields[3], list);
+        assert_eq!(editor.active, 2);
+        assert_eq!(store.task(task.id).unwrap(), task);
+        let Screen::Editor(editor) = &mut app.screen else {
+            panic!()
+        };
+        editor.fields[2].set_cursor(2, false);
+        editor.fields[2].set_cursor(5, true);
+        let unchanged = editor.fields[2].clone();
+        app.handle_key(key(KeyCode::Char('t')), &mut store, &config);
+        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[2] == unchanged));
+        let copied = record_clipboard(&mut app, false);
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        assert_eq!(*copied.lock().unwrap(), vec!["26-".to_owned()]);
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        let Screen::Editor(editor) = &app.screen else {
+            panic!()
+        };
+        assert_eq!(editor.fields[2].text, old_text);
+        assert_eq!(editor.fields[2].cursor, old_cursor);
+        assert_eq!(editor.fields[2].selection(), old_selection);
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[2].text == "2026-11-12")
+        );
+        for _ in 0..2 {
+            app.handle_key(
+                KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL),
+                &mut store,
+                &config,
+            );
+        }
+        app.handle_key(key(KeyCode::Char('x')), &mut store, &config);
+        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[2].text.is_empty()));
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[2].text == "2026-11-08")
+        );
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        assert!(matches!(app.screen, Screen::Navigation));
+        assert_eq!(store.task(task.id).unwrap().due, Some(today()));
+    }
+
+    #[test]
+    fn due_preset_letters_remain_text_elsewhere_and_hints_use_configured_localized_keys() {
+        let (_directory, mut store, config) = fixture();
+        let mut app = App::new(&store, today()).unwrap();
+        app.new_task();
+        for index in [0, 1, 3] {
+            let Screen::Editor(editor) = &mut app.screen else {
+                panic!()
+            };
+            editor.active = index;
+            let original = editor.fields[index].text.clone();
+            for letter in ['t', 'T', 'w', 'x'] {
+                app.handle_key(key(KeyCode::Char(letter)), &mut store, &config);
+            }
+            assert!(
+                matches!(&app.screen, Screen::Editor(editor) if editor.fields[index].text == format!("{original}tTwx"))
+            );
+        }
+        for screen in [
+            Screen::Filter(TextBuffer::default()),
+            Screen::ListName {
+                id: None,
+                buffer: TextBuffer::default(),
+            },
+        ] {
+            app.screen = screen;
+            for letter in ['t', 'T', 'w', 'x'] {
+                app.handle_key(key(KeyCode::Char(letter)), &mut store, &config);
+            }
+            assert!(
+                matches!(&app.screen, Screen::Filter(buffer) | Screen::ListName { buffer, .. } if buffer.text == "tTwx")
+            );
+        }
+        let config = Config::from_toml("language = 'da'\n[keys]\ndue_today = ['ctrl+t']\ndue_tomorrow = ['ctrl+u']\ndue_next_week = ['ctrl+w']\nclear_due = ['ctrl+x']").unwrap();
+        app.new_task();
+        let Screen::Editor(editor) = &mut app.screen else {
+            panic!()
+        };
+        editor.active = 2;
+        let display = rendered(&mut app, &config, 130, 24);
+        for text in [
+            "ctrl+t",
+            "ctrl+u",
+            "ctrl+w",
+            "ctrl+x",
+            "I dag",
+            "I morgen",
+            tr(Language::Da, "next_monday"),
+            tr(Language::Da, "clear_due"),
+        ] {
+            assert!(display.contains(text), "Missing {text}");
+        }
+        app.handle_key(key(KeyCode::Char('t')), &mut store, &config);
+        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[2].text == "t"));
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[2].text == "2026-11-08")
+        );
+        app.handle_key(key(KeyCode::Tab), &mut store, &config);
+        assert_eq!(app.mode(), Mode::Editor);
+        assert!(!rendered(&mut app, &config, 130, 24).contains(tr(Language::Da, "next_monday")));
+        assert!(store.tasks().unwrap().is_empty());
+    }
+
+    #[test]
+    fn midnight_presets_use_the_new_day_without_mutating_a_replacement_selection() {
+        let (_directory, mut store, config) = fixture();
+        let open = store.create_task(&input(1, "Open task")).unwrap();
+        let finished = store
+            .create_task(&input(1, "Finished yesterday at midnight"))
+            .unwrap();
+        let finished = store
+            .set_status_on(finished.id, finished.version, Status::Done, today())
+            .unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.select_task_id(Some(finished.id));
+        let tomorrow = today().succ_opt().unwrap();
+        app.handle_key_on_date(key(KeyCode::Char('t')), &mut store, &config, tomorrow);
+        let mut expected = finished;
+        expected.due = Some(tomorrow);
+        expected.version += 1;
+        assert_eq!(store.task(expected.id).unwrap(), expected);
+        assert_eq!(store.task(open.id).unwrap(), open);
+        assert_eq!(app.today, tomorrow);
+        assert_eq!(app.selected_task().unwrap().id, open.id);
+        app.open_selection(&store).unwrap();
+        let Screen::Editor(editor) = &mut app.screen else {
+            panic!()
+        };
+        editor.active = 2;
+        editor.fields[1].insert("Keep unsaved text");
+        let next_day = tomorrow.succ_opt().unwrap();
+        app.handle_key_on_date(key(KeyCode::Char('t')), &mut store, &config, next_day);
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[2].text == next_day.to_string() && editor.fields[1].text == "Keep unsaved text" && editor.original.as_ref().unwrap().version == open.version)
+        );
+        assert_eq!(store.task(open.id).unwrap(), open);
+    }
+
+    #[test]
+    fn all_list_row_labels_follow_scope_renames_and_moves_without_changing_task_text() {
+        let (_directory, mut store, config) = fixture();
+        let work = store.create_list("Work").unwrap();
+        let home = store.create_list("Home").unwrap();
+        let mut value = input(work.id, "Review");
+        value.description = "Original description".into();
+        let work_task = store.create_task(&value).unwrap();
+        let home_task = store.create_task(&input(home.id, "Review")).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        let screen = rendered(&mut app, &config, 90, 24);
+        assert!(screen.contains("[ ] [Work] Review"));
+        assert!(screen.contains("[ ] [Home] Review"));
+        let task_rows: Vec<_> = app
+            .mouse_targets
+            .iter()
+            .filter_map(|(rect, target)| matches!(target, MouseTarget::Row(_)).then_some(rect.y))
+            .collect();
+        assert_eq!(task_rows.len(), 2);
+        assert_eq!(task_rows[1], task_rows[0] + 1);
+        app.filter = "l:Work".into();
+        app.query = Query::parse(&app.filter).unwrap();
+        app.refresh(&store).unwrap();
+        assert!(rendered(&mut app, &config, 90, 24).contains("[Work] Review"));
+        app.open_copy_text();
+        assert!(
+            matches!(&app.screen, Screen::CopyText { text, .. } if text == "Review\n\nOriginal description")
+        );
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        app.open_selection(&store).unwrap();
+        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[0].text == "Review"));
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert_eq!(store.task(work_task.id).unwrap(), work_task);
+        assert_eq!(store.task(home_task.id).unwrap(), home_task);
+        app.filter.clear();
+        app.query = Query::default();
+        store.rename_list(work.id, "Office\r\nTeam").unwrap();
+        app.refresh(&store).unwrap();
+        let screen = rendered(&mut app, &config, 90, 24);
+        assert!(screen.contains("[Office  Team] Review"));
+        assert_eq!(
+            app.mouse_targets
+                .iter()
+                .filter(|(_, target)| matches!(target, MouseTarget::Row(_)))
+                .count(),
+            2
+        );
+        value.list_id = home.id;
+        let moved = store
+            .update_task(work_task.id, work_task.version, &value)
+            .unwrap();
+        app.refresh(&store).unwrap();
+        let screen = rendered(&mut app, &config, 90, 24);
+        assert!(!screen.contains("[Office  Team]"));
+        assert_eq!(screen.matches("[Home] Review").count(), 2);
+        store
+            .set_status_on(moved.id, moved.version, Status::Done, today())
+            .unwrap();
+        store
+            .set_status_on(home_task.id, home_task.version, Status::Cancelled, today())
+            .unwrap();
+        app.refresh(&store).unwrap();
+        app.open_history(&store).unwrap();
+        app.filter = "l:Home".into();
+        app.query = Query::parse(&app.filter).unwrap();
+        app.refresh(&store).unwrap();
+        assert_eq!(
+            rendered(&mut app, &config, 90, 24)
+                .matches("[Home] Review")
+                .count(),
+            2
+        );
+        app.set_view(View::List(home.id), &store).unwrap();
+        assert!(!rendered(&mut app, &config, 90, 24).contains("[Home]"));
+        app.open_history(&store).unwrap();
+        assert!(!rendered(&mut app, &config, 90, 24).contains("[Home]"));
+        let moved = store.task(moved.id).unwrap();
+        store.set_deleted(moved.id, moved.version, true).unwrap();
+        app.set_view(View::Trash, &store).unwrap();
+        let screen = rendered(&mut app, &config, 90, 24);
+        assert!(screen.contains("Review"));
+        assert!(!screen.contains("[Home]"));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use std::{fmt, str::FromStr};
 
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -51,6 +51,7 @@ pub struct Task {
     pub due: Option<NaiveDate>,
     pub status: Status,
     pub status_changed_on: Option<NaiveDate>,
+    pub status_changed_at: Option<DateTime<Utc>>,
     pub deleted: bool,
     pub position: i64,
     pub version: i64,

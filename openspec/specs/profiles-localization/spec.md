@@ -106,6 +106,20 @@ The `delete_list` action defaults to `d` and Delete in the list picker.
 The `language` action defaults to F3 in task navigation, History, the list picker, task editing, filter editing, list-name editing, and Help.
 It is unavailable in confirmation screens and Copy text.
 
+The due preset actions have these defaults.
+
+| Action | Default shortcut |
+| --- | --- |
+| `due_today` | `t` |
+| `due_tomorrow` | `T` |
+| `due_next_week` | `w` |
+| `clear_due` | `x` |
+
+They are available in ordinary task navigation and History outside Trash, and in the focused Due date editor field.
+They are unavailable in other editor fields, filter and list-name inputs, list pickers, Help, confirmations, Copy text, and the language picker.
+Each override replaces that action's defaults, and an empty array disables it.
+Help and Due date hints use the configured bindings and selected language.
+
 #### Scenario: Replace a shortcut
 
 - **WHEN** `[keys]` contains `quit = ["ctrl+q"]`
@@ -143,6 +157,17 @@ It is unavailable in confirmation screens and Copy text.
 - **WHEN** `[keys]` contains both `planned` and `all_tasks`
 - **THEN** configuration loading reports the duplicate action names before opening the task database
 
+#### Scenario: Rebind a due preset
+
+- **WHEN** `[keys]` contains `due_today = ["ctrl+t"]`
+- **THEN** Ctrl+T invokes Today in its permitted modes and `t` no longer invokes that preset
+- **AND** Help and Due date hints show Ctrl+T
+
+#### Scenario: Disable a due preset
+
+- **WHEN** `[keys]` contains `clear_due = []`
+- **THEN** no shortcut invokes Clear due date and manual field deletion remains available
+
 ### Requirement: Key conflict validation
 
 Husker SHALL reject unknown action names, invalid key strings, and shortcuts assigned to multiple actions in the same mode.
@@ -154,7 +179,8 @@ Husker SHALL reject unknown action names, invalid key strings, and shortcuts ass
 | History | Filter, edit, copy, change status, trash, or reopen completed and cancelled tasks. |
 | List-deletion confirmation | Confirm moving a list's tasks to the default list before removing the list. |
 | Language picker | Choose English or Danish and save the interface language. |
-| Task editor | Enter task fields. |
+| Task editor | Enter Title, Description, or List. |
+| Due date field | Enter an ISO date or use a preset while retaining all task-editor controls. |
 | Filter editor | Enter a task filter. |
 | List-name editor | Enter a new or replacement list name. |
 | Discard confirmation | Choose whether to discard changed task fields. |
@@ -163,7 +189,9 @@ Husker SHALL reject unknown action names, invalid key strings, and shortcuts ass
 
 The same key may trigger different actions in different modes.
 The list picker retains its existing configurable bindings and conflict checks and adds `delete_list`.
-Text input modes do not execute navigation actions.
+Text input modes do not execute task-navigation writes.
+Due date field mode includes every normal task-editor action and the due preset actions.
+Preset actions in that mode edit only the draft field.
 Configured actions take precedence over built-in text-editing shortcuts in their active mode.
 Discard confirmation uses fixed choice keys defined by the terminal-interface spec and retains configured Discard and Refresh actions.
 List-deletion confirmation uses fixed choice keys and retains configured Back and Refresh actions.
@@ -212,6 +240,16 @@ Existing configuration files must remove those overrides before loading.
 - **WHEN** configuration provides neither `all_tasks` nor `planned`
 - **THEN** neither `a` nor `p` invokes root navigation
 - **AND** Back and the All tasks picker entry retain their navigation behavior
+
+#### Scenario: Reject a due-field action conflict
+
+- **WHEN** `[keys]` assigns `due_today` to Ctrl+S while Save retains Ctrl+S
+- **THEN** configuration loading reports the conflict in Due date field mode before opening the task database
+
+#### Scenario: Keep a preset character literal in another field
+
+- **WHEN** Title is focused and Today retains its `t` default
+- **THEN** `t` is handled as text input rather than a configured preset action
 
 ### Requirement: Persist an interface-language choice without replacing configuration
 

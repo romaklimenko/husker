@@ -129,12 +129,14 @@ A stale version causes a tool error without overwriting stored data.
 
 Husker SHALL retain fields omitted from `update_task` and validate all supplied changes before saving them together.
 Task creation and editing accept title, description, list ID, and an optional due date.
-`clear_due = true` removes the date without changing the task's status or status-change date.
+`clear_due = true` removes the date without changing the task's status, status-change date, or status-change timestamp.
 Open tasks then use the no-date display group. Closed tasks retain their status sections, as defined by planning-search.
 Supplying a date with `clear_due = true` is an error.
 The server does not accept `tags` or `readiness` arguments.
-Task results contain `status_changed_on` and do not contain structured tags or readiness.
-The task-storage spec owns status-date changes.
+Task results contain nullable `status_changed_on` and `status_changed_at` fields and do not contain structured tags or readiness.
+Known timestamps use RFC 3339 UTC strings. Unknown timestamps are null.
+Tool request arguments and existing task fields retain their meanings.
+The task-storage spec owns status-date and timestamp changes.
 
 #### Scenario: Remove a date
 
@@ -150,8 +152,14 @@ The task-storage spec owns status-date changes.
 #### Scenario: Remove a completed task's due date
 
 - **WHEN** `update_task` supplies `clear_due = true` for a task completed today
-- **THEN** the task's due date becomes null and its status and status-change date remain unchanged
+- **THEN** the task's due date becomes null and its status, status-change date, and status-change timestamp remain unchanged
 - **AND** the terminal shows it in Done today and omitted task fields retain their values
+
+#### Scenario: Expose a recorded completion time
+
+- **WHEN** `set_status` changes an open task to done
+- **THEN** its result contains the local status date and UTC completion timestamp
+- **AND** subsequent reads retain both values until another status transition changes them
 
 ### Requirement: Read-only access
 

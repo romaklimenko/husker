@@ -35,10 +35,60 @@ The installed copy does not lock the repository's build executable.
 Close installed Husker processes and disconnect MCP clients before replacing
 the installed copy with `cargo install --path . --locked`.
 
-Use only temporary profiles for migration tests. Starting version 0.8.0
-against a schema version 1 or 2 profile performs a migration on writable access.
-Versions 0.4.0 through 0.8.0 use schema version 3.
+Use only temporary profiles for migration tests. Starting version 0.9.0
+against a schema version 1, 2, or 3 profile migrates it to version 4 on writable
+access. Versions 0.4.0 through 0.8.0 use schema version 3 and cannot open an
+upgraded profile. Read-only connections require the writable upgrade first.
 Follow the [upgrade instructions](usage.md#update-an-existing-profile) for a real profile.
+
+## Checks for version 0.9.0
+
+Version 0.9.0 passed these checks on November 8, 2026:
+
+| Check | Result |
+| --- | --- |
+| Unit tests | 170 passed, including calendar presets, due-only writes, whole-field undo, timestamp transitions and sorting, schema migration, and task-list labels. |
+| CLI integration tests | 9 passed against isolated profiles. |
+| MCP integration tests | 8 passed through child processes. |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.9.0. |
+| Guide examples | Verified preset defaults and overrides, conflicting Due date bindings, timestamp-aware ordering, repeated status, due edits, Trash, reopening, and MCP help. |
+| Migration | An isolated profile created by version 0.8.0 upgraded from schema 3 to schema 4 with its existing fields, task versions, and list order unchanged. |
+| OpenSpec | All six capability specs passed strict validation after archiving the presets change. No active changes remain. |
+| Documentation | All 15 local links and anchors resolved. All 7 JSON and TOML examples parsed. |
+
+The migration check created open, done, and trashed tasks with the old
+executable. Read-only version 0.9.0 refused the old schema without changing
+it. A writable `lists` command completed the upgrade. Every migrated task
+received a null timestamp, including tasks with known completion dates.
+The old executable then refused to open the upgraded profile.
+
+Separate CLI completions recorded a lower-ID task after a higher-ID task
+on the same local day. The newer completion appeared first, followed by
+the older recorded time and the migrated task with an unknown time.
+Repeating done preserved the original timestamp. Due-date edits and
+Trash/restore also preserved it. Changing done to cancelled recorded a new
+timestamp, and reopening cleared both status-change fields.
+
+An 80 by 24 Windows pseudo-terminal check exercised `t`, `T`, `w`, and `x`
+against an isolated profile. A preset that repeated the stored date kept
+the task version unchanged. Editor presets supported one-step undo, and
+Ctrl+S persisted the resulting date. English Due date hints were visually
+inspected.
+
+Alt+Down on a closed task left its position, version, and completion timestamp
+unchanged. All tasks and all-list History displayed list prefixes, while the
+Work view omitted them. Same-day closed tasks appeared newest first despite
+their reversed task IDs.
+
+The terminal check switched the interface to Danish, used `w` in the editor,
+and saved. A release CLI read confirmed the due date was November 9.
+Danish preset hints were checked by unit tests. They were not visually
+inspected in this terminal session.
+
+These checks used Windows and isolated profiles. Linux and macOS were not
+tested in this session.
 
 ## Checks for version 0.8.0
 

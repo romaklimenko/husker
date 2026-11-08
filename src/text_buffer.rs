@@ -57,6 +57,13 @@ impl TextBuffer {
         self.replace(range, text)
     }
 
+    pub(crate) fn replace_all(&mut self, text: &str) -> bool {
+        if self.text == text {
+            return false;
+        }
+        self.replace(0..self.text.len(), text)
+    }
+
     fn replace(&mut self, range: Range<usize>, replacement: &str) -> bool {
         let changed = &self.text[range.clone()] != replacement;
         if changed {
@@ -406,6 +413,56 @@ mod tests {
         assert_eq!(buffer.text, "areplacement text");
         assert_eq!(buffer.cursor, buffer.text.len());
         assert!(buffer.selection().is_none());
+    }
+
+    #[test]
+    fn whole_field_replacement_and_clear_restore_original_selection_on_undo() {
+        let mut buffer = TextBuffer::new("æ2026-");
+        buffer.set_cursor(buffer.text.len(), false);
+        buffer.set_cursor("æ".len(), true);
+        let original = buffer.snapshot();
+        assert!(buffer.replace_all("2026-11-09"));
+        assert_eq!(buffer.text, "2026-11-09");
+        assert_eq!(buffer.cursor, buffer.text.len());
+        assert_eq!(buffer.selection(), None);
+        assert_eq!(buffer.undo.len(), 1);
+        let replaced = buffer.snapshot();
+        assert!(control(&mut buffer, KeyCode::Char('z')));
+        assert_eq!(buffer.snapshot(), original);
+        assert!(!control(&mut buffer, KeyCode::Char('z')));
+        assert!(control(&mut buffer, KeyCode::Char('y')));
+        assert_eq!(buffer.snapshot(), replaced);
+        buffer.set_cursor(4, false);
+        buffer.set_cursor(7, true);
+        let before_clear = buffer.snapshot();
+        assert!(buffer.replace_all(""));
+        assert!(buffer.text.is_empty());
+        assert_eq!(buffer.cursor, 0);
+        assert_eq!(buffer.selection(), None);
+        assert!(control(&mut buffer, KeyCode::Char('z')));
+        assert_eq!(buffer.snapshot(), before_clear);
+        assert!(control(&mut buffer, KeyCode::Char('y')));
+        assert!(buffer.text.is_empty());
+    }
+
+    #[test]
+    fn identical_whole_field_replacements_preserve_every_buffer_state() {
+        let mut buffer = TextBuffer::new("2026-11-08");
+        assert!(buffer.replace_all("2026-11-09"));
+        assert!(control(&mut buffer, KeyCode::Char('z')));
+        buffer.set_cursor(7, false);
+        buffer.set_cursor(4, true);
+        let original = buffer.clone();
+        assert!(!buffer.replace_all("2026-11-08"));
+        assert_eq!(buffer, original);
+        assert!(control(&mut buffer, KeyCode::Char('y')));
+        assert_eq!(buffer.text, "2026-11-09");
+        assert!(control(&mut buffer, KeyCode::Char('z')));
+        assert!(buffer.replace_all(""));
+        assert!(!control(&mut buffer, KeyCode::Char('y')));
+        let empty = buffer.clone();
+        assert!(!buffer.replace_all(""));
+        assert_eq!(buffer, empty);
     }
 
     #[test]

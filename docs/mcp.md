@@ -6,7 +6,7 @@ The client starts Husker as a local process and communicates over standard input
 
 ## Install or update Husker
 
-This guide describes Husker 0.8.0 and its task tools.
+This guide describes Husker 0.9.0 and its task tools.
 Close running Husker instances before updating the executable.
 Disconnect MCP clients that already use Husker, then run this command from the source directory:
 
@@ -235,13 +235,17 @@ Ask for open tasks only when that is what you need. The agent can use `s:open`.
 The agent can use the [same search syntax as the terminal](usage.md#find-tasks), such as `due:today` or `s:done`.
 Use `s:done` or `s:cancelled` to retrieve older closed tasks as well as today's.
 Due filters always inspect the stored due date, even for completed tasks.
+The terminal's date-preset keys do not add MCP arguments. Agents still send
+ISO dates such as `2026-11-09`, or `clear_due = true` to remove a date.
 `#shopping` searches for that literal text in titles and descriptions.
 Tasks have no separate tags or readiness fields.
 Searching another list with `l:Work` cannot broaden the connection's access.
 Task searches return up to 100 results by default and allow pages of up to 200.
 Results follow the [planning order](usage.md#plan-by-due-date). Open tasks in
 due-date groups come first, followed by Done today, Cancelled today, Done,
-and Cancelled. Closed tasks use newest status dates first within each group.
+and Cancelled. Closed tasks use newest status dates first within each group,
+then newest recorded times within the same date. Unknown times follow known
+times on that date. Task IDs break remaining ties.
 
 A writable connection can add and edit tasks, change their status, and move them to or from Trash.
 A connection restricted with `--list` cannot create or rename lists.
@@ -260,8 +264,12 @@ Task edits require the `version` returned when the agent read the task.
 If you edit the task in the terminal first, the agent's stale edit fails.
 The agent must read the current task before trying another edit.
 Husker does not silently overwrite your newer save.
-Task results include `status_changed_on`, the local date of completion or cancellation.
-Reopening clears that date. Older tasks migrated without a known completion date return null.
+Task results include `status_changed_on`, the local date of completion or
+cancellation, and nullable `status_changed_at`, its UTC timestamp in RFC 3339
+format. For example, `2026-11-08T15:30:00Z` records the time in UTC.
+Reopening clears both fields. Changing between done and cancelled records
+a new date and time. Repeating the current status preserves both.
+Older tasks without a recorded time return null for `status_changed_at`.
 Task records remain stored, but Husker does not keep past status transitions
 or previous task text. The terminal's History view reads these current closed
 records. MCP clients can retrieve the same records through status-filtered searches.

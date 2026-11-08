@@ -185,6 +185,15 @@ pub fn tr(language: Language, key: &str) -> &'static str {
         "action_reopen" => ("Reopen task", "Genåbn opgave"),
         "action_delete_list" => ("Delete list", "Slet liste"),
         "action_filter" => ("Filter tasks", "Filtrer opgaver"),
+        "action_due_today" => ("Set due date to today", "Sæt forfaldsdato til i dag"),
+        "action_due_tomorrow" => ("Set due date to tomorrow", "Sæt forfaldsdato til i morgen"),
+        "action_due_next_week" => (
+            "Set due date to next Monday",
+            "Sæt forfaldsdato til næste mandag",
+        ),
+        "action_clear_due" => ("Clear due date", "Fjern forfaldsdato"),
+        "next_monday" => ("Next Monday", "Næste mandag"),
+        "clear_due" => ("Clear date", "Fjern dato"),
         "action_toggle_done" => ("Toggle done", "Skift udført"),
         "action_toggle_cancelled" => ("Toggle cancelled", "Skift annulleret"),
         "action_trash" => ("Move to Trash", "Flyt til papirkurv"),
@@ -233,6 +242,9 @@ fn danish_error(message: &str) -> String {
         "A list name cannot be empty." => "Et listenavn må ikke være tomt.",
         "The default list cannot be deleted." => "Standardlisten kan ikke slettes.",
         "Only open tasks can be reordered." => "Kun åbne opgaver kan ændre rækkefølge.",
+        "The due date is outside the supported calendar range." => {
+            "Forfaldsdatoen ligger uden for det understøttede datointerval."
+        }
         "The configuration file is read-only." => "Konfigurationsfilen er skrivebeskyttet.",
         "The configuration changed while saving. Try again." => {
             "Konfigurationen blev ændret under lagring. Prøv igen."
@@ -320,10 +332,10 @@ fn danish_error(message: &str) -> String {
     if let Some(value) = between(
         message,
         "Unsupported database schema version ",
-        ". This Husker supports version 3.",
+        ". This Husker supports version 4.",
     ) {
         return format!(
-            "Databaseversion {value} understøttes ikke. Denne Husker understøtter version 3."
+            "Databaseversion {value} understøttes ikke. Denne Husker understøtter version 4."
         );
     }
     if let Some(version) = between(

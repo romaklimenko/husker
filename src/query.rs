@@ -3,7 +3,7 @@ use chrono::NaiveDate;
 
 use crate::{
     model::{Status, Task, TaskList},
-    planning::{Bucket, sort_tasks},
+    planning::{Bucket, compare_closed_tasks, sort_tasks},
 };
 
 #[derive(Clone, Debug)]
@@ -181,12 +181,7 @@ pub fn visible_history(
         })
         .cloned()
         .collect::<Vec<_>>();
-    history.sort_by(|left, right| {
-        right
-            .status_changed_on
-            .cmp(&left.status_changed_on)
-            .then_with(|| right.id.cmp(&left.id))
-    });
+    history.sort_by(compare_closed_tasks);
     history
 }
 
@@ -271,6 +266,7 @@ mod tests {
             due: None,
             status: Status::Open,
             status_changed_on: None,
+            status_changed_at: None,
             deleted: false,
             position: id,
             version: 1,
@@ -350,6 +346,33 @@ mod tests {
                 .map(|task| task.id)
                 .collect::<Vec<_>>(),
             [3, 2, 6]
+        );
+    }
+
+    #[test]
+    fn history_orders_mixed_closed_statuses_by_completion_time() {
+        let today = parse_date("2026-11-08").unwrap();
+        let mut newest = task(1, "Newest");
+        newest.status = Status::Done;
+        newest.status_changed_on = Some(today);
+        newest.status_changed_at = Some("2026-11-08T16:00:00Z".parse().unwrap());
+        let mut earlier = task(2, "Earlier");
+        earlier.status = Status::Cancelled;
+        earlier.status_changed_on = Some(today);
+        earlier.status_changed_at = Some("2026-11-08T15:00:00Z".parse().unwrap());
+        let mut legacy = task(3, "Unknown time");
+        legacy.status = Status::Done;
+        legacy.status_changed_on = Some(today);
+        let tasks = [legacy, earlier, newest];
+        let lists = [TaskList {
+            id: 1,
+            name: "Work".into(),
+            count: 0,
+        }];
+        let history = visible_history(&tasks, &lists, &Query::default(), None, today);
+        assert_eq!(
+            history.iter().map(|task| task.id).collect::<Vec<_>>(),
+            [1, 2, 3]
         );
     }
 

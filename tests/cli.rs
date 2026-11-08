@@ -79,6 +79,34 @@ fn scripts_can_capture_filter_complete_trash_and_restore() {
 }
 
 #[test]
+fn completed_tasks_follow_closure_time_and_keep_it_through_due_edits() {
+    let directory = tempfile::tempdir().unwrap();
+    let profile = directory.path();
+    let older = json(profile, &["add", "Older task completed last"]);
+    let newer = json(profile, &["add", "Newer task completed first"]);
+    assert!(older["status_changed_at"].is_null());
+    let older_id = older["id"].to_string();
+    let newer_id = newer["id"].to_string();
+    let first = json(profile, &["done", &newer_id]);
+    let last = json(profile, &["done", &older_id]);
+    let first_time =
+        chrono::DateTime::parse_from_rfc3339(first["status_changed_at"].as_str().unwrap()).unwrap();
+    let last_time =
+        chrono::DateTime::parse_from_rfc3339(last["status_changed_at"].as_str().unwrap()).unwrap();
+    assert!(last_time > first_time);
+    let repeated = json(profile, &["done", &newer_id]);
+    assert_eq!(repeated["status_changed_at"], first["status_changed_at"]);
+    let edited = json(profile, &["edit", &older_id, "--due", "2080-01-01"]);
+    assert_eq!(edited["status_changed_at"], last["status_changed_at"]);
+    let results = json(profile, &["tasks", "s:done"]);
+    assert_eq!(results[0]["id"], older["id"]);
+    assert_eq!(results[1]["id"], newer["id"]);
+    let reopened = json(profile, &["reopen", &older_id]);
+    assert!(reopened["status_changed_on"].is_null());
+    assert!(reopened["status_changed_at"].is_null());
+}
+
+#[test]
 fn edits_preserve_unspecified_fields_and_reject_stale_versions() {
     let directory = tempfile::tempdir().unwrap();
     let profile = directory.path();

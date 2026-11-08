@@ -12,6 +12,7 @@ pub enum Mode {
     History,
     Lists,
     Editor,
+    DueField,
     ConfirmDiscard,
     DeleteListConfirm,
     Filter,
@@ -37,6 +38,10 @@ pub enum Action {
     Reopen,
     Filter,
     ToggleDone,
+    DueToday,
+    DueTomorrow,
+    DueNextWeek,
+    ClearDue,
     ToggleCancelled,
     Trash,
     Restore,
@@ -60,7 +65,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Self; 34] = [
+    pub const ALL: [Self; 38] = [
         Self::Up,
         Self::Down,
         Self::Open,
@@ -74,6 +79,10 @@ impl Action {
         Self::History,
         Self::Reopen,
         Self::Filter,
+        Self::DueToday,
+        Self::DueTomorrow,
+        Self::DueNextWeek,
+        Self::ClearDue,
         Self::ToggleDone,
         Self::ToggleCancelled,
         Self::Trash,
@@ -112,6 +121,10 @@ impl Action {
             Self::History => "history",
             Self::Reopen => "reopen",
             Self::Filter => "filter",
+            Self::DueToday => "due_today",
+            Self::DueTomorrow => "due_tomorrow",
+            Self::DueNextWeek => "due_next_week",
+            Self::ClearDue => "clear_due",
             Self::ToggleDone => "toggle_done",
             Self::ToggleCancelled => "toggle_cancelled",
             Self::Trash => "trash",
@@ -137,7 +150,16 @@ impl Action {
     }
 
     pub fn available_in(self, mode: Mode) -> bool {
+        if mode == Mode::DueField {
+            return matches!(
+                self,
+                Self::DueToday | Self::DueTomorrow | Self::DueNextWeek | Self::ClearDue
+            ) || self.available_in(Mode::Editor);
+        }
         match self {
+            Self::DueToday | Self::DueTomorrow | Self::DueNextWeek | Self::ClearDue => {
+                matches!(mode, Mode::Tasks | Mode::History)
+            }
             Self::Up | Self::Down => {
                 matches!(
                     mode,
@@ -207,6 +229,10 @@ impl Action {
             Self::History => &["h"],
             Self::Reopen => &["r"],
             Self::Filter => &["/"],
+            Self::DueToday => &["t"],
+            Self::DueTomorrow => &["T"],
+            Self::DueNextWeek => &["w"],
+            Self::ClearDue => &["x"],
             Self::ToggleDone => &["space"],
             Self::ToggleCancelled => &["c"],
             Self::Trash => &["d", "delete"],
@@ -370,6 +396,7 @@ impl Config {
             Mode::History,
             Mode::Lists,
             Mode::Editor,
+            Mode::DueField,
             Mode::ConfirmDiscard,
             Mode::DeleteListConfirm,
             Mode::Filter,
@@ -559,6 +586,74 @@ fn normalize_key(code: KeyCode, mut modifiers: KeyModifiers) -> (KeyCode, KeyMod
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn due_presets_are_case_sensitive_and_inherit_editor_actions_only_in_due_field() {
+        let config = Config::default();
+        let presets = [
+            (KeyCode::Char('t'), Action::DueToday),
+            (KeyCode::Char('T'), Action::DueTomorrow),
+            (KeyCode::Char('w'), Action::DueNextWeek),
+            (KeyCode::Char('x'), Action::ClearDue),
+        ];
+        for (code, action) in presets {
+            for mode in [Mode::Tasks, Mode::History, Mode::DueField] {
+                assert_eq!(config.action(key(code), mode), Some(action));
+            }
+            for mode in [
+                Mode::Editor,
+                Mode::Filter,
+                Mode::ListName,
+                Mode::Lists,
+                Mode::Help,
+                Mode::Language,
+                Mode::ConfirmDiscard,
+                Mode::DeleteListConfirm,
+                Mode::CopyText,
+            ] {
+                assert_eq!(config.action(key(code), mode), None);
+            }
+            assert_eq!(
+                config.action(
+                    KeyEvent::new(code, KeyModifiers::CONTROL | KeyModifiers::ALT),
+                    Mode::DueField
+                ),
+                None
+            );
+        }
+        for code in [KeyCode::Char('t'), KeyCode::Char('T')] {
+            assert_eq!(
+                config.action(KeyEvent::new(code, KeyModifiers::SHIFT), Mode::DueField),
+                Some(Action::DueTomorrow)
+            );
+        }
+        for action in Action::ALL {
+            if !presets.iter().any(|(_, preset)| *preset == action) {
+                assert_eq!(
+                    action.available_in(Mode::DueField),
+                    action.available_in(Mode::Editor),
+                    "{}",
+                    action.name()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn due_preset_overrides_replace_defaults_and_validate_due_field_conflicts() {
+        let config = Config::from_toml("[keys]\ndue_today = ['f6']\nclear_due = []").unwrap();
+        assert_eq!(config.action(key(KeyCode::Char('t')), Mode::DueField), None);
+        assert_eq!(
+            config.action(key(KeyCode::F(6)), Mode::DueField),
+            Some(Action::DueToday)
+        );
+        assert_eq!(config.action(key(KeyCode::Char('x')), Mode::Tasks), None);
+        let error = Config::from_toml("[keys]\ndue_today = ['ctrl+s']").unwrap_err();
+        assert!(error.to_string().contains("DueField mode"));
+        assert!(Config::from_toml("[keys]\ndue_today = ['n']").is_err());
+        assert!(Config::from_toml("[keys]\ndue_tomorrow = ['t']").is_err());
+        assert!(Config::example().contains("due_next_week = [\"w\"]"));
+    }
 
     #[test]
     fn saving_language_changes_only_the_root_value_and_keeps_current_bindings() {

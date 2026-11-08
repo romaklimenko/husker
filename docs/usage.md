@@ -35,6 +35,8 @@ in the editor. Use an arrow key or Tab to select Yes, then press Enter to discar
 Esc or Ctrl+G at the prompt also returns to editing.
 An unchanged editor closes without a prompt.
 Navigation shortcuts such as `q`, `d`, and `l` are ordinary text while you edit.
+Due date also accepts the `t`, `T`, `w`, and `x` presets described below.
+Those letters stay ordinary text in every other input field.
 
 Remove an existing due date to move an open task to Sometime.
 A done or cancelled task stays in its status section.
@@ -48,6 +50,39 @@ If another Husker process changes the task while you edit, your save fails
 and your text stays in the editor. Press F4 to copy any text you need to keep.
 Return from the copy view with Esc. Press Esc again and confirm Yes to discard
 the changed draft, then reopen the task to load its current values.
+
+## Set a due date with a shortcut
+
+Select a task in All tasks, an ordinary list, or History and use one of these keys:
+
+| Key | Due date |
+| --- | --- |
+| `t` | Today. |
+| `T` (Shift+T) | Tomorrow. |
+| `w` | Next week on Monday. |
+| `x` | No due date. |
+
+From a task row, the new due date saves immediately. Other task fields stay
+unchanged. A done task stays done and keeps its completion date and time.
+The same task stays selected if it still matches your filter. For example,
+pressing `t` under `due:none` removes that task from the filtered results.
+The shortcuts do nothing in Trash.
+
+Next week means the next Monday after today. On Monday, November 9, `w`
+sets November 16. On Sunday, November 8, it sets November 9.
+Husker uses your computer's current local date, including after midnight.
+
+In the editor, focus Due date with Tab and use the same keys. A preset
+replaces the whole field, even if you have selected only part of its text.
+It does not save the task or move to another field. Press Ctrl+S to save.
+Ctrl+Z restores the previous field text, cursor, and selection in one step.
+You can still type a date such as `2026-11-09` manually.
+
+The Due date field shows the configured shortcuts while it is focused.
+Press `?` from navigation to find all four actions in Help.
+To rebind a preset, set an action such as `due_today = ["ctrl+t"]` under
+`[keys]`. Use `due_tomorrow`, `due_next_week`, or `clear_due` for the others.
+An empty array disables that preset, for example `clear_due = []`.
 
 ## Edit text with the keyboard
 
@@ -127,6 +162,12 @@ All tasks has no count because it is a view option. If you name an ordinary
 list All tasks, that list still appears separately with its count.
 Help opened with `?` returns to the picker when you close it with Esc.
 
+All tasks and all-list History show the list before each task title, such as
+`[Work] Review`. The prefix remains when you filter All tasks with `l:Work`.
+Opening Work itself removes the repeated prefix because the breadcrumb
+already identifies the list. Renaming a list updates these labels on refresh.
+The prefix is not part of the stored title or the text copied with F4.
+
 ## Remove a list without losing its tasks
 
 Press `l`, select an ordinary list, and press Delete or `d`.
@@ -177,7 +218,9 @@ an undated task moves it from Sometime to Done today without adding a due date.
 A task completed today appears there even if its stored due date is overdue.
 If a status filter includes older tasks, Done and Cancelled appear afterward.
 Within each finished section, newer status dates appear first. Tasks without
-a recorded status date appear last. Equal dates use descending task ID.
+a recorded status date appear last. Within one date, the most recent recorded
+completion or cancellation time appears first. Unknown times follow known
+times on that date. Equal or unknown times use descending task ID.
 Trash stays separate from these views.
 
 Task rows use the full navigation width. The selected task has no side
@@ -193,8 +236,8 @@ to the final ISO week of 2026.
 
 Use Alt+Up or Alt+Down to change the order of open tasks sharing the same
 due date. Undated open tasks can move among other open tasks in Sometime.
-Done and cancelled tasks use their recorded status dates and cannot be
-reordered manually.
+Done and cancelled tasks use their recorded status dates and times and cannot
+be reordered manually.
 Reordering never changes a due date or moves a task between lists.
 With a filter active, reordering uses neighboring tasks in the visible results.
 
@@ -254,9 +297,13 @@ currently done and cancelled tasks from every date. Tasks do not expire.
 History excludes open tasks and Trash.
 
 The most recent recorded status dates appear first. Headings show Today,
-Yesterday, or the calendar date. Older tasks without a recorded completion
-date appear under Unknown date. Tasks with the same date use descending
-ID because Husker records a date, not an exact completion time.
+Yesterday, or the calendar date. Within one date, later completion or
+cancellation times appear first. Tasks migrated without a recorded time
+follow tasks with known times on the same date. Equal or unknown times use
+descending task ID. Tasks without a recorded date appear under Unknown date.
+
+Husker records the timestamp in UTC and keeps a separate local date for
+headings and the daily task view. It does not invent times for older tasks.
 
 Press `/` to search History. For example, `s:done milk` finds completed tasks
 containing `milk`. `s:cancelled` shows cancelled tasks. `s:all` keeps both
@@ -276,7 +323,7 @@ Choosing the same list restores the view from before you opened History.
 Choosing another list starts with an empty filter.
 
 History shows each task's current status. Reopening clears its recorded
-completion date. Husker does not keep a log of earlier status changes or
+completion date and time. Husker does not keep a log of earlier status changes or
 previous versions of task text. To find deleted tasks, open Trash from
 the list picker instead.
 
@@ -376,6 +423,7 @@ when all actions do not fit on screen.
 | `R` | Rename an ordinary list from the picker. |
 | `l` | Open or cancel the list picker. |
 | `h` | Open History, or return to the view where you opened it. |
+| `t`, `T`, `w`, `x` | Set today, tomorrow, next Monday, or no due date outside Trash. |
 | `/` | Edit the task filter. |
 | Esc | Return from a list to All tasks, return from History, or cancel the picker. |
 | Space | Toggle done status. |
@@ -533,7 +581,7 @@ Every command accepts `--profile DIRECTORY` to select its task collection.
 
 ## Update an existing profile
 
-Back up your profile before updating an earlier version to 0.8.0.
+Back up your profile before updating an earlier version to 0.9.0.
 Follow [Back up your tasks](#back-up-your-tasks), then keep every old Husker
 process closed, including MCP clients, until the upgrade is complete.
 
@@ -543,8 +591,22 @@ Install the current version from the repository:
 cargo install --path . --locked
 ```
 
-Version 0.8.0 uses the same database schema as versions 0.4.0 through 0.7.0. Those profiles
-need no database conversion, and their saved tasks and list order stay unchanged.
+Version 0.9.0 upgrades the database to schema version 4. Run `husker lists`
+once before reconnecting a read-only MCP client. For a custom profile, run
+`husker --profile DIRECTORY lists`. A read-only connection cannot upgrade it.
+
+Profiles from versions 0.4.0 through 0.8.0 keep every existing task field,
+task version, and saved list position. The upgrade adds a nullable completion
+timestamp. Older tasks receive no invented time. A new completion or
+cancellation records its time automatically.
+
+Keep older Husker executables closed after upgrading. Versions before 0.9.0
+cannot open the upgraded profile. Task JSON now includes `status_changed_at`,
+a UTC timestamp or null, alongside the existing local `status_changed_on` date.
+
+If a custom action uses `t`, `T`, `w`, or `x` in an overlapping mode, rebind
+or disable the corresponding preset. For example, `due_today = []` keeps
+an existing `t` shortcut. All four preset actions are listed in Help.
 If an input action already uses Ctrl+C, rebind or disable `copy_selection`
 in `[keys]` to avoid a shortcut conflict. For example, set `copy_selection = []`
 to keep your existing Ctrl+C action.
@@ -555,16 +617,11 @@ those lines. If you set `save = ["esc"]`, remove that override to use the new
 save and cancel defaults. Esc now belongs to the discard action by default.
 Old save and discard overrides can conflict until you update them together.
 
-For a profile created before 0.4.0, run `husker lists` once before reconnecting
-a read-only MCP client. For a custom profile, run `husker --profile DIRECTORY lists`.
-This writable command upgrades the database to schema version 3.
-A read-only MCP connection cannot perform the upgrade.
-
-The upgrade adds saved list positions.
+For a profile created before 0.4.0, the same upgrade also adds saved list positions.
 The default list moves to the top. Other existing lists start in
 case-insensitive alphabetical order. Use Alt+Up and Alt+Down in the
 list picker to arrange them after the upgrade.
-For a profile from version 0.3.0, every task field and task version stays unchanged.
+For a profile from version 0.3.0, every existing task field and task version stays unchanged.
 
 For profiles from version 0.1 or 0.2, the upgrade also simplifies task fields.
 It preserves task IDs, lists, due dates, and statuses.
@@ -582,7 +639,7 @@ description instead. Replace `due:anytime` and `due:maybe` with `due:none`.
 MCP clients must refresh their tool definitions after the upgrade.
 
 Start Husker and reconnect MCP clients after the upgrade.
-Husker versions before 0.4.0 cannot open a profile migrated to schema version 3.
+Use the updated executable for both terminal sessions and MCP connections.
 
 ## Back up your tasks
 

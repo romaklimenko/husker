@@ -1,9 +1,35 @@
-use chrono::{Datelike, NaiveDate};
+use std::cmp::Ordering;
+
+use anyhow::{Context, Result};
+use chrono::{Datelike, Days, NaiveDate};
 
 use crate::{
     i18n::Language,
     model::{Status, Task},
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DuePreset {
+    Today,
+    Tomorrow,
+    NextMonday,
+    Clear,
+}
+
+impl DuePreset {
+    pub fn resolve(self, today: NaiveDate) -> Result<Option<NaiveDate>> {
+        let days = match self {
+            Self::Today => 0,
+            Self::Tomorrow => 1,
+            Self::NextMonday => 7 - u64::from(today.weekday().num_days_from_monday()),
+            Self::Clear => return Ok(None),
+        };
+        today
+            .checked_add_days(Days::new(days))
+            .map(Some)
+            .context("The due date is outside the supported calendar range.")
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Bucket {
@@ -61,13 +87,18 @@ pub fn sort_tasks(tasks: &mut [Task], today: NaiveDate) {
                 if left.status == Status::Open {
                     (left.due, left.position, left.id).cmp(&(right.due, right.position, right.id))
                 } else {
-                    right
-                        .status_changed_on
-                        .cmp(&left.status_changed_on)
-                        .then_with(|| right.id.cmp(&left.id))
+                    compare_closed_tasks(left, right)
                 }
             })
     });
+}
+
+pub fn compare_closed_tasks(left: &Task, right: &Task) -> Ordering {
+    right
+        .status_changed_on
+        .cmp(&left.status_changed_on)
+        .then_with(|| right.status_changed_at.cmp(&left.status_changed_at))
+        .then_with(|| right.id.cmp(&left.id))
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -120,6 +151,52 @@ mod tests {
     use super::*;
     use crate::model::Status;
 
+    #[test]
+    fn due_presets_use_calendar_days_and_a_strictly_future_monday() {
+        let date = |value: &str| NaiveDate::parse_from_str(value, "%Y-%m-%d").unwrap();
+        for (today, tomorrow, monday) in [
+            ("2026-11-08", "2026-11-09", "2026-11-09"),
+            ("2026-11-09", "2026-11-10", "2026-11-16"),
+            ("2026-04-30", "2026-05-01", "2026-05-04"),
+            ("2026-12-31", "2027-01-01", "2027-01-04"),
+            ("2024-02-28", "2024-02-29", "2024-03-04"),
+            ("2024-02-29", "2024-03-01", "2024-03-04"),
+            ("2026-03-29", "2026-03-30", "2026-03-30"),
+        ] {
+            let today = date(today);
+            assert_eq!(DuePreset::Today.resolve(today).unwrap(), Some(today));
+            assert_eq!(
+                DuePreset::Tomorrow.resolve(today).unwrap(),
+                Some(date(tomorrow))
+            );
+            assert_eq!(
+                DuePreset::NextMonday.resolve(today).unwrap(),
+                Some(date(monday))
+            );
+            assert_eq!(DuePreset::Clear.resolve(today).unwrap(), None);
+        }
+        for offset in 0..7 {
+            let today = date("2026-11-09")
+                .checked_add_days(Days::new(offset))
+                .unwrap();
+            assert_eq!(
+                DuePreset::NextMonday.resolve(today).unwrap(),
+                Some(date("2026-11-16"))
+            );
+        }
+    }
+
+    #[test]
+    fn due_presets_report_calendar_overflow_without_panicking() {
+        assert_eq!(
+            DuePreset::Today.resolve(NaiveDate::MAX).unwrap(),
+            Some(NaiveDate::MAX)
+        );
+        assert_eq!(DuePreset::Clear.resolve(NaiveDate::MAX).unwrap(), None);
+        assert!(DuePreset::Tomorrow.resolve(NaiveDate::MAX).is_err());
+        assert!(DuePreset::NextMonday.resolve(NaiveDate::MAX).is_err());
+    }
+
     fn task(due: Option<NaiveDate>) -> Task {
         Task {
             id: 1,
@@ -129,6 +206,7 @@ mod tests {
             due,
             status: Status::Open,
             status_changed_on: None,
+            status_changed_at: None,
             deleted: false,
             position: 0,
             version: 1,
@@ -263,6 +341,43 @@ mod tests {
         assert_eq!(
             tasks.iter().map(|task| task.id).collect::<Vec<_>>(),
             [4, 3, 2, 1]
+        );
+    }
+
+    #[test]
+    fn closed_sections_use_completion_instants_before_ids_and_keep_unknown_times_last() {
+        let today = NaiveDate::from_ymd_opt(2026, 11, 8).unwrap();
+        let mut tasks = [
+            (1, Some(today), Some("2026-11-08T10:00:00.000001Z")),
+            (2, Some(today), Some("2026-11-08T11:00:00.000002+01:00")),
+            (3, Some(today), Some("2026-11-08T10:00:00.000002Z")),
+            (90, Some(today), Some("2026-11-08T09:00:00Z")),
+            (91, Some(today), None),
+            (99, today.pred_opt(), Some("2026-11-07T23:59:59Z")),
+            (100, None, None),
+        ]
+        .into_iter()
+        .map(|(id, day, instant)| {
+            let mut value = task(None);
+            value.id = id;
+            value.position = 200 - id;
+            value.status = Status::Done;
+            value.status_changed_on = day;
+            value.status_changed_at = instant.map(|value| value.parse().unwrap());
+            value
+        })
+        .collect::<Vec<_>>();
+        sort_tasks(&mut tasks, today);
+        assert_eq!(
+            tasks.iter().map(|task| task.id).collect::<Vec<_>>(),
+            [3, 2, 1, 90, 91, 99, 100]
+        );
+        tasks[0].due = today.succ_opt();
+        tasks[1].position = -100;
+        sort_tasks(&mut tasks, today);
+        assert_eq!(
+            tasks.iter().map(|task| task.id).collect::<Vec<_>>(),
+            [3, 2, 1, 90, 91, 99, 100]
         );
     }
 
