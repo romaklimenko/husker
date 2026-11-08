@@ -11,6 +11,7 @@ pub enum Mode {
     Tasks,
     Lists,
     Editor,
+    ConfirmDiscard,
     Filter,
     ListName,
     Help,
@@ -140,9 +141,8 @@ impl Action {
                 mode,
                 Mode::Tasks | Mode::Lists | Mode::Filter | Mode::ListName
             ),
-            Self::Save | Self::Discard | Self::NextField | Self::PreviousField => {
-                mode == Mode::Editor
-            }
+            Self::Save | Self::NextField | Self::PreviousField => mode == Mode::Editor,
+            Self::Discard => matches!(mode, Mode::Editor | Mode::ConfirmDiscard),
             Self::Apply => matches!(mode, Mode::Filter | Mode::ListName),
             Self::Close => matches!(mode, Mode::Help | Mode::CopyText),
             Self::Refresh => true,
@@ -307,6 +307,7 @@ impl Config {
             Mode::Tasks,
             Mode::Lists,
             Mode::Editor,
+            Mode::ConfirmDiscard,
             Mode::Filter,
             Mode::ListName,
             Mode::Help,

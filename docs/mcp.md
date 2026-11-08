@@ -6,7 +6,7 @@ The client starts Husker as a local process and communicates over standard input
 
 ## Install or update Husker
 
-This guide describes Husker 0.4.0 and its task tools.
+This guide describes Husker 0.5.0 and its task tools.
 Close running Husker instances before updating the executable.
 Disconnect MCP clients that already use Husker, then run this command from the source directory:
 
@@ -237,6 +237,8 @@ The agent can use the [same search syntax as the terminal](usage.md#find-tasks),
 Tasks have no separate tags or readiness fields.
 Searching another list with `l:Work` cannot broaden the connection's access.
 Task searches return up to 100 results by default and allow pages of up to 200.
+Results follow the [planning order](usage.md#plan-by-due-date), with open tasks
+before done and cancelled tasks within each date group.
 
 A writable connection can add and edit tasks, change their status, and move them to or from Trash.
 A connection restricted with `--list` cannot create or rename lists.

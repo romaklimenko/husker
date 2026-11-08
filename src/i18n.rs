@@ -54,7 +54,7 @@ pub fn tr(language: Language, key: &str) -> &'static str {
         "tomorrow" => ("Tomorrow", "I morgen"),
         "soon" => ("Soon", "Snart"),
         "next" => ("Next", "Senere"),
-        "undated" => ("Undated", "Uden dato"),
+        "undated" => ("Sometime", "Engang"),
         "open" => ("Open", "Åben"),
         "done" => ("Done", "Udført"),
         "cancelled" => ("Cancelled", "Annulleret"),
@@ -105,6 +105,15 @@ pub fn tr(language: Language, key: &str) -> &'static str {
             "Edit the fields. A blank due date removes the date.",
             "Rediger felterne. En tom forfaldsdato fjerner datoen.",
         ),
+        "editor_keys_hint" => (
+            "Ctrl+Left/Right word | Shift select | Ctrl+A all | Ctrl+Z/Y undo/redo",
+            "Ctrl+Venstre/Højre ord | Shift markér | Ctrl+A alt | Ctrl+Z/Y fortryd/gentag",
+        ),
+        "discard_confirm" => ("Discard unsaved changes?", "Kassér ugemte ændringer?"),
+        "discard_confirm_hint" => ("Arrows choose | Enter confirm", "Pile vælg | Enter bekræft"),
+        "keep_editing" => ("Keep editing", "Fortsæt redigering"),
+        "no" => ("No", "Nej"),
+        "yes" => ("Yes", "Ja"),
         "filter_hint" => (
             "Combine text, l:list, due:today, and s:done. #words are text.",
             "Kombiner tekst, l:liste, due:today og s:done. #ord er tekst.",
@@ -183,7 +192,10 @@ fn danish_error(message: &str) -> String {
         }
         "Tasks in Trash cannot be reordered." => "Opgaver i papirkurven kan ikke ændre rækkefølge.",
         "Reorder tasks within the same date or undated group." => {
-            "Flyt opgaver inden for samme dato eller gruppe uden dato."
+            "Flyt opgaver inden for samme dato eller gruppen Engang."
+        }
+        "Reorder tasks within the same open or closed category." => {
+            "Flyt opgaver inden for samme åbne eller afsluttede kategori."
         }
         "Unclosed quoted filter value." => "Filterværdien mangler et afsluttende anførselstegn.",
         "A filter term cannot be empty." => "Et filterudtryk må ikke være tomt.",
@@ -277,7 +289,8 @@ mod tests {
         assert_eq!("da".parse::<Language>().unwrap(), Language::Da);
         assert_eq!(Language::En.to_string(), "en");
         assert!("dk".parse::<Language>().is_err());
-        assert_eq!(tr(Language::Da, "undated"), "Uden dato");
+        assert_eq!(tr(Language::Da, "undated"), "Engang");
+        assert_eq!(tr(Language::En, "undated"), "Sometime");
     }
 
     #[test]

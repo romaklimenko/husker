@@ -412,6 +412,10 @@ impl Store {
             stored_first.due == stored_second.due,
             "Reorder tasks within the same date or undated group."
         );
+        ensure!(
+            (stored_first.status == Status::Open) == (stored_second.status == Status::Open),
+            "Reorder tasks within the same open or closed category."
+        );
         transaction.execute(
             "UPDATE tasks SET position = ?1, version = version + 1 WHERE id = ?2",
             params![stored_second.position, stored_first.id],
@@ -884,6 +888,9 @@ mod tests {
         let task = store.set_deleted(task.id, task.version, true).unwrap();
         let task = store.set_deleted(task.id, task.version, false).unwrap();
         let neighbor = store.create_task(&input("Neighbor")).unwrap();
+        let neighbor = store
+            .set_status_on(neighbor.id, neighbor.version, Status::Done, today)
+            .unwrap();
         store.swap_positions(&task, &neighbor).unwrap();
         let task = store.task(task.id).unwrap();
         assert_eq!(task.status_changed_on, Some(today));
@@ -1172,6 +1179,25 @@ mod tests {
         assert!(store.swap_positions(&first, &undated).is_err());
         assert!(store.swap_positions(&first, &first).is_err());
         store.swap_positions(&undated, &another_undated).unwrap();
+    }
+
+    #[test]
+    fn reorder_preserves_open_and_closed_categories() {
+        let mut store = memory_store();
+        let open = store.create_task(&input("Open")).unwrap();
+        let other = store.create_task(&input("Other")).unwrap();
+        let done = store
+            .set_status(other.id, other.version, Status::Done)
+            .unwrap();
+        assert!(store.swap_positions(&open, &done).is_err());
+        assert_eq!(store.task(open.id).unwrap(), open);
+        assert_eq!(store.task(done.id).unwrap(), done);
+        let cancelled = store
+            .set_status(open.id, open.version, Status::Cancelled)
+            .unwrap();
+        store.swap_positions(&cancelled, &done).unwrap();
+        assert_eq!(store.task(done.id).unwrap().position, cancelled.position);
+        assert_eq!(store.task(cancelled.id).unwrap().status, Status::Cancelled);
     }
 
     #[test]

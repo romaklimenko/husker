@@ -14,7 +14,7 @@ husker
 ```
 
 Husker opens your planned tasks. Press `n` to create a task, enter a title,
-and press Ctrl+S to save. Esc cancels your edits.
+and press Ctrl+S to save. Esc asks before discarding changed task fields.
 Press `?` to see the shortcuts or `q` to quit.
 
 Run the installed `husker` command while someone edits or builds the repository.
@@ -88,6 +88,8 @@ Action messages and errors clear after five seconds. External-update notices
 stay until you acknowledge them with F5.
 Task rows use the full width. Press Enter to read or edit the description.
 Long descriptions wrap in the editor without adding line breaks to your text.
+Use Ctrl+Left and Ctrl+Right to move by word, Shift with movement keys to
+select text, and Ctrl+Z to undo. The editor heading shows an existing task's ID.
 
 In the list chooser, use Alt+Up and Alt+Down to arrange your lists.
 The default list stays first and Trash stays last. Husker remembers the order.
@@ -101,6 +103,8 @@ Search treats those words as ordinary text.
 Concurrent task edits use version checks so an older edit cannot silently
 overwrite a newer save.
 Tasks completed or cancelled today stay visible until the next local day.
+Open tasks appear first within each date group. Tasks without due dates appear
+under Sometime, or Engang in Danish.
 
 Recurrence, reminders, subtasks, priorities, synchronization, list deletion,
 and permanent task deletion are not included.

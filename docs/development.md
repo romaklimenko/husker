@@ -35,9 +35,47 @@ The installed copy does not lock the repository's build executable.
 Close installed Husker processes and disconnect MCP clients before replacing
 the installed copy with `cargo install --path . --locked`.
 
-Use only temporary profiles for migration tests. Starting version 0.4.0
+Use only temporary profiles for migration tests. Starting version 0.5.0
 against a schema version 1 or 2 profile performs a migration on writable access.
+Versions 0.4.0 and 0.5.0 both use schema version 3.
 Follow the [upgrade instructions](usage.md#update-an-existing-profile) for a real profile.
+
+## Checks for version 0.5.0
+
+Version 0.5.0 passed these checks on November 8, 2026:
+
+| Check | Result |
+| --- | --- |
+| Unit tests | 105 passed, including Unicode word movement, selection, replacement, undo/redo, discard confirmation, task IDs, planning order, and reorder boundaries. |
+| CLI integration tests | 8 passed against isolated profiles. |
+| MCP integration tests | 7 passed through child processes, including scoped pagination with open tasks first. |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.5.0. |
+| OpenSpec | All six capability specs passed strict validation after archiving the editor controls change. |
+| Guide examples | Verified task commands, open-first ordering, both no-date filters, the stable `undated` CLI token, versioned edits, Trash, list ordering, and default keys. |
+
+Interactive checks ran in an 80 by 24 pseudo-terminal with a scratch profile
+created by version 0.4.0. Sometime showed an open task before done and cancelled
+tasks. Opening the task displayed `Edit task #2` in the heading.
+
+Injected control-key sequences moved by word and selected `beta` in Description.
+Typing replaced the selection. Ctrl+Z and Ctrl+Y undid and restored the edit.
+Esc opened a confirmation with No selected. Enter returned to the unchanged
+draft. Ctrl+S saved the expected description and incremented the task version.
+A CLI read confirmed the saved text, including its newline and Danish characters.
+
+Ctrl+A selected the whole Description field for replacement. Esc, Right, and
+Enter explicitly discarded that later change. A CLI read confirmed the stored
+text and version stayed unchanged. Reopening the task and pressing Esc without
+editing closed the editor immediately. Quit restored the terminal settings.
+
+Unit tests verified that one paste event is one undo step. The pseudo-terminal
+injection did not establish that paste behavior, so the interactive checks
+cover typed edits only.
+The checks ran on Windows with Rust 1.91.1 and isolated profiles.
+Physical keyboard delivery of modified shortcuts, Linux, and macOS were not
+tested in this session.
 
 ## Checks for version 0.4.0
 

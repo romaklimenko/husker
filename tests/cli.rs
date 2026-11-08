@@ -205,6 +205,39 @@ fn noninteractive_default_launch_fails_without_creating_a_profile() {
 }
 
 #[test]
+fn planning_results_put_open_tasks_first_within_each_group() {
+    let directory = tempfile::tempdir().unwrap();
+    let profile = directory.path();
+    let closed = json(profile, &["add", "Closed earlier", "--due", "2000-01-01"]);
+    json(profile, &["done", &closed["id"].to_string()]);
+    let open = json(profile, &["add", "Open later", "--due", "2000-01-02"]);
+    let sometime_closed = json(profile, &["add", "Cancelled someday"]);
+    json(profile, &["cancel", &sometime_closed["id"].to_string()]);
+    let sometime_open = json(profile, &["add", "Open someday"]);
+    let rows = json(profile, &["tasks", "s:all"]);
+    let ids = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|task| task["id"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        [
+            open["id"].clone(),
+            closed["id"].clone(),
+            sometime_open["id"].clone(),
+            sometime_closed["id"].clone()
+        ]
+    );
+    for query in ["s:all due:none", "s:all due:undated"] {
+        let rows = json(profile, &["tasks", query]);
+        assert_eq!(rows[0]["id"], sometime_open["id"]);
+        assert_eq!(rows[1]["id"], sometime_closed["id"]);
+    }
+}
+
+#[test]
 fn lists_keep_the_default_first_and_return_saved_order() {
     let directory = tempfile::tempdir().unwrap();
     let profile = directory.path();

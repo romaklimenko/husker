@@ -5,5 +5,6 @@ pub mod model;
 pub mod planning;
 pub mod query;
 pub mod store;
+pub(crate) mod text_buffer;
 pub(crate) mod text_layout;
 pub mod ui;

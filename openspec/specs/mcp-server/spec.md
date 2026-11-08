@@ -137,7 +137,7 @@ The task-storage spec owns status-date changes.
 #### Scenario: Remove a date
 
 - **WHEN** `update_task` supplies `clear_due = true`
-- **THEN** the task has no date and belongs to Undated
+- **THEN** the task has no date and belongs to the group displayed as Sometime in the English terminal interface
 - **AND** omitted title, description, and list fields retain their values
 
 #### Scenario: Reject a removed field

@@ -206,6 +206,42 @@ async fn legacy_client_cannot_read_or_write_outside_its_list() {
 }
 
 #[tokio::test]
+async fn scoped_pagination_sorts_open_tasks_before_closed_tasks() {
+    let mut fixture = Fixture::new();
+    fixture
+        .store
+        .set_status(fixture.visible.id, fixture.visible.version, Status::Done)
+        .unwrap();
+    let open = fixture
+        .store
+        .create_task(&TaskInput {
+            list_id: fixture.private,
+            title: "Open after completed".into(),
+            ..TaskInput::default()
+        })
+        .unwrap();
+    let client = connect(fixture.path(), &["--list", "Private", "--read-only"], true).await;
+    let first = data(
+        &client,
+        "list_tasks",
+        json!({"query":"s:all due:none","limit":1}),
+    )
+    .await;
+    assert_eq!(first["tasks"][0]["id"], open.id);
+    assert_eq!(first["total"], 2);
+    assert_eq!(first["next_offset"], 1);
+    let second = data(
+        &client,
+        "list_tasks",
+        json!({"query":"s:all due:undated","limit":1,"offset":1}),
+    )
+    .await;
+    assert_eq!(second["tasks"][0]["id"], fixture.visible.id);
+    assert!(second["next_offset"].is_null());
+    close(client).await;
+}
+
+#[tokio::test]
 async fn current_discovery_handles_versioned_task_workflow_and_pagination() {
     let fixture = Fixture::new();
     let client = connect(fixture.path(), &["--list", "Private"], true).await;

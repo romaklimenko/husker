@@ -15,12 +15,11 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::config::{Action, Config, Mode};
@@ -29,6 +28,7 @@ use crate::model::{Status, Task, TaskInput, TaskList};
 use crate::planning::{Bucket, date_label};
 use crate::query::{Query, parse_date, visible_tasks};
 use crate::store::Store;
+use crate::text_buffer::TextBuffer;
 use crate::text_layout::TextLayout;
 
 type PanicHook = Arc<dyn Fn(&PanicHookInfo<'_>) + Send + Sync + 'static>;
@@ -130,182 +130,13 @@ pub fn run(store: &mut Store, config: &Config) -> Result<()> {
     Ok(())
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct TextBuffer {
-    text: String,
-    cursor: usize,
-}
-
-impl TextBuffer {
-    fn new(text: impl Into<String>) -> Self {
-        let text = text.into();
-        let cursor = text.len();
-        Self { text, cursor }
-    }
-
-    fn insert(&mut self, text: &str) {
-        self.text.insert_str(self.cursor, text);
-        self.cursor += text.len();
-    }
-
-    fn previous(&self) -> usize {
-        self.text[..self.cursor]
-            .grapheme_indices(true)
-            .next_back()
-            .map_or(0, |(at, _)| at)
-    }
-
-    fn next(&self) -> usize {
-        self.text[self.cursor..]
-            .graphemes(true)
-            .next()
-            .map_or(self.cursor, |grapheme| self.cursor + grapheme.len())
-    }
-
-    fn line_start(&self) -> usize {
-        self.text[..self.cursor].rfind('\n').map_or(0, |at| at + 1)
-    }
-
-    fn line_end(&self) -> usize {
-        self.text[self.cursor..]
-            .find('\n')
-            .map_or(self.text.len(), |at| self.cursor + at)
-    }
-
-    fn move_vertical(&mut self, down: bool) {
-        let start = self.line_start();
-        let column = self.text[start..self.cursor].chars().count();
-        let (target_start, target_end) = if down {
-            let end = self.line_end();
-            if end == self.text.len() {
-                return;
-            }
-            let next_start = end + 1;
-            let next_end = self.text[next_start..]
-                .find('\n')
-                .map_or(self.text.len(), |at| next_start + at);
-            (next_start, next_end)
-        } else {
-            if start == 0 {
-                return;
-            }
-            let previous_end = start - 1;
-            let previous_start = self.text[..previous_end].rfind('\n').map_or(0, |at| at + 1);
-            (previous_start, previous_end)
-        };
-        self.cursor = self.text[target_start..target_end]
-            .char_indices()
-            .nth(column)
-            .map_or(target_end, |(at, _)| target_start + at);
-    }
-
-    fn move_wrapped_vertical(&mut self, down: bool, width: usize) {
-        let layout = TextLayout::new(&self.text, width);
-        let (row, column) = layout.cursor_position(self.cursor);
-        let target = if down {
-            row.saturating_add(1).min(layout.lines.len() - 1)
-        } else {
-            row.saturating_sub(1)
-        };
-        if target == row {
-            return;
-        }
-        self.cursor = layout.nearest_cursor(target, column);
-    }
-
-    /// Returns whether the text changed. Cursor movement alone is not an edit.
-    fn key(&mut self, key: KeyEvent, multiline: bool) -> bool {
-        match key.code {
-            KeyCode::Char(c)
-                if !c.is_control()
-                    && (!key
-                        .modifiers
-                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-                        || key
-                            .modifiers
-                            .contains(KeyModifiers::CONTROL | KeyModifiers::ALT)) =>
-            {
-                self.insert(&c.to_string());
-                true
-            }
-            KeyCode::Enter if multiline => {
-                self.insert("\n");
-                true
-            }
-            KeyCode::Backspace if self.cursor > 0 => {
-                let previous = self.previous();
-                self.text.replace_range(previous..self.cursor, "");
-                self.cursor = previous;
-                true
-            }
-            KeyCode::Delete if self.cursor < self.text.len() => {
-                self.text.replace_range(self.cursor..self.next(), "");
-                true
-            }
-            KeyCode::Left => {
-                self.cursor = self.previous();
-                false
-            }
-            KeyCode::Right => {
-                self.cursor = self.next();
-                false
-            }
-            KeyCode::Home => {
-                self.cursor = self.line_start();
-                false
-            }
-            KeyCode::End => {
-                self.cursor = self.line_end();
-                false
-            }
-            KeyCode::Up if multiline => {
-                self.move_vertical(false);
-                false
-            }
-            KeyCode::Down if multiline => {
-                self.move_vertical(true);
-                false
-            }
-            _ => false,
-        }
-    }
-
-    fn cursor_position(&self) -> (usize, usize) {
-        let before = &self.text[..self.cursor];
-        let row = before.bytes().filter(|byte| *byte == b'\n').count();
-        let column = UnicodeWidthStr::width(&self.text[self.line_start()..self.cursor]);
-        (row, column)
-    }
-
-    fn set_cursor_position(&mut self, row: usize, column: usize) {
-        let mut start = 0;
-        let lines: Vec<&str> = self.text.split('\n').collect();
-        let row = row.min(lines.len().saturating_sub(1));
-        for line in &lines[..row] {
-            start += line.len() + 1;
-        }
-        let line = lines[row];
-        let mut width = 0;
-        let mut offset = 0;
-        for (index, grapheme) in line.grapheme_indices(true) {
-            let next = index + grapheme.len();
-            let character_width = UnicodeWidthStr::width(&line[index..next]);
-            if width + character_width > column {
-                break;
-            }
-            width += character_width;
-            offset = next;
-        }
-        self.cursor = start + offset;
-    }
-}
-
 const FIELD_KEYS: [&str; 4] = ["title", "description", "due", "list"];
 
 #[derive(Clone, Debug)]
 struct TaskEditor {
     original: Option<Task>,
     fields: [TextBuffer; 4],
+    initial_text: [String; 4],
     active: usize,
 }
 
@@ -329,9 +160,17 @@ impl TaskEditor {
         let active = if task.is_some() { 1 } else { 0 };
         Self {
             original: task,
+            initial_text: std::array::from_fn(|index| fields[index].text.clone()),
             fields,
             active,
         }
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.fields
+            .iter()
+            .zip(&self.initial_text)
+            .any(|(field, initial)| field.text != *initial)
     }
 
     fn input(&self, lists: &[TaskList], language: Language) -> Result<TaskInput> {
@@ -367,6 +206,10 @@ enum View {
 enum Screen {
     Navigation,
     Editor(Box<TaskEditor>),
+    ConfirmDiscard {
+        editor: Box<TaskEditor>,
+        discard: bool,
+    },
     Filter(TextBuffer),
     ListName {
         id: Option<i64>,
@@ -460,6 +303,7 @@ impl App {
     fn mode(&self) -> Mode {
         match self.screen {
             Screen::Editor(_) => Mode::Editor,
+            Screen::ConfirmDiscard { .. } => Mode::ConfirmDiscard,
             Screen::Filter(_) => Mode::Filter,
             Screen::ListName { .. } => Mode::ListName,
             Screen::Help => Mode::Help,
@@ -666,7 +510,7 @@ impl App {
                             &editor.fields[index].text,
                             usize::from(rect.width.saturating_sub(1)),
                         );
-                        editor.fields[index].cursor = layout.cursor_at(row, column);
+                        editor.fields[index].set_cursor(layout.cursor_at(row, column), false);
                     } else {
                         editor.fields[index].set_cursor_position(row, column);
                     }
@@ -773,6 +617,30 @@ impl App {
             _ => {}
         }
         match &mut self.screen {
+            Screen::ConfirmDiscard { discard, .. } => {
+                if action == Some(Action::Discard) {
+                    self.finish_discard_confirmation(false, store)?;
+                } else if key.modifiers.is_empty() {
+                    match key.code {
+                        KeyCode::Left
+                        | KeyCode::Right
+                        | KeyCode::Up
+                        | KeyCode::Down
+                        | KeyCode::Tab
+                        | KeyCode::BackTab => {
+                            *discard = !*discard;
+                        }
+                        KeyCode::Enter => {
+                            let discard = *discard;
+                            self.finish_discard_confirmation(discard, store)?;
+                        }
+                        _ => {}
+                    }
+                } else if key.code == KeyCode::BackTab && key.modifiers == KeyModifiers::SHIFT {
+                    *discard = !*discard;
+                }
+                return Ok(false);
+            }
             Screen::CopyText {
                 text, row, column, ..
             } => {
@@ -810,8 +678,20 @@ impl App {
                 match action {
                     Some(Action::Save) => self.save_editor(store, config)?,
                     Some(Action::Discard) => {
-                        self.screen = Screen::Navigation;
-                        self.refresh(store)?;
+                        if editor.is_dirty() {
+                            let Screen::Editor(editor) =
+                                std::mem::replace(&mut self.screen, Screen::Navigation)
+                            else {
+                                unreachable!()
+                            };
+                            self.screen = Screen::ConfirmDiscard {
+                                editor,
+                                discard: false,
+                            };
+                        } else {
+                            self.screen = Screen::Navigation;
+                            self.refresh(store)?;
+                        }
                     }
                     Some(Action::NextField) => {
                         editor.active = (editor.active + 1) % FIELD_KEYS.len()
@@ -824,6 +704,7 @@ impl App {
                             editor.fields[1].move_wrapped_vertical(
                                 key.code == KeyCode::Down,
                                 self.description_width,
+                                key.modifiers.contains(KeyModifiers::SHIFT),
                             );
                         } else {
                             editor.fields[editor.active].key(key, editor.active == 1);
@@ -978,10 +859,24 @@ impl App {
                 editor.fields[editor.active].insert(&normalized);
             }
             Screen::Filter(buffer) | Screen::ListName { buffer, .. } => {
-                buffer.insert(&text.replace(['\r', '\n'], " "))
+                buffer.insert(&text.replace(['\r', '\n'], " "));
             }
             _ => {}
         }
+    }
+
+    fn finish_discard_confirmation(&mut self, discard: bool, store: &Store) -> Result<()> {
+        let Screen::ConfirmDiscard { editor, .. } =
+            std::mem::replace(&mut self.screen, Screen::Navigation)
+        else {
+            unreachable!()
+        };
+        if discard {
+            self.refresh(store)?;
+        } else {
+            self.screen = Screen::Editor(editor);
+        }
+        Ok(())
     }
 
     fn set_view(&mut self, view: View, store: &Store) -> Result<()> {
@@ -1126,7 +1021,9 @@ impl App {
                 let Some(other) = index.and_then(|index| self.visible.get(index)) else {
                     return Ok(());
                 };
-                if task.due != other.due {
+                if task.due != other.due
+                    || (task.status == Status::Open) != (other.status == Status::Open)
+                {
                     return Ok(());
                 }
                 store.swap_positions(&task, other)?;
@@ -1144,7 +1041,10 @@ impl App {
         let language = config.language;
         if area.width < 38
             || area.height < 10
-            || (matches!(self.screen, Screen::Editor(_)) && area.height < 18)
+            || (matches!(
+                self.screen,
+                Screen::Editor(_) | Screen::ConfirmDiscard { .. }
+            ) && area.height < 18)
         {
             frame.render_widget(
                 Paragraph::new(tr(language, "terminal_too_small")).wrap(Wrap { trim: false }),
@@ -1171,17 +1071,37 @@ impl App {
             ),
             _ => tr(language, "planned").to_owned(),
         };
-        let header = format!(
-            "Husker  |  {view_title}  |  {}",
-            date_label(self.today, language)
-        );
+        let editor = match &self.screen {
+            Screen::Editor(editor) | Screen::ConfirmDiscard { editor, .. } => Some(editor),
+            _ => None,
+        };
+        let header = if let Some(editor) = editor {
+            let title = editor.original.as_ref().map_or_else(
+                || tr(language, "new_task").to_owned(),
+                |task| format!("{} #{}", tr(language, "editor"), task.id),
+            );
+            format!("Husker  |  {title}  |  {view_title}")
+        } else {
+            format!(
+                "Husker  |  {view_title}  |  {}",
+                date_label(self.today, language)
+            )
+        };
+        let mut header_lines = vec![Line::from(header)];
+        if editor.is_some() {
+            header_lines.push(Line::from(tr(language, "editor_keys_hint")));
+        }
         frame.render_widget(
-            Paragraph::new(header)
+            Paragraph::new(header_lines)
                 .block(Block::default().borders(Borders::BOTTOM))
                 .style(Style::default().fg(Color::Cyan)),
             sections[0],
         );
         match &self.screen {
+            Screen::ConfirmDiscard { editor, discard } => {
+                let _ = draw_editor(frame, sections[1], editor, language);
+                draw_discard_confirmation(frame, sections[1], *discard, language);
+            }
             Screen::Editor(editor) => {
                 self.mouse_targets = draw_editor(frame, sections[1], editor, language);
                 if let Some((rect, _)) = self
@@ -1256,6 +1176,12 @@ impl App {
             }
         }
         let hint = match self.screen {
+            Screen::ConfirmDiscard { .. } => format!(
+                "{}  |  {} {}",
+                tr(language, "discard_confirm_hint"),
+                config.keys_for(Action::Discard),
+                tr(language, "keep_editing"),
+            ),
             Screen::Editor(_) => format!(
                 "{} {}  |  {} {}  |  {} {}",
                 config.keys_for(Action::Save),
@@ -1458,16 +1384,26 @@ fn draw_input(
         .title(title)
         .border_style(Style::default().fg(if active { Color::Cyan } else { Color::DarkGray }));
     let inner = block.inner(area);
+    let layout = TextLayout::new(&buffer.text, usize::MAX);
     let (row, column) = buffer.cursor_position();
     let scroll_y = row.saturating_sub(inner.height.saturating_sub(1) as usize);
     let scroll_x = column.saturating_sub(inner.width.saturating_sub(1) as usize);
     frame.render_widget(
-        Paragraph::new(buffer.text.as_str()).block(block).scroll((
+        Paragraph::new(
+            layout
+                .lines
+                .iter()
+                .map(|line| Line::from(line.text.as_str()))
+                .collect::<Vec<_>>(),
+        )
+        .block(block)
+        .scroll((
             scroll_y.min(u16::MAX as usize) as u16,
             scroll_x.min(u16::MAX as usize) as u16,
         )),
         area,
     );
+    draw_text_selection(frame, inner, buffer, &layout, scroll_y, scroll_x);
     if active && inner.width > 0 && inner.height > 0 {
         frame.set_cursor_position((
             inner.x + (column - scroll_x) as u16,
@@ -1546,6 +1482,7 @@ fn draw_description(
         .collect();
     frame.render_widget(block, area);
     frame.render_widget(Paragraph::new(lines), inner);
+    draw_text_selection(frame, inner, buffer, &layout, scroll_row, 0);
     if active && inner.width > 0 && inner.height > 0 {
         frame.set_cursor_position((
             inner.x + column.min(usize::from(inner.width - 1)) as u16,
@@ -1553,6 +1490,80 @@ fn draw_description(
         ));
     }
     (inner, scroll_row, 0)
+}
+
+fn draw_text_selection(
+    frame: &mut Frame<'_>,
+    inner: Rect,
+    buffer: &TextBuffer,
+    layout: &TextLayout,
+    scroll_row: usize,
+    scroll_column: usize,
+) {
+    let Some(selection) = buffer.selection() else {
+        return;
+    };
+    for visible_row in 0..usize::from(inner.height) {
+        let Some(columns) = layout.selection_columns(scroll_row + visible_row, &selection) else {
+            continue;
+        };
+        let start = columns.start.max(scroll_column);
+        let end = columns.end.min(scroll_column + usize::from(inner.width));
+        if start < end {
+            frame.buffer_mut().set_style(
+                Rect::new(
+                    inner.x + (start - scroll_column) as u16,
+                    inner.y + visible_row as u16,
+                    (end - start) as u16,
+                    1,
+                ),
+                Style::default().fg(Color::White).bg(Color::Blue),
+            );
+        }
+    }
+}
+
+fn draw_discard_confirmation(frame: &mut Frame<'_>, area: Rect, discard: bool, language: Language) {
+    let width = area.width.saturating_sub(4).min(48);
+    let height = area.height.min(5);
+    let dialog = Rect::new(
+        area.x + (area.width - width) / 2,
+        area.y + (area.height - height) / 2,
+        width,
+        height,
+    );
+    let choice = |label, selected| {
+        Span::styled(
+            format!("  {}  ", tr(language, label)),
+            if selected {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            },
+        )
+    };
+    frame.render_widget(Clear, dialog);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(""),
+            Line::from(vec![
+                choice("no", !discard),
+                Span::raw("    "),
+                choice("yes", discard),
+            ]),
+        ])
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(tr(language, "discard_confirm")),
+        ),
+        dialog,
+    );
+    frame.set_cursor_position((dialog.x + 1, dialog.y + 1));
 }
 
 fn draw_help(frame: &mut Frame<'_>, area: Rect, config: &Config, state: &mut ListState) -> Rect {
@@ -1832,6 +1843,12 @@ mod tests {
             &mut store,
             &config,
         );
+        assert!(matches!(
+            app.screen,
+            Screen::ConfirmDiscard { discard: false, .. }
+        ));
+        app.handle_key(key(KeyCode::Right), &mut store, &config);
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
         assert!(matches!(app.screen, Screen::Navigation));
         assert!(store.tasks().unwrap().is_empty());
     }
@@ -2050,18 +2067,271 @@ mod tests {
     }
 
     #[test]
-    fn escape_discards_existing_and_new_task_edits() {
+    fn escape_requires_explicit_confirmation_for_existing_and_new_task_edits() {
         let (_directory, mut store, config) = fixture();
         let task = store.create_task(&input(1, "Keep this title")).unwrap();
         let mut app = App::new(&store, today()).unwrap();
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         app.paste("Unsaved description");
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(matches!(
+            app.screen,
+            Screen::ConfirmDiscard { discard: false, .. }
+        ));
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].text == "Unsaved description")
+        );
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
         assert_eq!(store.task(task.id).unwrap(), task);
         app.handle_key(key(KeyCode::Char('n')), &mut store, &config);
         app.paste("Discard new task");
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(matches!(
+            app.screen,
+            Screen::ConfirmDiscard { discard: false, .. }
+        ));
+        app.handle_key(key(KeyCode::Tab), &mut store, &config);
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
         assert_eq!(store.tasks().unwrap(), vec![task]);
+    }
+
+    #[test]
+    fn clean_or_fully_undone_drafts_close_without_confirmation() {
+        let (_directory, mut store, config) = fixture();
+        let task = store.create_task(&input(1, "Original")).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        app.paste("Temporary edit");
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        app.handle_key(key(KeyCode::Char('n')), &mut store, &config);
+        app.paste("Temporary new title");
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        assert_eq!(store.tasks().unwrap(), vec![task]);
+    }
+
+    #[test]
+    fn confirmation_preserves_draft_history_and_version_during_external_refresh() {
+        let (directory, mut store, config) = fixture();
+        let task = store.create_task(&input(1, "Original")).unwrap();
+        let mut external = Store::open(&directory.path().join("tasks.db")).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        app.paste("Local description");
+        app.handle_key(
+            KeyEvent::new(KeyCode::Home, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            &mut store,
+            &config,
+        );
+        let Screen::Editor(draft) = &app.screen else {
+            panic!()
+        };
+        let draft = draft.clone();
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        app.handle_key(key(KeyCode::Right), &mut store, &config);
+        external
+            .update_task(task.id, task.version, &input(1, "Changed elsewhere"))
+            .unwrap();
+        app.handle_key(key(KeyCode::F(5)), &mut store, &config);
+        app.paste("Ignored paste");
+        app.handle_key(key(KeyCode::Char('x')), &mut store, &config);
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        app.handle_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        assert!(app.external_update);
+        let Screen::ConfirmDiscard { editor, discard } = &app.screen else {
+            panic!()
+        };
+        assert!(*discard);
+        assert_eq!(editor.fields, draft.fields);
+        assert_eq!(editor.original, draft.original);
+        assert_eq!(editor.active, draft.active);
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        let Screen::Editor(editor) = &app.screen else {
+            panic!()
+        };
+        assert_eq!(editor.fields, draft.fields);
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        assert!(app.message.as_ref().unwrap().is_error);
+        assert!(matches!(app.screen, Screen::Editor(_)));
+        assert_eq!(store.task(task.id).unwrap().title, "Changed elsewhere");
+    }
+
+    #[test]
+    fn editor_heading_has_id_but_copy_text_and_new_task_do_not() {
+        let (_directory, mut store, mut config) = fixture();
+        let task = store.create_task(&input(1, "Original")).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        assert!(rendered(&mut app, &config, 80, 24).contains("Sometime"));
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert!(rendered(&mut app, &config, 80, 24).contains(&format!("Edit task #{}", task.id)));
+        app.handle_key(key(KeyCode::F(4)), &mut store, &config);
+        assert!(matches!(&app.screen, Screen::CopyText { text, .. } if text == "Original\n\n"));
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        config.language = Language::Da;
+        assert!(rendered(&mut app, &config, 80, 24).contains("Engang"));
+        app.handle_key(key(KeyCode::Char('n')), &mut store, &config);
+        let screen = rendered(&mut app, &config, 80, 24);
+        assert!(screen.contains("Ny opgave"));
+        assert!(!screen.contains(&format!("#{}", task.id)));
+    }
+
+    #[test]
+    fn selected_description_uses_visual_rows_after_resizing() {
+        let (_directory, mut store, config) = fixture();
+        let mut value = input(1, "Selection");
+        value.description = "one two three four five six seven eight ".repeat(4);
+        store.create_task(&value).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        let Screen::Editor(editor) = &mut app.screen else {
+            panic!()
+        };
+        editor.fields[1].set_cursor(4, false);
+        editor.fields[1].set_cursor(80, true);
+        for width in [38, 80] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            terminal.draw(|frame| app.draw(frame, &config)).unwrap();
+            let (rect, MouseTarget::EditorField { scroll_row, .. }) = app
+                .mouse_targets
+                .iter()
+                .find(|(_, target)| matches!(target, MouseTarget::EditorField { index: 1, .. }))
+                .copied()
+                .unwrap()
+            else {
+                panic!()
+            };
+            let layout = TextLayout::new(&value.description, usize::from(rect.width - 1));
+            let mut highlighted = 0;
+            for y in 0..rect.height {
+                let selected = layout.selection_columns(scroll_row + usize::from(y), &(4..80));
+                for x in 0..rect.width {
+                    let expected = selected
+                        .as_ref()
+                        .is_some_and(|columns| columns.contains(&usize::from(x)));
+                    let actual =
+                        terminal.backend().buffer()[(rect.x + x, rect.y + y)].bg == Color::Blue;
+                    assert_eq!(actual, expected, "width {width}, column {x}, row {y}");
+                    highlighted += usize::from(actual);
+                }
+            }
+            assert!(highlighted > 0);
+            assert!(
+                matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].text == value.description && editor.fields[1].selection() == Some(4..80))
+            );
+        }
+    }
+
+    #[test]
+    fn unwrapped_selection_tracks_horizontal_scroll_and_tab_cells() {
+        let mut buffer = TextBuffer::new("a\t界b");
+        buffer.set_cursor(0, false);
+        buffer.set_cursor(buffer.text.len(), true);
+        let mut terminal = Terminal::new(TestBackend::new(6, 3)).unwrap();
+        let completed = terminal
+            .draw(|frame| {
+                draw_input(frame, frame.area(), "Title", &buffer, true);
+            })
+            .unwrap();
+        // Terminal diffs omit the trailing cell covered by a wide glyph.
+        let rendered = completed.buffer;
+        assert_eq!(rendered[(0, 1)].symbol(), " ");
+        assert_eq!(rendered[(2, 1)].symbol(), "界");
+        for x in 0..5 {
+            assert_eq!(rendered[(x, 1)].bg, Color::Blue);
+        }
+        assert_ne!(rendered[(5, 1)].bg, Color::Blue);
+        assert_eq!(terminal.backend().buffer()[(2, 1)].bg, Color::Blue);
+    }
+
+    #[test]
+    fn field_history_and_selection_survive_field_changes_and_copy_view() {
+        let (_directory, mut store, config) = fixture();
+        let mut app = App::new(&store, today()).unwrap();
+        app.handle_key(key(KeyCode::Char('n')), &mut store, &config);
+        app.paste("Initial title");
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        app.paste("Replacement title");
+        app.handle_key(key(KeyCode::Tab), &mut store, &config);
+        app.paste("Description");
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[0].text == "Replacement title" && editor.fields[1].text.is_empty())
+        );
+        app.handle_key(
+            KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+            &mut store,
+            &config,
+        );
+        app.handle_key(key(KeyCode::F(4)), &mut store, &config);
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[0].text == "Initial title" && editor.fields[0].selection() == Some(0..13))
+        );
+        app.handle_key(
+            KeyEvent::new(
+                KeyCode::Char('Z'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+            &mut store,
+            &config,
+        );
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[0].text == "Replacement title")
+        );
     }
 
     #[test]
@@ -2508,10 +2778,10 @@ mod tests {
     fn wrapped_vertical_boundaries_keep_the_original_byte_offset() {
         let mut buffer = TextBuffer::new("hello   world");
         buffer.cursor = 7;
-        buffer.move_wrapped_vertical(false, 5);
+        buffer.move_wrapped_vertical(false, 5, false);
         assert_eq!(buffer.cursor, 7);
         buffer.cursor = buffer.text.len();
-        buffer.move_wrapped_vertical(true, 5);
+        buffer.move_wrapped_vertical(true, 5, false);
         assert_eq!(buffer.cursor, buffer.text.len());
     }
 

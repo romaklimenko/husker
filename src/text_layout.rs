@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -144,6 +146,32 @@ impl TextLayout {
             .min_by_key(|(_, cell)| cell.abs_diff(column))
             .map_or(line.start, |(byte, _)| *byte)
     }
+
+    pub fn selection_columns(&self, row: usize, selection: &Range<usize>) -> Option<Range<usize>> {
+        if selection.is_empty() {
+            return None;
+        }
+        let line = self.lines.get(row)?;
+        let selected_text = selection.start < line.end && selection.end > line.start;
+        let selected_newline = self.lines.get(row + 1).is_some_and(|next| {
+            next.start == line.end + 1 && selection.start <= line.end && selection.end > line.end
+        });
+        if !selected_text && !selected_newline {
+            return None;
+        }
+        let column_at = |byte| {
+            line.boundaries
+                .iter()
+                .rfind(|(offset, _)| *offset <= byte)
+                .map_or(0, |(_, column)| *column)
+        };
+        let start = column_at(selection.start.max(line.start));
+        let mut end = column_at(selection.end.min(line.end));
+        if selected_newline || start == end {
+            end += 1;
+        }
+        Some(start..end)
+    }
 }
 
 fn is_break_space(glyph: &str) -> bool {
@@ -231,5 +259,22 @@ mod tests {
         let wide = TextLayout::new("abc\n界x", 8);
         assert_eq!(wide.nearest_cursor(1, 1), 4);
         assert_eq!(wide.nearest_cursor(1, 2), 7);
+    }
+
+    #[test]
+    fn selection_columns_follow_wrapping_tabs_and_newlines() {
+        let layout = TextLayout::new("one two three", 7);
+        assert_eq!(layout.selection_columns(0, &(4..11)), Some(4..7));
+        assert_eq!(layout.selection_columns(1, &(4..11)), Some(0..3));
+        assert_eq!(layout.selection_columns(0, &(8..13)), None);
+        assert_eq!(layout.selection_columns(0, &(4..4)), None);
+        let tabs = TextLayout::new("a\t界e\u{301}\n\nlast", usize::MAX);
+        assert_eq!(tabs.selection_columns(0, &(1..2)), Some(1..4));
+        assert_eq!(tabs.selection_columns(0, &(2..5)), Some(4..6));
+        assert_eq!(tabs.selection_columns(0, &(8..9)), Some(7..8));
+        assert_eq!(tabs.selection_columns(1, &(9..10)), Some(0..1));
+        assert_eq!(tabs.selection_columns(2, &(9..10)), None);
+        let spaces = TextLayout::new("hello   world", 5);
+        assert_eq!(spaces.selection_columns(0, &(5..8)), Some(5..6));
     }
 }

@@ -1,6 +1,9 @@
 use chrono::{Datelike, NaiveDate};
 
-use crate::{i18n::Language, model::Task};
+use crate::{
+    i18n::Language,
+    model::{Status, Task},
+};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Bucket {
@@ -50,8 +53,16 @@ impl Bucket {
     }
 }
 
-pub fn sort_tasks(tasks: &mut [Task], _today: NaiveDate) {
-    tasks.sort_by_key(|task| (task.due.is_none(), task.due, task.position, task.id));
+pub fn sort_tasks(tasks: &mut [Task], today: NaiveDate) {
+    tasks.sort_by_key(|task| {
+        (
+            Bucket::for_task(task, today),
+            task.status != Status::Open,
+            task.due,
+            task.position,
+            task.id,
+        )
+    });
 }
 
 pub fn date_label(date: NaiveDate, language: Language) -> String {
@@ -140,6 +151,37 @@ mod tests {
         assert_eq!(
             tasks.iter().map(|task| task.id).collect::<Vec<_>>(),
             [3, 2, 1]
+        );
+    }
+
+    #[test]
+    fn open_tasks_lead_each_group_before_dates_and_positions() {
+        let today = NaiveDate::from_ymd_opt(2026, 11, 8).unwrap();
+        let cases = [
+            (1, Some(-5), Status::Done),
+            (2, Some(-1), Status::Open),
+            (3, Some(0), Status::Cancelled),
+            (4, Some(0), Status::Open),
+            (5, Some(2), Status::Done),
+            (6, Some(7), Status::Open),
+            (7, None, Status::Cancelled),
+            (8, None, Status::Open),
+            (9, None, Status::Done),
+        ];
+        let mut tasks = cases
+            .into_iter()
+            .map(|(id, offset, status)| {
+                let mut value = task(offset.map(|days| today + chrono::Duration::days(days)));
+                value.id = id;
+                value.position = id;
+                value.status = status;
+                value
+            })
+            .collect::<Vec<_>>();
+        sort_tasks(&mut tasks, today);
+        assert_eq!(
+            tasks.iter().map(|task| task.id).collect::<Vec<_>>(),
+            [2, 1, 4, 3, 6, 5, 8, 7, 9]
         );
     }
 

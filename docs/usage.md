@@ -6,7 +6,7 @@ This guide is for people who want to capture and manage tasks from a terminal.
 
 Run `husker` in an interactive terminal. Press `n`, enter a task title, and
 press Ctrl+S to save. For example, enter `Buy milk`.
-The task appears in Undated because it has no due date.
+The task appears in Sometime because it has no due date.
 Ctrl+Enter also saves when your terminal sends it as a distinct key.
 
 Press Enter on a task to open its editor at Description. New tasks start at
@@ -25,11 +25,18 @@ newlines to the saved text. Press Enter when you want a stored line break.
 Up and Down move through the displayed rows. You can also click a wrapped
 row to place the cursor there.
 
-Press Ctrl+S or Ctrl+Enter to save every field together and return to the task list.
-Press Esc or Ctrl+G to discard the changes. Navigation shortcuts such as `q`, `d`,
-and `l` are ordinary text while you are editing.
+The heading shows an existing task's ID, such as `#42`. You can use that ID
+with `husker show 42` or give it to an agent. A new task has no ID until you save it.
 
-Remove an existing due date to move the task to Undated.
+Press Ctrl+S or Ctrl+Enter to save every field together and return to the task list.
+Press Esc or Ctrl+G to leave the editor. If you changed any field, Husker asks
+whether to discard the changes. No is selected initially, so Enter keeps you
+in the editor. Use an arrow key or Tab to select Yes, then press Enter to discard.
+Esc or Ctrl+G at the prompt also returns to editing.
+An unchanged editor closes without a prompt.
+Navigation shortcuts such as `q`, `d`, and `l` are ordinary text while you edit.
+
+Remove an existing due date to move the task to Sometime.
 Write `#shopping` in the title or description if you want to find that text later.
 Husker has no separate tags or readiness fields.
 
@@ -38,8 +45,36 @@ Ctrl+S again. For example, replace `2026-02-30` with a date that exists.
 
 If another Husker process changes the task while you edit, your save fails
 and your text stays in the editor. Press F4 to copy any text you need to keep.
-Return from the copy view with Esc. Press Esc again to discard the editor,
-then reopen the task to load its current values.
+Return from the copy view with Esc. Press Esc again and confirm Yes to discard
+the changed draft, then reopen the task to load its current values.
+
+## Edit text with the keyboard
+
+Use these shortcuts in task fields, the filter input, or a list-name form:
+
+| Key | Result |
+| --- | --- |
+| Ctrl+Left or Ctrl+Right | Move by word. Punctuation forms a separate stop. |
+| Ctrl+Backspace or Ctrl+Delete | Delete backward or forward to the next word boundary. |
+| Home or End | Move to the start or end of a line separated by an explicit newline. |
+| Ctrl+Home or Ctrl+End | Move to the start or end of the whole field. |
+| Shift+Left, Shift+Right, Shift+Home, or Shift+End | Extend the selection. |
+| Ctrl+Shift+Left or Ctrl+Shift+Right | Extend the selection by word. |
+| Ctrl+Shift+Home or Ctrl+Shift+End | Select to the start or end of the field. |
+| Ctrl+A | Select the whole current field. |
+| Ctrl+Z | Undo the last text edit in this field. |
+| Ctrl+Y or Ctrl+Shift+Z | Redo an undone edit. |
+
+Type or paste to replace selected text. Backspace or Delete removes the selection.
+For example, focus Title, press Ctrl+A, and type `Read the report` to replace
+the title. Description and other fields stay unchanged.
+In Description, Shift+Up and Shift+Down select through the displayed wrapped rows.
+
+Undo belongs to the current field. If you change Title and then Description,
+Ctrl+Z in Description leaves the Title change in place. A paste is one undo
+step. Typing new text after undo removes the previous redo choices.
+Saving or discarding a form ends its undo history.
+Use [F4 and your terminal's Copy command](#use-the-mouse-and-copy-text) to copy task text.
 
 ## Organize tasks into lists
 
@@ -80,11 +115,14 @@ Husker uses your computer's local calendar date to calculate these groups:
 | Tomorrow | Due tomorrow. |
 | Soon | Due from two days through seven days after today, inclusive. |
 | Next | Due eight or more days after today. |
-| Undated | No due date. |
+| Sometime | No due date. Shown as Engang in Danish. |
 
 If today is November 8, Soon covers November 10 through November 15.
-Next starts on November 16. Tasks appear in due-date order, with undated
-tasks last. Tasks completed or cancelled today remain visible.
+Next starts on November 16. Open tasks appear before done and cancelled tasks
+within each group. Within those two sets, tasks follow due-date order.
+For example, in Soon, an open task due November 15 comes before a done task
+due November 10. An Overdue task still appears before every Today task.
+Sometime is the final group. Tasks completed or cancelled today remain visible.
 Trash is always separate from the planned view.
 
 Task rows use the full navigation width. The selected task has no side
@@ -99,7 +137,9 @@ At a year boundary, `2027-01-01 Fri 2026-W53` shows that January 1 belongs
 to the final ISO week of 2026.
 
 Use Alt+Up or Alt+Down to change the order of tasks sharing the same due
-date. Undated tasks can move among other undated tasks.
+date. Tasks without dates can move among other tasks in Sometime.
+Open tasks move only among other open tasks. Done and cancelled tasks can
+move among each other, below the open tasks for that date.
 Reordering never changes a due date or moves a task between lists.
 With a filter active, reordering uses neighboring tasks in the visible results.
 
@@ -128,6 +168,8 @@ Combine terms to narrow the results. Every term must match:
 Use any of these date-group tokens with `due:`: `overdue`, `today`,
 `tomorrow`, `soon`, `next`, or `undated`.
 For example, `due:none #shopping` finds undated tasks containing `#shopping`.
+The Sometime label does not change the filter: use `due:none` or `due:undated`,
+not `due:sometime`.
 
 List names match whole names. Text matches part of a title or
 description. These comparisons ignore case and preserve accents.
@@ -153,6 +195,7 @@ until you correct and apply the new query.
 
 Press Space to mark a task done. Press `c` to cancel a task.
 The task stays visible for the rest of the local day with its new status.
+It moves below the open tasks within its date group.
 Tomorrow, the default view hides it. Use `s:open` to hide completed and
 cancelled tasks immediately.
 
@@ -236,7 +279,8 @@ when all actions do not fit on screen.
 | `?` | Open help. Esc closes help. |
 | `q` | Quit. |
 
-In the task editor, Ctrl+Enter or Ctrl+S saves. Esc or Ctrl+G discards.
+In the task editor, Ctrl+Enter or Ctrl+S saves. Esc or Ctrl+G asks before
+discarding changed fields. An unchanged editor closes immediately.
 F4 opens the copy view without discarding the draft. In the filter and list-name
 forms, Enter applies the input and Esc cancels it.
 Backspace edits text in an input field. It does not delete a task.
@@ -264,6 +308,9 @@ translated. Filter operators and CLI commands stay in English.
 Each shortcut array replaces all default keys for that action. For example,
 `trash = ["delete"]` keeps Delete and removes `d`. Use `trash = []` to disable
 both shortcuts. Actions omitted from `[keys]` keep their defaults.
+An action override takes precedence over a built-in text-editing shortcut.
+For example, `save = ["ctrl+a"]` makes Ctrl+A save instead of select all in
+the task editor.
 
 Key strings accept characters such as `q` or `N`, named keys such as `enter`
 or `f2`, and modifiers such as `ctrl+q` or `alt+up`.
@@ -316,11 +363,14 @@ husker restore 1
 ```
 
 `edit` changes only supplied fields. Use `--clear-due` to remove the due date
-and place the task in Undated:
+and place the task in Sometime:
 
 ```text
 husker edit 1 --clear-due
 ```
+
+Plain CLI output still uses `undated` for a missing due date. JSON uses
+`"due": null`. Sometime and Engang are terminal group labels.
 
 Add `--json` to data commands for JSON output with stable English field
 names. A task's `version` increases after a successful mutation.
@@ -343,7 +393,7 @@ Every command accepts `--profile DIRECTORY` to select its task collection.
 
 ## Update an existing profile
 
-Back up your profile before updating an earlier version to 0.4.0.
+Back up your profile before updating an earlier version to 0.5.0.
 Follow [Back up your tasks](#back-up-your-tasks), then keep every old Husker
 process closed, including MCP clients, until the upgrade is complete.
 
@@ -353,13 +403,17 @@ Install the current version from the repository:
 cargo install --path . --locked
 ```
 
+Version 0.5.0 uses the same database schema as 0.4.0. A profile from 0.4.0
+needs no database conversion, and its saved tasks and list order stay unchanged.
+The steps below apply when upgrading older profiles or old shortcut overrides.
+
 If your `config.toml` overrides the old `anytime` or `maybe` actions, remove
 those lines. If you set `save = ["esc"]`, remove that override to use the new
 save and cancel defaults. Esc now belongs to the discard action by default.
 Old save and discard overrides can conflict until you update them together.
 
-Run `husker lists` once for the profile before reconnecting a read-only MCP
-client. For a custom profile, run `husker --profile DIRECTORY lists`.
+For a profile created before 0.4.0, run `husker lists` once before reconnecting
+a read-only MCP client. For a custom profile, run `husker --profile DIRECTORY lists`.
 This writable command upgrades the database to schema version 3.
 A read-only MCP connection cannot perform the upgrade.
 
@@ -375,7 +429,7 @@ Existing description text stays intact. Existing tags become `#words` in a
 final description paragraph.
 Tasks that gain this text get a new version, so an agent must read them again
 before saving an edit prepared before the upgrade.
-Readiness is removed, so every task without a date appears in Undated.
+Readiness is removed, so every task without a date appears in Sometime.
 Older completed tasks have no recorded completion date and stay hidden from
 the default view. Use `s:done`, `s:cancelled`, or `s:all` to find them.
 
@@ -385,7 +439,7 @@ description instead. Replace `due:anytime` and `due:maybe` with `due:none`.
 MCP clients must refresh their tool definitions after the upgrade.
 
 Start Husker and reconnect MCP clients after the upgrade.
-Earlier Husker versions cannot open a migrated profile.
+Husker versions before 0.4.0 cannot open a profile migrated to schema version 3.
 
 ## Back up your tasks
 
