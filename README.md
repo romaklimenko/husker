@@ -14,13 +14,19 @@ husker
 ```
 
 Husker opens your planned tasks. Press `n` to create a task, enter a title,
-and press Esc to save. Press `?` to see the shortcuts or `q` to quit.
+and press Ctrl+S to save. Esc cancels your edits.
+Press `?` to see the shortcuts or `q` to quit.
 
-To run from the source directory without installing the executable:
+Run the installed `husker` command while someone edits or builds the repository.
+On Windows, you can select that copy explicitly:
 
-```text
-cargo run --release --
+```powershell
+& "$env:USERPROFILE\.cargo\bin\husker.exe"
 ```
+
+The installed copy leaves the repository's build executable free to replace.
+Close Husker and disconnect its MCP clients before running `cargo install` again.
+For an existing profile, follow [Update an existing profile](docs/usage.md#update-an-existing-profile).
 
 Your tasks stay on your computer in `~/.husker/tasks.db`. A new profile starts
 with an Inbox list. Use `--profile DIRECTORY` to keep another collection of
@@ -35,7 +41,7 @@ husker --profile ./work-tasks
 Create and find tasks without opening the interface:
 
 ```text
-husker add "Buy milk" --tag shopping
+husker add "Buy milk #shopping"
 husker tasks "milk #shopping"
 husker --json tasks
 ```
@@ -43,6 +49,16 @@ husker --json tasks
 Commands print persistent task IDs. Use the ID printed by `add` with `show`,
 `edit`, `done`, `cancel`, `reopen`, `trash`, or `restore`.
 Run `husker --help` or `husker edit --help` for the available options.
+
+## Connect an agent
+
+Register `husker mcp --list Private` as a local stdio MCP server in your agent's
+client settings. Replace `Private` with an existing list name.
+Every tool is restricted to that list, including searches and Trash.
+Add `--read-only` if the agent should only read tasks.
+
+Read [Connect an agent to Husker](docs/mcp.md) for Codex and Claude Code setup,
+custom profiles, and the available access settings.
 
 ## Configure the interface
 
@@ -62,16 +78,28 @@ Use `--config FILE` to read an existing configuration file from another path.
 Read [Use Husker](docs/usage.md) for the editor, date groups, search syntax,
 Trash, configuration, and backups.
 
-## First-version scope
+Click a task to select it or double-click to edit it. Press F4 to open plain
+task text for copying. Press F5 to refresh after another process changes tasks.
+Action messages and errors clear after five seconds. External-update notices
+stay until you acknowledge them with F5.
+Task rows use the full width. Press Enter to read or edit the description.
+Long descriptions wrap in the editor without adding line breaks to your text.
 
-Husker supports local lists and tasks, plain text descriptions, tags, due
-dates, recoverable Trash, configurable action keys, and JSON commands.
+In the list chooser, use Alt+Up and Alt+Down to arrange your lists.
+The default list stays first and Trash stays last. Husker remembers the order.
+
+## Current scope
+
+Husker supports local lists and tasks, plain text descriptions, due dates,
+recoverable Trash, mouse navigation, configurable action keys, JSON commands,
+and local MCP tools. Write `#words` in titles or descriptions when useful.
+Search treats those words as ordinary text.
 Concurrent task edits use version checks so an older edit cannot silently
 overwrite a newer save.
+Tasks completed or cancelled today stay visible until the next local day.
 
 Recurrence, reminders, subtasks, priorities, synchronization, list deletion,
-and permanent task deletion are not included. MCP is a later addition.
-Scripts can use the noninteractive commands now.
+and permanent task deletion are not included.
 
 ## Work on the project
 

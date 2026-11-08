@@ -9,8 +9,7 @@ pub enum Bucket {
     Tomorrow,
     Soon,
     Next,
-    Anytime,
-    Maybe,
+    Undated,
 }
 
 impl Bucket {
@@ -23,8 +22,7 @@ impl Bucket {
                 2..=7 => Self::Soon,
                 _ => Self::Next,
             },
-            None if task.ready => Self::Anytime,
-            None => Self::Maybe,
+            None => Self::Undated,
         }
     }
 
@@ -35,8 +33,7 @@ impl Bucket {
             Self::Tomorrow => "tomorrow",
             Self::Soon => "soon",
             Self::Next => "next",
-            Self::Anytime => "anytime",
-            Self::Maybe => "maybe",
+            Self::Undated => "undated",
         }
     }
 
@@ -47,22 +44,14 @@ impl Bucket {
             "tomorrow" => Some(Self::Tomorrow),
             "soon" => Some(Self::Soon),
             "next" => Some(Self::Next),
-            "anytime" => Some(Self::Anytime),
-            "maybe" => Some(Self::Maybe),
+            "undated" => Some(Self::Undated),
             _ => None,
         }
     }
 }
 
-pub fn sort_tasks(tasks: &mut [Task], today: NaiveDate) {
-    tasks.sort_by_key(|task| {
-        (
-            Bucket::for_task(task, today),
-            task.due,
-            task.position,
-            task.id,
-        )
-    });
+pub fn sort_tasks(tasks: &mut [Task], _today: NaiveDate) {
+    tasks.sort_by_key(|task| (task.due.is_none(), task.due, task.position, task.id));
 }
 
 pub fn date_label(date: NaiveDate, language: Language) -> String {
@@ -84,7 +73,7 @@ mod tests {
     use super::*;
     use crate::model::Status;
 
-    fn task(due: Option<NaiveDate>, ready: bool) -> Task {
+    fn task(due: Option<NaiveDate>) -> Task {
         Task {
             id: 1,
             list_id: 1,
@@ -92,8 +81,7 @@ mod tests {
             description: String::new(),
             due,
             status: Status::Open,
-            ready,
-            tags: Vec::new(),
+            status_changed_on: None,
             deleted: false,
             position: 0,
             version: 1,
@@ -112,18 +100,17 @@ mod tests {
             (8, Bucket::Next),
         ] {
             let due = today + chrono::Duration::days(offset);
-            assert_eq!(Bucket::for_task(&task(Some(due), true), today), expected);
+            assert_eq!(Bucket::for_task(&task(Some(due)), today), expected);
         }
-        assert_eq!(Bucket::for_task(&task(None, true), today), Bucket::Anytime);
-        assert_eq!(Bucket::for_task(&task(None, false), today), Bucket::Maybe);
+        assert_eq!(Bucket::for_task(&task(None), today), Bucket::Undated);
     }
 
     #[test]
     fn sorts_dates_before_positions_and_ids_break_ties() {
         let today = NaiveDate::from_ymd_opt(2026, 11, 8).unwrap();
-        let mut later = task(Some(today + chrono::Duration::days(3)), false);
+        let mut later = task(Some(today + chrono::Duration::days(3)));
         later.id = 3;
-        let mut earlier = task(Some(today + chrono::Duration::days(2)), false);
+        let mut earlier = task(Some(today + chrono::Duration::days(2)));
         earlier.id = 2;
         earlier.position = 100;
         let mut tie = earlier.clone();
@@ -133,6 +120,26 @@ mod tests {
         assert_eq!(
             tasks.iter().map(|task| task.id).collect::<Vec<_>>(),
             [1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn undated_tasks_follow_all_dates_regardless_of_status() {
+        let today = NaiveDate::from_ymd_opt(2026, 11, 8).unwrap();
+        let mut undated = task(None);
+        undated.id = 1;
+        let mut future = task(Some(today + chrono::Duration::days(100)));
+        future.id = 2;
+        future.position = 100;
+        future.status = Status::Done;
+        let mut overdue = task(Some(today - chrono::Duration::days(1)));
+        overdue.id = 3;
+        overdue.status = Status::Cancelled;
+        let mut tasks = vec![undated, future, overdue];
+        sort_tasks(&mut tasks, today);
+        assert_eq!(
+            tasks.iter().map(|task| task.id).collect::<Vec<_>>(),
+            [3, 2, 1]
         );
     }
 

@@ -49,15 +49,12 @@ pub fn tr(language: Language, key: &str) -> &'static str {
         "description" => ("Description", "Beskrivelse"),
         "due" => ("Due date", "Forfaldsdato"),
         "list" => ("List", "Liste"),
-        "tags" => ("Tags", "Mærker"),
-        "readiness" => ("Readiness", "Klar til start"),
         "overdue" => ("Overdue", "Overskredet"),
         "today" => ("Today", "I dag"),
         "tomorrow" => ("Tomorrow", "I morgen"),
         "soon" => ("Soon", "Snart"),
         "next" => ("Next", "Senere"),
-        "maybe" => ("Maybe", "Måske"),
-        "anytime" => ("Anytime", "Når som helst"),
+        "undated" => ("Undated", "Uden dato"),
         "open" => ("Open", "Åben"),
         "done" => ("Done", "Udført"),
         "cancelled" => ("Cancelled", "Annulleret"),
@@ -70,7 +67,6 @@ pub fn tr(language: Language, key: &str) -> &'static str {
             "Use a valid date in YYYY-MM-DD format",
             "Brug en gyldig dato i formatet YYYY-MM-DD",
         ),
-        "invalid_readiness" => ("Use maybe or anytime", "Brug maybe eller anytime"),
         "unknown_list" => ("List not found", "Listen findes ikke"),
         "error" => ("Error", "Fejl"),
         "save_failed" => (
@@ -78,6 +74,23 @@ pub fn tr(language: Language, key: &str) -> &'static str {
             "Kunne ikke gemme. Dine ændringer er stadig åbne.",
         ),
         "refresh_failed" => ("Could not refresh tasks", "Kunne ikke opdatere opgaver"),
+        "refreshed" => (
+            "Refreshed. Unsaved text is kept.",
+            "Opdateret. Ugemt tekst er bevaret.",
+        ),
+        "external_update" => (
+            "Database updated elsewhere. Unsaved text is kept.",
+            "Databasen er opdateret et andet sted. Ugemt tekst er bevaret.",
+        ),
+        "mouse_on" => ("Mouse navigation on", "Musenavigation til"),
+        "mouse_off" => (
+            "Mouse navigation off. Select text with your terminal.",
+            "Musenavigation fra. Markér tekst i terminalen.",
+        ),
+        "copy_hint" => (
+            "Select text with your terminal. Arrow keys scroll.",
+            "Markér tekst i terminalen. Piletasterne ruller.",
+        ),
         "terminal_required" => (
             "The interactive interface requires a terminal",
             "Den interaktive visning kræver en terminal",
@@ -93,8 +106,8 @@ pub fn tr(language: Language, key: &str) -> &'static str {
             "Rediger felterne. En tom forfaldsdato fjerner datoen.",
         ),
         "filter_hint" => (
-            "Combine text, l:list, #tag, due:today, and s:done",
-            "Kombiner tekst, l:liste, #mærke, due:today og s:done",
+            "Combine text, l:list, due:today, and s:done. #words are text.",
+            "Kombiner tekst, l:liste, due:today og s:done. #ord er tekst.",
         ),
         "list_hint" => ("Enter a list name", "Skriv et listenavn"),
         "navigation_hint" => (
@@ -128,9 +141,15 @@ pub fn tr(language: Language, key: &str) -> &'static str {
         "action_next_field" => ("Next field", "Næste felt"),
         "action_previous_field" => ("Previous field", "Forrige felt"),
         "action_apply" => ("Apply", "Anvend"),
-        "action_close" => ("Close help", "Luk hjælp"),
-        "action_anytime" => ("Mark ready without a date", "Markér klar uden dato"),
-        "action_maybe" => ("Move to Maybe without a date", "Flyt til Måske uden dato"),
+        "action_close" => ("Close view", "Luk visning"),
+        "action_refresh" => ("Refresh data", "Opdater data"),
+        "action_toggle_mouse" => (
+            "Toggle mouse navigation",
+            "Slå musenavigation til eller fra",
+        ),
+        "action_copy_text" => ("Show text for copying", "Vis tekst til kopiering"),
+        "action_scroll_left" => ("Scroll text left", "Rul tekst til venstre"),
+        "action_scroll_right" => ("Scroll text right", "Rul tekst til højre"),
         _ => ("Unknown label", "Ukendt tekst"),
     };
     match language {
@@ -166,9 +185,6 @@ fn danish_error(message: &str) -> String {
         "Reorder tasks within the same date or undated group." => {
             "Flyt opgaver inden for samme dato eller gruppe uden dato."
         }
-        "A tag filter must contain a name after '#'." => {
-            "Et mærkefilter skal have et navn efter '#'."
-        }
         "Unclosed quoted filter value." => "Filterværdien mangler et afsluttende anførselstegn.",
         "A filter term cannot be empty." => "Et filterudtryk må ikke være tomt.",
         "The database contains unversioned tables. No changes were made." => {
@@ -191,9 +207,6 @@ fn danish_error(message: &str) -> String {
     }
     if let Some(id) = between(message, "List ", " does not exist.") {
         return format!("Liste {id} findes ikke.");
-    }
-    if let Some(value) = message.strip_prefix("Tags cannot contain whitespace: ") {
-        return format!("Mærker må ikke indeholde mellemrum: {value}");
     }
     if let Some(value) = between(
         message,
@@ -233,10 +246,19 @@ fn danish_error(message: &str) -> String {
     if let Some(value) = between(
         message,
         "Unsupported database schema version ",
-        ". This Husker supports version 1.",
+        ". This Husker supports version 3.",
     ) {
         return format!(
-            "Databaseversion {value} understøttes ikke. Denne Husker understøtter version 1."
+            "Databaseversion {value} understøttes ikke. Denne Husker understøtter version 3."
+        );
+    }
+    if let Some(version) = between(
+        message,
+        "Database schema version ",
+        " needs an upgrade. Open this profile with writable Husker before connecting read-only.",
+    ) {
+        return format!(
+            "Databaseversion {version} skal opgraderes. Åbn profilen med skriveadgang i Husker, før du forbinder med læseadgang."
         );
     }
     message.into()
@@ -255,7 +277,7 @@ mod tests {
         assert_eq!("da".parse::<Language>().unwrap(), Language::Da);
         assert_eq!(Language::En.to_string(), "en");
         assert!("dk".parse::<Language>().is_err());
-        assert_eq!(tr(Language::Da, "maybe"), "Måske");
+        assert_eq!(tr(Language::Da, "undated"), "Uden dato");
     }
 
     #[test]

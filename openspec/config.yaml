@@ -2,9 +2,10 @@ schema: spec-driven
 
 context: |
   Husker is a local Rust terminal todo app for people who manage tasks from
-  their keyboard. It supports lists, due dates, tags, English and Danish.
-  Task status (open, done, cancelled), readiness (maybe, anytime), and Trash
-  are separate concepts. Due dates are local calendar dates.
+  their keyboard or mouse. It supports lists, due dates, English and Danish.
+  Task status (open, done, cancelled) and Trash are separate concepts.
+  Due dates and status-change dates are local calendar dates. Hashtags are
+  ordinary task text. Undated tasks form one group.
   README.md and docs/ describe implemented behavior for terminal users.
   Proposals and specs are read by people. Tasks and design evidence are also
   read by coding agents. Do not commit or push before the user asks.

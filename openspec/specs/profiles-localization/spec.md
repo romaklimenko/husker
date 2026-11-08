@@ -4,9 +4,7 @@
 
 Define how users select task profiles, configuration files, interface language, and action shortcuts.
 The terminal interface owns keyboard actions. Task storage owns database contents.
-
 ## Requirements
-
 ### Requirement: Profile paths
 
 Husker SHALL use `~/.husker` as the default profile directory and accept `--profile DIRECTORY` to select another directory.
@@ -101,9 +99,12 @@ Husker SHALL reject unknown action names, invalid key strings, and shortcuts ass
 | Filter editor | Enter a task filter. |
 | List-name editor | Enter a new or replacement list name. |
 | Help | Read and scroll through shortcuts. |
+| Copy text | Scroll plain task text for native terminal selection. |
 
 The same key may trigger different actions in different modes.
 Text input modes do not execute navigation actions.
+Removed action names `anytime` and `maybe` are unknown actions.
+Existing configuration files must remove those overrides before loading.
 
 #### Scenario: Reject a navigation conflict
 
@@ -114,3 +115,8 @@ Text input modes do not execute navigation actions.
 
 - **WHEN** Enter opens a task in navigation and applies a filter in the filter editor
 - **THEN** configuration loading accepts both shortcuts
+
+#### Scenario: Reject a removed action
+
+- **WHEN** `[keys]` contains an `anytime` override
+- **THEN** configuration loading reports an unknown action before opening the task database

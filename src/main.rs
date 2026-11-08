@@ -2,9 +2,10 @@ use std::{io::IsTerminal, path::PathBuf, process::ExitCode};
 
 use anyhow::{Context, Result, bail};
 use chrono::{Local, NaiveDate};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 use husker::{
     config::Config,
+    mcp,
     model::{Status, Task, TaskInput, TaskList},
     query::{Query, visible_tasks},
     store::Store,
@@ -30,7 +31,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Create a task. Undated tasks start in Maybe unless --anytime is set.
+    /// Serve task tools to an MCP client over standard input and output.
+    Mcp {
+        /// Restrict every tool to this existing list for the server's lifetime.
+        #[arg(long)]
+        list: Option<String>,
+        /// Expose only read tools and open an existing database read-only.
+        #[arg(long)]
+        read_only: bool,
+    },
+    /// Create a task with an optional due date.
     Add {
         title: String,
         #[arg(long)]
@@ -39,10 +49,6 @@ enum Command {
         description: String,
         #[arg(long, value_parser = parse_date)]
         due: Option<NaiveDate>,
-        #[arg(long)]
-        anytime: bool,
-        #[arg(long = "tag")]
-        tags: Vec<String>,
     },
     /// Find tasks, for example: tasks 'l:private milk #shopping'.
     Tasks {
@@ -67,13 +73,6 @@ enum Command {
         due: Option<NaiveDate>,
         #[arg(long)]
         clear_due: bool,
-        #[arg(long, value_enum)]
-        readiness: Option<Readiness>,
-        /// Replace tags with these values. Repeat --tag for each tag.
-        #[arg(long = "tag", conflicts_with = "clear_tags")]
-        tags: Vec<String>,
-        #[arg(long)]
-        clear_tags: bool,
     },
     /// Mark a task done.
     Done(Target),
@@ -105,12 +104,6 @@ struct Target {
     /// Refuse the change unless the task still has this version.
     #[arg(long)]
     if_version: Option<i64>,
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-enum Readiness {
-    Maybe,
-    Anytime,
 }
 
 fn parse_date(value: &str) -> Result<NaiveDate, String> {
@@ -150,6 +143,17 @@ fn run(cli: Cli) -> Result<()> {
         .clone()
         .unwrap_or_else(|| profile.join("config.toml"));
     let config = Config::load(&config_path, cli.config.is_some())?;
+    if let Some(Command::Mcp { list, read_only }) = &cli.command {
+        if !read_only {
+            std::fs::create_dir_all(&profile)
+                .with_context(|| format!("Cannot create profile {}", profile.display()))?;
+        }
+        let store = Store::open_for_mcp(&profile.join("tasks.db"), list.as_deref(), *read_only)?;
+        return tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?
+            .block_on(mcp::serve(store));
+    }
     // Parse queries before creating a profile so invalid input has no side effects.
     let query = if let Some(Command::Tasks { query, .. }) = &cli.command {
         Some(Query::parse(query)?)
@@ -163,21 +167,18 @@ fn run(cli: Cli) -> Result<()> {
         return ui::run(&mut store, &config);
     };
     match command {
+        Command::Mcp { .. } => unreachable!("MCP handled before ordinary commands"),
         Command::Add {
             title,
             list,
             description,
             due,
-            anytime,
-            tags,
         } => {
             let task = store.create_task(&TaskInput {
                 list_id: find_list(&store, list.as_deref())?.id,
                 title,
                 description,
                 due,
-                ready: anytime,
-                tags,
             })?;
             print_task(&task, cli.json)?;
         }
@@ -208,14 +209,11 @@ fn run(cli: Cli) -> Result<()> {
             } else {
                 print_task(&task, false)?;
                 println!(
-                    "List: {}\nVersion: {}\nReadiness: {}\nTrash: {}",
-                    task.list_id,
-                    task.version,
-                    if task.ready { "anytime" } else { "maybe" },
-                    task.deleted
+                    "List: {}\nVersion: {}\nTrash: {}",
+                    task.list_id, task.version, task.deleted
                 );
-                if !task.tags.is_empty() {
-                    println!("Tags: {}", task.tags.join(" "));
+                if let Some(date) = task.status_changed_on {
+                    println!("Status changed on: {date}");
                 }
                 if !task.description.is_empty() {
                     println!("\n{}", task.description);
@@ -229,9 +227,6 @@ fn run(cli: Cli) -> Result<()> {
             list,
             due,
             clear_due,
-            readiness,
-            tags,
-            clear_tags,
         } => {
             let original = store.task(target.id)?;
             let mut input = TaskInput::from(&original);
@@ -249,16 +244,6 @@ fn run(cli: Cli) -> Result<()> {
             }
             if clear_due {
                 input.due = None;
-                input.ready = true;
-            }
-            if let Some(readiness) = readiness {
-                input.ready = matches!(readiness, Readiness::Anytime);
-            }
-            if clear_tags {
-                input.tags.clear();
-            }
-            if !tags.is_empty() {
-                input.tags = tags;
             }
             let task = store.update_task(
                 target.id,
@@ -305,7 +290,7 @@ fn find_list(store: &Store, name: Option<&str>) -> Result<TaskList> {
             }),
         None => lists
             .into_iter()
-            .next()
+            .min_by_key(|list| list.id)
             .context("No list exists. Create one with 'husker list-add'."),
     }
 }
@@ -327,7 +312,7 @@ fn print_task(task: &Task, json: bool) -> Result<()> {
     let due = task
         .due
         .map(|date| date.to_string())
-        .unwrap_or_else(|| if task.ready { "anytime" } else { "maybe" }.to_owned());
+        .unwrap_or_else(|| "undated".to_owned());
     println!("{}\t{}\t{}\t{}", task.id, task.status, due, task.title);
     Ok(())
 }

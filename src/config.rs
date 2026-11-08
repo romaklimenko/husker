@@ -14,6 +14,7 @@ pub enum Mode {
     Filter,
     ListName,
     Help,
+    CopyText,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -42,12 +43,15 @@ pub enum Action {
     PreviousField,
     Apply,
     Close,
-    Anytime,
-    Maybe,
+    Refresh,
+    ToggleMouse,
+    CopyText,
+    ScrollLeft,
+    ScrollRight,
 }
 
 impl Action {
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 29] = [
         Self::Up,
         Self::Down,
         Self::Open,
@@ -72,8 +76,11 @@ impl Action {
         Self::PreviousField,
         Self::Apply,
         Self::Close,
-        Self::Anytime,
-        Self::Maybe,
+        Self::Refresh,
+        Self::ToggleMouse,
+        Self::CopyText,
+        Self::ScrollLeft,
+        Self::ScrollRight,
     ];
 
     pub fn name(self) -> &'static str {
@@ -102,14 +109,22 @@ impl Action {
             Self::PreviousField => "previous_field",
             Self::Apply => "apply",
             Self::Close => "close",
-            Self::Anytime => "anytime",
-            Self::Maybe => "maybe",
+            Self::Refresh => "refresh",
+            Self::ToggleMouse => "toggle_mouse",
+            Self::CopyText => "copy_text",
+            Self::ScrollLeft => "scroll_left",
+            Self::ScrollRight => "scroll_right",
         }
     }
 
     pub fn available_in(self, mode: Mode) -> bool {
         match self {
-            Self::Up | Self::Down => matches!(mode, Mode::Tasks | Mode::Lists | Mode::Help),
+            Self::Up | Self::Down => {
+                matches!(
+                    mode,
+                    Mode::Tasks | Mode::Lists | Mode::Help | Mode::CopyText
+                )
+            }
             Self::Open | Self::Lists | Self::Planned | Self::Help | Self::Quit => {
                 matches!(mode, Mode::Tasks | Mode::Lists)
             }
@@ -118,11 +133,8 @@ impl Action {
             | Self::ToggleDone
             | Self::ToggleCancelled
             | Self::Trash
-            | Self::Restore
-            | Self::MoveUp
-            | Self::MoveDown
-            | Self::Anytime
-            | Self::Maybe => mode == Mode::Tasks,
+            | Self::Restore => mode == Mode::Tasks,
+            Self::MoveUp | Self::MoveDown => matches!(mode, Mode::Tasks | Mode::Lists),
             Self::NewList | Self::RenameList => mode == Mode::Lists,
             Self::Back => matches!(
                 mode,
@@ -132,7 +144,11 @@ impl Action {
                 mode == Mode::Editor
             }
             Self::Apply => matches!(mode, Mode::Filter | Mode::ListName),
-            Self::Close => mode == Mode::Help,
+            Self::Close => matches!(mode, Mode::Help | Mode::CopyText),
+            Self::Refresh => true,
+            Self::ToggleMouse => mode != Mode::CopyText,
+            Self::CopyText => matches!(mode, Mode::Tasks | Mode::Editor),
+            Self::ScrollLeft | Self::ScrollRight => mode == Mode::CopyText,
         }
     }
 
@@ -156,14 +172,17 @@ impl Action {
             Self::Help => &["?"],
             Self::Quit => &["q"],
             Self::Back => &["esc"],
-            Self::Save => &["esc"],
-            Self::Discard => &["ctrl+g"],
+            Self::Save => &["ctrl+enter", "ctrl+s"],
+            Self::Discard => &["esc", "ctrl+g"],
             Self::NextField => &["tab"],
             Self::PreviousField => &["shift+tab"],
             Self::Apply => &["enter"],
             Self::Close => &["esc", "?"],
-            Self::Anytime => &["a"],
-            Self::Maybe => &["m"],
+            Self::Refresh => &["f5"],
+            Self::ToggleMouse => &["f2"],
+            Self::CopyText => &["f4"],
+            Self::ScrollLeft => &["left"],
+            Self::ScrollRight => &["right"],
         }
     }
 }
@@ -291,6 +310,7 @@ impl Config {
             Mode::Filter,
             Mode::ListName,
             Mode::Help,
+            Mode::CopyText,
         ] {
             let mut seen: Vec<(&Binding, Action)> = Vec::new();
             for (action, bindings) in &self.keys {
@@ -421,8 +441,23 @@ mod tests {
         );
         assert_eq!(
             config.action(key(KeyCode::Esc), Mode::Editor),
-            Some(Action::Save)
+            Some(Action::Discard)
         );
+        for code in [KeyCode::Enter, KeyCode::Char('s')] {
+            assert_eq!(
+                config.action(KeyEvent::new(code, KeyModifiers::CONTROL), Mode::Editor),
+                Some(Action::Save)
+            );
+        }
+        assert_eq!(
+            config.action(key(KeyCode::F(4)), Mode::Editor),
+            Some(Action::CopyText)
+        );
+        assert_eq!(
+            config.action(key(KeyCode::F(5)), Mode::CopyText),
+            Some(Action::Refresh)
+        );
+        assert_eq!(config.action(key(KeyCode::F(2)), Mode::CopyText), None);
         assert_eq!(
             config.action(key(KeyCode::Esc), Mode::Filter),
             Some(Action::Back)
@@ -474,6 +509,8 @@ mod tests {
             "[keys]\nquit = ['hyper+q']",
             "[keys]\nquit = ['']",
             "[keys]\nquit = ['f25']",
+            "[keys]\nanytime = ['a']",
+            "[keys]\nmaybe = ['m']",
         ] {
             assert!(
                 Config::from_toml(input).is_err(),

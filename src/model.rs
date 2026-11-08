@@ -1,9 +1,10 @@
 use std::{fmt, str::FromStr};
 
 use chrono::NaiveDate;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
     #[default]
@@ -41,7 +42,7 @@ impl FromStr for Status {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 pub struct Task {
     pub id: i64,
     pub list_id: i64,
@@ -49,8 +50,7 @@ pub struct Task {
     pub description: String,
     pub due: Option<NaiveDate>,
     pub status: Status,
-    pub ready: bool,
-    pub tags: Vec<String>,
+    pub status_changed_on: Option<NaiveDate>,
     pub deleted: bool,
     pub position: i64,
     pub version: i64,
@@ -62,8 +62,6 @@ pub struct TaskInput {
     pub title: String,
     pub description: String,
     pub due: Option<NaiveDate>,
-    pub ready: bool,
-    pub tags: Vec<String>,
 }
 
 impl From<&Task> for TaskInput {
@@ -73,13 +71,11 @@ impl From<&Task> for TaskInput {
             title: task.title.clone(),
             description: task.description.clone(),
             due: task.due,
-            ready: task.ready,
-            tags: task.tags.clone(),
         }
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 pub struct TaskList {
     pub id: i64,
     pub name: String,

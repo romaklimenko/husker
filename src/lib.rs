@@ -1,7 +1,9 @@
 pub mod config;
 pub mod i18n;
+pub mod mcp;
 pub mod model;
 pub mod planning;
 pub mod query;
 pub mod store;
+pub(crate) mod text_layout;
 pub mod ui;

@@ -39,9 +39,7 @@ fn scripts_can_capture_filter_complete_trash_and_restore() {
             "--list",
             "private",
             "--description",
-            "Oat milk\nTwo cartons",
-            "--tag",
-            "Shopping",
+            "Oat milk\nTwo cartons #Shopping",
             "--due",
             "2026-11-08",
         ],
@@ -52,10 +50,16 @@ fn scripts_can_capture_filter_complete_trash_and_restore() {
     assert_eq!(results.as_array().unwrap().len(), 1);
     assert_eq!(
         json(profile, &["show", &id])["description"],
-        "Oat milk\nTwo cartons"
+        "Oat milk\nTwo cartons #Shopping"
     );
     assert_eq!(json(profile, &["done", &id])["status"], "done");
-    assert!(json(profile, &["tasks"]).as_array().unwrap().is_empty());
+    assert_eq!(json(profile, &["tasks"])[0]["status"], "done");
+    assert!(
+        json(profile, &["tasks", "s:open"])
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(json(profile, &["tasks", "s:done"])[0]["id"], task["id"]);
     json(profile, &["trash", &id]);
     assert!(
@@ -80,14 +84,22 @@ fn edits_preserve_unspecified_fields_and_reject_stale_versions() {
     let profile = directory.path();
     let task = json(
         profile,
-        &["add", "Task", "--due", "2026-11-08", "--tag", "first"],
+        &[
+            "add",
+            "Task",
+            "--due",
+            "2026-11-08",
+            "--description",
+            "#first",
+        ],
     );
     let id = task["id"].to_string();
     let edited = json(profile, &["edit", &id, "--title", "Changed", "--clear-due"]);
     assert_eq!(edited["title"], "Changed");
-    assert_eq!(edited["tags"], serde_json::json!(["first"]));
+    assert_eq!(edited["description"], "#first");
     assert!(edited["due"].is_null());
-    assert_eq!(edited["ready"], true);
+    assert!(edited.get("tags").is_none());
+    assert!(edited.get("ready").is_none());
     let stale = run(
         profile,
         &[
@@ -104,19 +116,11 @@ fn edits_preserve_unspecified_fields_and_reject_stale_versions() {
     assert!(stale.stdout.is_empty());
     assert!(String::from_utf8_lossy(&stale.stderr).contains("changed"));
     assert_eq!(json(profile, &["show", &id])["title"], "Changed");
-    let edited = json(
-        profile,
-        &["edit", &id, "--clear-tags", "--readiness", "maybe"],
-    );
-    assert_eq!(edited["tags"], serde_json::json!([]));
-    assert_eq!(edited["ready"], false);
+    let edited = json(profile, &["edit", &id, "--description", ""]);
+    assert_eq!(edited["description"], "");
     json(profile, &["edit", &id, "--due", "2026-11-08"]);
-    let maybe = json(
-        profile,
-        &["edit", &id, "--clear-due", "--readiness", "maybe"],
-    );
-    assert!(maybe["due"].is_null());
-    assert_eq!(maybe["ready"], false);
+    let undated = json(profile, &["edit", &id, "--clear-due"]);
+    assert!(undated["due"].is_null());
 }
 
 #[test]
@@ -129,6 +133,10 @@ fn invalid_input_has_no_success_output_or_task_write() {
         vec!["--json", "tasks", "due:2026-02-30"],
         vec!["--json", "show", "999"],
         vec!["--json", "add", "   "],
+        vec!["--json", "add", "Task", "--tag", "removed"],
+        vec!["--json", "add", "Task", "--anytime"],
+        vec!["--json", "edit", "1", "--readiness", "maybe"],
+        vec!["--json", "edit", "1", "--clear-tags"],
     ] {
         let output = run(profile, &args);
         assert!(!output.status.success(), "Unexpected success for {args:?}");
@@ -194,4 +202,42 @@ fn noninteractive_default_launch_fails_without_creating_a_profile() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("interactive terminal"));
     assert!(!profile.exists());
+}
+
+#[test]
+fn lists_keep_the_default_first_and_return_saved_order() {
+    let directory = tempfile::tempdir().unwrap();
+    let profile = directory.path();
+    for name in ["Zebra", "beta", "Alpha"] {
+        json(profile, &["list-add", name]);
+    }
+    let lists = json(profile, &["lists"]);
+    let names = lists
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|list| list["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["Inbox", "Zebra", "beta", "Alpha", "Trash"]);
+    {
+        let mut store = husker::store::Store::open(&profile.join("tasks.db")).unwrap();
+        store.move_list(4, false).unwrap();
+    }
+    json(profile, &["list-rename", "4", "Aardvark"]);
+    let reordered = json(profile, &["lists"]);
+    let names = reordered
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|list| list["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["Inbox", "Zebra", "Aardvark", "beta", "Trash"]);
+    let undated = json(profile, &["add", "Undated"]);
+    assert_eq!(undated["list_id"], 1);
+    let later = json(profile, &["add", "Later", "--due", "2026-11-10"]);
+    let earlier = json(profile, &["add", "Earlier", "--due", "2026-11-09"]);
+    let tasks = json(profile, &["tasks"]);
+    assert_eq!(tasks[0]["id"], earlier["id"]);
+    assert_eq!(tasks[1]["id"], later["id"]);
+    assert_eq!(tasks[2]["id"], undated["id"]);
 }

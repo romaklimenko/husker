@@ -10,7 +10,6 @@ use crate::{
 pub struct Query {
     list: Option<String>,
     text: Vec<String>,
-    tags: Vec<String>,
     due: Option<DueFilter>,
     status: Option<Status>,
     explicit_status: bool,
@@ -28,7 +27,6 @@ impl Default for Query {
         Self {
             list: None,
             text: Vec::new(),
-            tags: Vec::new(),
             due: None,
             status: Some(Status::Open),
             explicit_status: false,
@@ -40,13 +38,8 @@ impl Query {
     pub fn parse(input: &str) -> Result<Self> {
         let mut query = Self::default();
         for token in tokenize(input)? {
-            if token.literal {
+            if token.literal || token.text.starts_with('#') {
                 query.text.push(token.text.to_lowercase());
-            } else if let Some(tag) = token.text.strip_prefix('#') {
-                if tag.is_empty() {
-                    bail!("A tag filter must contain a name after '#'.");
-                }
-                query.tags.push(tag.to_lowercase());
             } else if let Some((field, value)) = token.text.split_once(':') {
                 if value.is_empty() {
                     bail!("The '{field}:' filter needs a value.");
@@ -95,10 +88,10 @@ impl Query {
     }
 
     fn matches(&self, task: &Task, list_name: &str, trash: bool, today: NaiveDate) -> bool {
-        let status_matches = if trash && !self.explicit_status {
-            true
-        } else {
+        let status_matches = if self.explicit_status {
             self.status.is_none_or(|status| task.status == status)
+        } else {
+            trash || task.status == Status::Open || task.status_changed_on == Some(today)
         };
         if !status_matches
             || self
@@ -113,13 +106,6 @@ impl Query {
             DueFilter::Date(date) => task.due != Some(*date),
             DueFilter::None => task.due.is_some(),
         }) {
-            return false;
-        }
-        if !self
-            .tags
-            .iter()
-            .all(|tag| task.tags.iter().any(|value| value.to_lowercase() == *tag))
-        {
             return false;
         }
         if self.text.is_empty() {
@@ -242,8 +228,7 @@ mod tests {
             description: String::new(),
             due: None,
             status: Status::Open,
-            ready: false,
-            tags: Vec::new(),
+            status_changed_on: None,
             deleted: false,
             position: id,
             version: 1,
@@ -270,9 +255,9 @@ mod tests {
     }
 
     #[test]
-    fn combines_list_phrase_and_tags_with_and() {
+    fn combines_list_phrase_and_literal_hashtags_with_and() {
         let mut first = task(1, "Pay electricity bill");
-        first.tags = vec!["Shopping".into(), "Monthly".into()];
+        first.description = "#Shopping #Monthly".into();
         let second = task(2, "Pay electricity bill");
         assert_eq!(
             search(
@@ -309,6 +294,48 @@ mod tests {
     }
 
     #[test]
+    fn hashes_are_literal_text_in_titles_and_descriptions() {
+        let mut description = task(2, "Other title");
+        description.description = "Remember #Shopping-list and #todo:home".into();
+        let tasks = [task(1, "Buy #shopping"), description, task(3, "Shopping")];
+        assert_eq!(search(&tasks, "#SHOPPING", false), [1, 2]);
+        assert_eq!(search(&tasks, "#", false), [1, 2]);
+        assert_eq!(search(&tasks, "#todo:HOME", false), [2]);
+        assert_eq!(search(&tasks, "#shopping #shopping", false), [1, 2]);
+    }
+
+    #[test]
+    fn default_status_retains_only_todays_closed_tasks_until_midnight() {
+        let today = parse_date("2026-11-08").unwrap();
+        let yesterday = today - chrono::Duration::days(1);
+        let mut tasks = vec![task(1, "Open")];
+        for (id, status, changed_on) in [
+            (2, Status::Done, Some(today)),
+            (3, Status::Cancelled, Some(today)),
+            (4, Status::Done, Some(yesterday)),
+            (5, Status::Cancelled, Some(yesterday)),
+            (6, Status::Done, None),
+            (7, Status::Cancelled, None),
+        ] {
+            let mut closed = task(id, "Closed");
+            closed.status = status;
+            closed.status_changed_on = changed_on;
+            tasks.push(closed);
+        }
+        assert_eq!(search(&tasks, "", false), [1, 2, 3]);
+        assert_eq!(search(&tasks, "s:open", false), [1]);
+        assert_eq!(search(&tasks, "s:done", false), [2, 4, 6]);
+        assert_eq!(search(&tasks, "s:cancelled", false), [3, 5, 7]);
+        assert_eq!(search(&tasks, "s:all", false), [1, 2, 3, 4, 5, 6, 7]);
+        let tomorrow = today + chrono::Duration::days(1);
+        let next_day = visible_tasks(&tasks, &[], &Query::default(), None, false, tomorrow);
+        assert_eq!(next_day.iter().map(|task| task.id).collect::<Vec<_>>(), [1]);
+        tasks[1].deleted = true;
+        assert_eq!(search(&tasks, "", false), [1, 3]);
+        assert_eq!(search(&tasks, "", true), [2]);
+    }
+
+    #[test]
     fn status_defaults_and_trash_are_independent() {
         let open = task(1, "Open");
         let mut done = task(2, "Done");
@@ -330,12 +357,12 @@ mod tests {
         today.due = Some(parse_date("2026-11-08").unwrap());
         let mut soon = task(2, "Soon");
         soon.due = Some(parse_date("2026-11-15").unwrap());
-        let tasks = [today, soon, task(3, "Maybe")];
+        let tasks = [today, soon, task(3, "Undated")];
         assert_eq!(search(&tasks, "due:today", false), [1]);
         assert_eq!(search(&tasks, "due:2026-11-15", false), [2]);
         assert_eq!(search(&tasks, "due:soon", false), [2]);
         assert_eq!(search(&tasks, "due:none", false), [3]);
-        assert_eq!(search(&tasks, "due:maybe", false), [3]);
+        assert_eq!(search(&tasks, "due:undated", false), [3]);
     }
 
     #[test]
@@ -346,7 +373,8 @@ mod tests {
             "s:all s:done",
             "owner:me",
             "l:",
-            "#",
+            "due:maybe",
+            "due:anytime",
             "due:2026-02-30",
             "due:2026-2-03",
             "s:unknown",
