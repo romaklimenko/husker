@@ -13,6 +13,8 @@ pub enum Mode {
     Lists,
     Editor,
     DueField,
+    ListField,
+    EditorListPicker,
     ConfirmDiscard,
     DeleteListConfirm,
     Filter,
@@ -150,6 +152,24 @@ impl Action {
     }
 
     pub fn available_in(self, mode: Mode) -> bool {
+        if mode == Mode::ListField {
+            return matches!(self, Self::Open | Self::Lists)
+                || (self != Self::CopySelection && self.available_in(Mode::Editor));
+        }
+        if mode == Mode::EditorListPicker {
+            return matches!(
+                self,
+                Self::Up
+                    | Self::Down
+                    | Self::Open
+                    | Self::Lists
+                    | Self::Back
+                    | Self::Help
+                    | Self::Language
+                    | Self::Refresh
+                    | Self::ToggleMouse
+            );
+        }
         if mode == Mode::DueField {
             return matches!(
                 self,
@@ -397,6 +417,8 @@ impl Config {
             Mode::Lists,
             Mode::Editor,
             Mode::DueField,
+            Mode::ListField,
+            Mode::EditorListPicker,
             Mode::ConfirmDiscard,
             Mode::DeleteListConfirm,
             Mode::Filter,
@@ -602,6 +624,8 @@ mod tests {
             }
             for mode in [
                 Mode::Editor,
+                Mode::ListField,
+                Mode::EditorListPicker,
                 Mode::Filter,
                 Mode::ListName,
                 Mode::Lists,
@@ -653,6 +677,90 @@ mod tests {
         assert!(Config::from_toml("[keys]\ndue_today = ['n']").is_err());
         assert!(Config::from_toml("[keys]\ndue_tomorrow = ['t']").is_err());
         assert!(Config::example().contains("due_next_week = [\"w\"]"));
+    }
+
+    #[test]
+    fn editor_list_modes_keep_task_writes_and_text_copying_unavailable() {
+        let config = Config::default();
+        for mode in [Mode::ListField, Mode::EditorListPicker] {
+            assert_eq!(config.action(key(KeyCode::Enter), mode), Some(Action::Open));
+            assert_eq!(
+                config.action(key(KeyCode::Char('l')), mode),
+                Some(Action::Lists)
+            );
+            assert_eq!(
+                config.action(
+                    KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                    mode
+                ),
+                None
+            );
+            for code in ['n', 'N', 'R', 'd', 'r', 't', 'T', 'w', 'x', 'q'] {
+                assert_eq!(config.action(key(KeyCode::Char(code)), mode), None);
+            }
+            assert_eq!(config.action(key(KeyCode::Delete), mode), None);
+            assert_eq!(
+                config.action(KeyEvent::new(KeyCode::Down, KeyModifiers::ALT), mode),
+                None
+            );
+        }
+        assert_eq!(
+            config.action(key(KeyCode::Esc), Mode::ListField),
+            Some(Action::Discard)
+        );
+        assert_eq!(
+            config.action(key(KeyCode::Esc), Mode::EditorListPicker),
+            Some(Action::Back)
+        );
+        assert_eq!(
+            config.action(
+                KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+                Mode::ListField
+            ),
+            Some(Action::Save)
+        );
+        assert_eq!(
+            config.action(
+                KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+                Mode::EditorListPicker
+            ),
+            None
+        );
+        assert_eq!(
+            config.action(key(KeyCode::Down), Mode::EditorListPicker),
+            Some(Action::Down)
+        );
+        assert_eq!(
+            config.action(key(KeyCode::Char('?')), Mode::EditorListPicker),
+            Some(Action::Help)
+        );
+    }
+
+    #[test]
+    fn editor_list_modes_use_configured_actions_and_reject_new_conflicts() {
+        let config = Config::from_toml("[keys]\nlists = ['ctrl+l']\nopen = ['f6']").unwrap();
+        for mode in [Mode::ListField, Mode::EditorListPicker] {
+            assert_eq!(config.action(key(KeyCode::Char('l')), mode), None);
+            assert_eq!(config.action(key(KeyCode::Enter), mode), None);
+            assert_eq!(config.action(key(KeyCode::F(6)), mode), Some(Action::Open));
+            assert_eq!(
+                config.action(
+                    KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL),
+                    mode
+                ),
+                Some(Action::Lists)
+            );
+        }
+        let error = Config::from_toml("[keys]\nlists = ['ctrl+s']").unwrap_err();
+        assert!(error.to_string().contains("ListField mode"));
+        let error = Config::from_toml("[keys]\nopen = ['tab']").unwrap_err();
+        assert!(error.to_string().contains("ListField mode"));
+        let config = Config::from_toml("[keys]\nlists = []\nopen = []").unwrap();
+        assert_eq!(config.action(key(KeyCode::Enter), Mode::ListField), None);
+        assert_eq!(
+            config.action(key(KeyCode::Char('l')), Mode::ListField),
+            None
+        );
     }
 
     #[test]

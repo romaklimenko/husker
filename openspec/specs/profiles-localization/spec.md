@@ -71,6 +71,9 @@ The Danish equivalent uses `søn` for Sunday.
 When the ISO week-year differs from the calendar year, the week label includes the ISO week-year.
 For example, `2027-01-01 Fri 2026-W53` identifies the week at the year boundary.
 
+Known single-day task headings use this same format alongside their localized relative label.
+Future exact-date headings use this format without Soon or Next labels. Aggregate or unknown headings have no fabricated date.
+
 #### Scenario: Format a Danish Sunday
 
 - **WHEN** the language is `da` and the date is `2026-11-08`
@@ -89,7 +92,8 @@ Printable text and ordinary text editing remain available in text input fields.
 For example, `quit = ["ctrl+q"]` replaces the default quit shortcut.
 Key strings accept characters, named keys, and the `ctrl`, `alt`, and `shift` modifiers.
 The shipped example configuration lists every action and its defaults.
-The `copy_selection` action defaults to `ctrl+c` and is active only in task, filter, and list-name input modes.
+The `copy_selection` action defaults to `ctrl+c` and is active only in task text fields, filter inputs, and list-name inputs.
+It is unavailable in the task editor's List selector and editor list picker.
 Copy-selection hints use the configured shortcut and selected language.
 Conflicting input-mode action bindings, including another action bound to Ctrl+C while Copy selection keeps that default, follow the existing key-conflict validation requirement.
 
@@ -103,7 +107,7 @@ The `history` action defaults to `h` in ordinary task navigation and History.
 The `reopen` action defaults to `r` in History. The existing `restore` action remains available for Trash.
 The `delete_list` action defaults to `d` and Delete in the list picker.
 
-The `language` action defaults to F3 in task navigation, History, the list picker, task editing, filter editing, list-name editing, and Help.
+The `language` action defaults to F3 in task navigation, History, both list pickers, task editing, filter editing, list-name editing, and Help.
 It is unavailable in confirmation screens and Copy text.
 
 The due preset actions have these defaults.
@@ -119,6 +123,8 @@ They are available in ordinary task navigation and History outside Trash, and in
 They are unavailable in other editor fields, filter and list-name inputs, list pickers, Help, confirmations, Copy text, and the language picker.
 Each override replaces that action's defaults, and an empty array disables it.
 Help and Due date hints use the configured bindings and selected language.
+
+The List selector and editor list picker reuse the existing `open`, `lists`, `back`, navigation, Help, Language, Refresh, and Toggle mouse actions. No new action names or configuration keys are required.
 
 #### Scenario: Replace a shortcut
 
@@ -179,8 +185,10 @@ Husker SHALL reject unknown action names, invalid key strings, and shortcuts ass
 | History | Filter, edit, copy, change status, trash, or reopen completed and cancelled tasks. |
 | List-deletion confirmation | Confirm moving a list's tasks to the default list before removing the list. |
 | Language picker | Choose English or Danish and save the interface language. |
-| Task editor | Enter Title, Description, or List. |
-| Due date field | Enter an ISO date or use a preset while retaining all task-editor controls. |
+| Task editor | Enter Title or Description. |
+| List field | Select a draft list and open its picker. |
+| Editor list picker | Choose an ordinary list for an unsaved draft. |
+| Due date field | Enter a supported editor date or use a preset while retaining all task-editor controls. |
 | Filter editor | Enter a task filter. |
 | List-name editor | Enter a new or replacement list name. |
 | Discard confirmation | Choose whether to discard changed task fields. |
@@ -192,6 +200,10 @@ The list picker retains its existing configurable bindings and conflict checks a
 Text input modes do not execute task-navigation writes.
 Due date field mode includes every normal task-editor action and the due preset actions.
 Preset actions in that mode edit only the draft field.
+List field mode includes normal task-editor actions except Copy selection, and adds Open and Lists.
+Editor list picker mode permits only Up, Down, Open, Lists, Back, Help, Language, Refresh, and Toggle mouse.
+Neither List mode permits text input or task-navigation writes. Choice Undo and Redo remain built-in List field controls.
+The navigation list picker retains its existing management actions.
 Configured actions take precedence over built-in text-editing shortcuts in their active mode.
 Discard confirmation uses fixed choice keys defined by the terminal-interface spec and retains configured Discard and Refresh actions.
 List-deletion confirmation uses fixed choice keys and retains configured Back and Refresh actions.
@@ -250,6 +262,17 @@ Existing configuration files must remove those overrides before loading.
 
 - **WHEN** Title is focused and Today retains its `t` default
 - **THEN** `t` is handled as text input rather than a configured preset action
+
+#### Scenario: Rebind the editor picker
+
+- **WHEN** `lists` is bound to Ctrl+L and the task editor's List selector is focused
+- **THEN** Ctrl+L opens its picker, and Ctrl+L cancels that picker without changing the draft
+- **AND** the visible hint shows the configured binding
+
+#### Scenario: Reject an editor-picker conflict
+
+- **WHEN** `lists` and `open` have the same key
+- **THEN** configuration loading rejects their conflict in the List field and editor list picker modes
 
 ### Requirement: Persist an interface-language choice without replacing configuration
 

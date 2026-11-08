@@ -16,8 +16,8 @@ Title. Use Tab and Shift+Tab to move between the fields:
 | --- | --- |
 | Title | A nonempty task title, such as `Buy milk`. |
 | Description | Plain text. Press Enter here to add another line. |
-| Due date | A date such as `2026-11-09`, or leave the field empty. |
-| List | An existing list name, such as `Inbox`. |
+| Due date | `2026-11-09`, a compact date such as `261109`, or no date. |
+| List | Press Enter to choose an existing list, such as `Inbox`. |
 
 Description text wraps at the editor's width. Words move to the next visual
 row when needed, and long words split across rows. Wrapping does not add
@@ -34,9 +34,10 @@ whether to discard the changes. No is selected initially, so Enter keeps you
 in the editor. Use an arrow key or Tab to select Yes, then press Enter to discard.
 Esc or Ctrl+G at the prompt also returns to editing.
 An unchanged editor closes without a prompt.
-Navigation shortcuts such as `q`, `d`, and `l` are ordinary text while you edit.
-Due date also accepts the `t`, `T`, `w`, and `x` presets described below.
-Those letters stay ordinary text in every other input field.
+Navigation shortcuts such as `q`, `d`, and `l` are ordinary text in Title
+and Description. Due date also accepts the `t`, `T`, `w`, and `x` presets
+described below. The List field is a selector: Enter or `l` opens its picker.
+The selector does not accept typing or paste.
 
 Remove an existing due date to move an open task to Sometime.
 A done or cancelled task stays in its status section.
@@ -50,6 +51,66 @@ If another Husker process changes the task while you edit, your save fails
 and your text stays in the editor. Press F4 to copy any text you need to keep.
 Return from the copy view with Esc. Press Esc again and confirm Yes to discard
 the changed draft, then reopen the task to load its current values.
+
+## Enter a date without separators
+
+In the editor's Due date field, type a date in any of these forms:
+
+| Input | Result |
+| --- | --- |
+| `2026-11-09` | November 9, 2026. |
+| `20261109` | November 9, 2026. |
+| `261109` | November 9, 2026. The two-digit year means 2000 through 2099. |
+| `1109` | November 9 in the current local year. |
+
+The four-digit form always uses the current year when Husker reads the date.
+For example, entering `0101` in December 2026 means January 1, 2026.
+It does not jump ahead to January 2027. Use `270101` for that date.
+Once the entry shows a full year, that year stays fixed. If an unfinished
+`0101` entry stays compact across New Year, saving it uses the new year.
+
+Press Tab or Shift+Tab, or click another field, to turn a valid entry into
+`YYYY-MM-DD`. This changes the draft only. Ctrl+Z in Due date restores the
+original entry in one step. You can also press Ctrl+S directly to save a
+compact date without leaving the field first.
+
+Husker leaves the text alone while you type. An invalid entry such as `0230`
+stays available for correction when you leave the field. Save reports the
+invalid date and keeps the editor open.
+
+An empty field shows a grey `YYYY-MM-DD` placeholder. Leave the field empty
+to save no due date. The placeholder is not part of your task text.
+
+These compact forms work in the task editor. Use `YYYY-MM-DD` in commands,
+MCP requests, and search filters, such as `due:2026-11-09`.
+
+## Choose a task's list in the editor
+
+Focus List with Tab and press Enter or `l` to open its picker. You can also
+click the List field. Select a destination with Up or Down, then press Enter.
+For example, choose Work to move the task there when you next save.
+Press Esc or `l` in the picker to return without changing the draft's list.
+
+The picker contains your ordinary lists in their saved order. The default
+list has a marker. All tasks and Trash are view choices, so they do not appear
+as task destinations. To create or rename a list, return to task navigation
+and open its list picker with `l`.
+
+Choosing a destination does not save the task. Your other fields keep their
+unsaved text and undo history. With List focused, Ctrl+Z undoes the choice.
+Ctrl+Y or Ctrl+Shift+Z restores it. Press Ctrl+S to save all task changes together.
+Typing, paste, text selection, and Ctrl+C do nothing in the List selector.
+
+Click a picker row to select it or double-click to choose it. Scroll inside
+the popup to move through lists. Clicks and scrolling outside it do nothing.
+F5 refreshes the list names without replacing your draft. Help and the language
+picker return to the same editor picker when closed.
+
+If another process renames the selected list, the selector shows its new name.
+If that list is removed, choose a valid destination before saving.
+Husker keeps the original list identity and does not substitute another list
+that happens to have the same name. Undoing to a removed list also requires
+a new valid choice before Save.
 
 ## Set a due date with a shortcut
 
@@ -86,7 +147,8 @@ An empty array disables that preset, for example `clear_due = []`.
 
 ## Edit text with the keyboard
 
-Use these shortcuts in task fields, the filter input, or a list-name form:
+Use these shortcuts in Title, Description, Due date, the filter input,
+or a list-name form. List has the choice controls described above:
 
 | Key | Result |
 | --- | --- |
@@ -204,16 +266,18 @@ Husker uses your computer's local calendar date to group open tasks:
 | Overdue | Due before today. |
 | Today | Due today. |
 | Tomorrow | Due tomorrow. |
-| Soon | Due from two days through seven days after today, inclusive. |
-| Next | Due eight or more days after today. |
+| An exact date | Due at least two days after today. Each date has its own heading. |
 | Sometime | No due date. Shown as Engang in Danish. |
 
-If today is November 8, Soon covers November 10 through November 15.
-Next starts on November 16. Open tasks appear in those groups first.
-Within a dated group, earlier due dates appear first. Sometime is the last
-open-task group.
+If today is November 8, tasks due on November 10 and November 16 appear
+under separate headings for those dates. Today and Tomorrow also include
+the actual date, such as `Tomorrow - 2026-11-09 Mon W46`.
+Future dates appear in ascending order. Sometime is the
+last open-task group. Overdue can contain several dates, so its heading
+does not claim a single day.
 
-Done today and Cancelled today follow the open tasks. For example, completing
+Done today and Cancelled today follow the open tasks. Both headings show
+today's actual date. For example, completing
 an undated task moves it from Sometime to Done today without adding a due date.
 A task completed today appears there even if its stored due date is overdue.
 If a status filter includes older tasks, Done and Cancelled appear afterward.
@@ -265,6 +329,9 @@ Combine terms to narrow the results. Every term must match:
 
 Use any of these date-group tokens with `due:`: `overdue`, `today`,
 `tomorrow`, `soon`, `next`, or `undated`.
+`due:soon` still means two through seven days after today. `due:next` means
+eight or more days after today. These filters keep their ranges even though
+the terminal shows individual date headings.
 For example, `due:none #shopping` finds undated tasks containing `#shopping`.
 The Sometime label does not change the filter: use `due:none` or `due:undated`,
 not `due:sometime`.
@@ -296,8 +363,10 @@ For example, `h` in Work opens `All tasks > Work > History` and shows Work's
 currently done and cancelled tasks from every date. Tasks do not expire.
 History excludes open tasks and Trash.
 
-The most recent recorded status dates appear first. Headings show Today,
-Yesterday, or the calendar date. Within one date, later completion or
+The most recent recorded status dates appear first. Today and Yesterday
+headings include the actual date, such as `Today - 2026-11-08 Sun W45`.
+Older headings show the date, weekday, and week, such as `2026-11-06 Fri W45`.
+Within one date, later completion or
 cancellation times appear first. Tasks migrated without a recorded time
 follow tasks with known times on the same date. Equal or unknown times use
 descending task ID. Tasks without a recorded date appear under Unknown date.
@@ -354,8 +423,8 @@ Press Esc to return to your previous All tasks view.
 
 ## Use the mouse and copy text
 
-Select text with the keyboard in a task field, filter input, or list-name
-form, then press Ctrl+C to copy that selection. A message confirms success.
+Select text with the keyboard in Title, Description, Due date, a filter input,
+or a list-name form, then press Ctrl+C to copy that selection. A message confirms success.
 Copying preserves your unsaved text, cursor, and selection.
 Ctrl+C has no Husker clipboard action outside those inputs.
 
@@ -365,7 +434,7 @@ Text containing a null character cannot be copied through Ctrl+C.
 
 Click a task or list to select it. Double-click the same row within 400 ms
 to open it. The mouse wheel moves through the rows. In an editor, click
-a field to focus it and place the text cursor.
+a text field to focus it and place the text cursor. Click List to open its picker.
 When the picker is open, clicks and wheel movements outside the popup do
 nothing. Scroll inside the picker to move through its entries.
 
@@ -556,6 +625,9 @@ and place an open task in Sometime:
 husker edit 1 --clear-due
 ```
 
+Command-line due dates require `YYYY-MM-DD`, such as `--due 2026-11-09`.
+Compact editor entries such as `261109` are rejected by commands.
+
 Plain CLI output still uses `undated` for a missing due date. JSON uses
 `"due": null`. Sometime and Engang are terminal group labels.
 
@@ -581,7 +653,7 @@ Every command accepts `--profile DIRECTORY` to select its task collection.
 
 ## Update an existing profile
 
-Back up your profile before updating an earlier version to 0.9.0.
+Back up your profile before updating to 0.10.0.
 Follow [Back up your tasks](#back-up-your-tasks), then keep every old Husker
 process closed, including MCP clients, until the upgrade is complete.
 
@@ -591,9 +663,12 @@ Install the current version from the repository:
 cargo install --path . --locked
 ```
 
-Version 0.9.0 upgrades the database to schema version 4. Run `husker lists`
-once before reconnecting a read-only MCP client. For a custom profile, run
-`husker --profile DIRECTORY lists`. A read-only connection cannot upgrade it.
+Version 0.10.0 uses schema version 4, the same database format as 0.9.0.
+Updating from 0.9.0 requires no database migration.
+
+If you are updating from 0.8.0 or earlier, run `husker lists` once to upgrade
+the database before reconnecting a read-only MCP client. For a custom profile,
+run `husker --profile DIRECTORY lists`. A read-only connection cannot upgrade it.
 
 Profiles from versions 0.4.0 through 0.8.0 keep every existing task field,
 task version, and saved list position. The upgrade adds a nullable completion

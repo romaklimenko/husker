@@ -158,7 +158,13 @@ fn invalid_input_has_no_success_output_or_task_write() {
     for args in [
         vec!["--json", "add", "Task", "--due", "2026-02-30"],
         vec!["--json", "add", "Task", "--due", "2026-2-03"],
+        vec!["--json", "add", "Task", "--due", "20261109"],
+        vec!["--json", "add", "Task", "--due", "261109"],
+        vec!["--json", "add", "Task", "--due", "1109"],
         vec!["--json", "tasks", "due:2026-02-30"],
+        vec!["--json", "tasks", "due:20261109"],
+        vec!["--json", "tasks", "due:261109"],
+        vec!["--json", "tasks", "due:1109"],
         vec!["--json", "show", "999"],
         vec!["--json", "add", "   "],
         vec!["--json", "add", "Task", "--tag", "removed"],

@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use chrono::{Datelike, Days, NaiveDate};
 
 use crate::{
-    i18n::Language,
+    i18n::{Language, tr},
     model::{Status, Task},
 };
 
@@ -130,6 +130,39 @@ pub fn planned_group(task: &Task, today: NaiveDate) -> PlannedGroup {
         (Status::Done, false) => PlannedGroup::Done,
         (Status::Cancelled, false) => PlannedGroup::Cancelled,
     }
+}
+
+pub fn ordinary_group_label(task: &Task, today: NaiveDate, language: Language) -> String {
+    let group = planned_group(task, today);
+    match (group, task.due) {
+        (PlannedGroup::Due(Bucket::Today | Bucket::Tomorrow), Some(date)) => {
+            relative_date_label(group.key(), date, language)
+        }
+        (PlannedGroup::Due(Bucket::Soon | Bucket::Next), Some(date)) => date_label(date, language),
+        (PlannedGroup::DoneToday | PlannedGroup::CancelledToday, _) => {
+            relative_date_label(group.key(), today, language)
+        }
+        _ => tr(language, group.key()).to_owned(),
+    }
+}
+
+pub fn history_group_label(
+    date: Option<NaiveDate>,
+    today: NaiveDate,
+    language: Language,
+) -> String {
+    match date {
+        Some(date) if date == today => relative_date_label("today", date, language),
+        Some(date) if today.pred_opt() == Some(date) => {
+            relative_date_label("yesterday", date, language)
+        }
+        Some(date) => date_label(date, language),
+        None => tr(language, "unknown_date").to_owned(),
+    }
+}
+
+fn relative_date_label(key: &str, date: NaiveDate, language: Language) -> String {
+    format!("{} - {}", tr(language, key), date_label(date, language))
 }
 
 pub fn date_label(date: NaiveDate, language: Language) -> String {
@@ -378,6 +411,132 @@ mod tests {
         assert_eq!(
             tasks.iter().map(|task| task.id).collect::<Vec<_>>(),
             [3, 2, 1, 90, 91, 99, 100]
+        );
+    }
+
+    #[test]
+    fn ordinary_headings_show_each_future_date_without_changing_due_buckets() {
+        let today = NaiveDate::from_ymd_opt(2026, 11, 8).unwrap();
+        for (date, bucket, english, danish) in [
+            (
+                Some((2026, 11, 7)),
+                Bucket::Overdue,
+                "Overdue",
+                "Overskredet",
+            ),
+            (
+                Some((2026, 11, 8)),
+                Bucket::Today,
+                "Today - 2026-11-08 Sun W45",
+                "I dag - 2026-11-08 søn W45",
+            ),
+            (
+                Some((2026, 11, 9)),
+                Bucket::Tomorrow,
+                "Tomorrow - 2026-11-09 Mon W46",
+                "I morgen - 2026-11-09 man W46",
+            ),
+            (
+                Some((2026, 11, 10)),
+                Bucket::Soon,
+                "2026-11-10 Tue W46",
+                "2026-11-10 tir W46",
+            ),
+            (
+                Some((2026, 11, 15)),
+                Bucket::Soon,
+                "2026-11-15 Sun W46",
+                "2026-11-15 søn W46",
+            ),
+            (
+                Some((2026, 11, 16)),
+                Bucket::Next,
+                "2026-11-16 Mon W47",
+                "2026-11-16 man W47",
+            ),
+            (
+                Some((2027, 1, 1)),
+                Bucket::Next,
+                "2027-01-01 Fri 2026-W53",
+                "2027-01-01 fre 2026-W53",
+            ),
+            (None, Bucket::Undated, "Sometime", "Engang"),
+        ] {
+            let task = task(
+                date.map(|(year, month, day)| NaiveDate::from_ymd_opt(year, month, day).unwrap()),
+            );
+            assert_eq!(ordinary_group_label(&task, today, Language::En), english);
+            assert_eq!(ordinary_group_label(&task, today, Language::Da), danish);
+            assert_eq!(Bucket::for_task(&task, today), bucket);
+            assert_eq!(planned_group(&task, today), PlannedGroup::Due(bucket));
+        }
+    }
+
+    #[test]
+    fn completion_headings_use_status_dates_without_dating_aggregate_sections() {
+        let today = NaiveDate::from_ymd_opt(2026, 11, 8).unwrap();
+        for (status, english, danish, older_english, older_danish) in [
+            (
+                Status::Done,
+                "Done today - 2026-11-08 Sun W45",
+                "Udført i dag - 2026-11-08 søn W45",
+                "Done",
+                "Udført",
+            ),
+            (
+                Status::Cancelled,
+                "Cancelled today - 2026-11-08 Sun W45",
+                "Annulleret i dag - 2026-11-08 søn W45",
+                "Cancelled",
+                "Annulleret",
+            ),
+        ] {
+            let mut task = task(NaiveDate::from_ymd_opt(2027, 1, 1));
+            task.status = status;
+            task.status_changed_on = Some(today);
+            assert_eq!(ordinary_group_label(&task, today, Language::En), english);
+            assert_eq!(ordinary_group_label(&task, today, Language::Da), danish);
+            for date in [today.pred_opt(), None] {
+                task.status_changed_on = date;
+                assert_eq!(
+                    ordinary_group_label(&task, today, Language::En),
+                    older_english
+                );
+                assert_eq!(
+                    ordinary_group_label(&task, today, Language::Da),
+                    older_danish
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn history_headings_include_relative_dates_and_iso_week_years() {
+        let today = NaiveDate::from_ymd_opt(2027, 1, 2).unwrap();
+        for (date, english, danish) in [
+            (
+                Some(today),
+                "Today - 2027-01-02 Sat 2026-W53",
+                "I dag - 2027-01-02 lør 2026-W53",
+            ),
+            (
+                today.pred_opt(),
+                "Yesterday - 2027-01-01 Fri 2026-W53",
+                "I går - 2027-01-01 fre 2026-W53",
+            ),
+            (
+                NaiveDate::from_ymd_opt(2026, 12, 31),
+                "2026-12-31 Thu W53",
+                "2026-12-31 tor W53",
+            ),
+            (None, "Unknown date", "Ukendt dato"),
+        ] {
+            assert_eq!(history_group_label(date, today, Language::En), english);
+            assert_eq!(history_group_label(date, today, Language::Da), danish);
+        }
+        assert_eq!(
+            history_group_label(None, NaiveDate::MIN, Language::En),
+            "Unknown date"
         );
     }
 

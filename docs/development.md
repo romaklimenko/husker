@@ -35,11 +35,59 @@ The installed copy does not lock the repository's build executable.
 Close installed Husker processes and disconnect MCP clients before replacing
 the installed copy with `cargo install --path . --locked`.
 
-Use only temporary profiles for migration tests. Starting version 0.9.0
-against a schema version 1, 2, or 3 profile migrates it to version 4 on writable
+Use only temporary profiles for migration tests. Versions 0.9.0 and 0.10.0
+use schema version 4. Updating from 0.9.0 to 0.10.0 requires no migration.
+Starting the current version against a schema version 1, 2, or 3 profile
+migrates it to version 4 on writable
 access. Versions 0.4.0 through 0.8.0 use schema version 3 and cannot open an
 upgraded profile. Read-only connections require the writable upgrade first.
 Follow the [upgrade instructions](usage.md#update-an-existing-profile) for a real profile.
+
+## Checks for version 0.10.0
+
+Version 0.10.0 completed these checks on November 8, 2026:
+
+| Check | Result |
+| --- | --- |
+| Unit tests | 188 passed, including date parsing, dated headings, list-choice history, modal state, and mouse hit regions. |
+| CLI integration tests | 9 passed against isolated profiles. |
+| MCP integration tests | 8 passed through child processes. |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.10.0. |
+| Guide examples | Task commands, version checks, Trash/restore, list rename identity, picker bindings, and MCP help passed against an isolated profile. |
+| Strict external dates | CLI add/edit and query input rejected `20261109`, `261109`, and `1109` without changing or creating tasks. The existing `due:soon` and `due:next` boundaries passed. |
+| Profile compatibility | Opening a version 0.9.0 scratch profile with 0.10.0 preserved every task JSON field. Both versions use schema 4. |
+| OpenSpec | All six capability specs passed strict validation after archiving the date and list editing change. No active changes remain. |
+| Documentation | All 15 local links and anchors resolved. All 5 JSON and TOML examples parsed. |
+
+An 80 by 24 Windows pseudo-terminal displayed actual dates on Today,
+Tomorrow, and Done today headings. Future tasks appeared under separate
+November 10 and November 20 headings without Soon or Next labels.
+The empty Due date placeholder and the full list of accepted date formats
+fit in the editor.
+
+Entering `1112` and pressing Tab displayed `2026-11-12`. Enter on List
+opened a popup with ordinary lists and the default marker. The popup
+excluded All tasks and Trash. Choosing Home changed only the draft.
+A separate CLI read confirmed that the stored task still belonged to Work,
+had no due date, and retained version 1 before Save.
+
+The terminal checks also verified English and Danish date headings, the
+placeholder and format hint, and normalization from both four-digit and
+six-digit entries. Ctrl+Z undid a List choice. A temporary configuration
+bound Save to F6 for a persistence check. The following CLI read confirmed
+the selected list and due date were saved together.
+
+A separate Danish editor check entered raw `20261114` and pressed the
+default Ctrl+S shortcut without leaving Due date first. The editor returned
+to navigation. A CLI read confirmed `2026-11-14`, the selected Home list,
+and the unchanged title, description, and status. All three compact input
+lengths were exercised manually: four and six digits normalized on Tab,
+and eight digits saved directly. Danish History showed I dag with its actual date.
+
+All terminal processes exited cleanly. These checks used Windows and
+isolated profiles. Linux and macOS were not tested in this session.
 
 ## Checks for version 0.9.0
 

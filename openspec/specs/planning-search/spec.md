@@ -21,14 +21,15 @@ Husker SHALL classify every task into exactly one due-date bucket from its store
 The terminal displays the undated group as `Sometime` in English and `Engang` in Danish.
 The internal group key remains `undated`. Both `due:none` and `due:undated` match tasks without due dates.
 The display names do not add `due:sometime` or `due:engang` filter values.
-Open tasks use these buckets as display groups. Closed tasks use the status sections defined by Planning order.
+Open tasks use these buckets for classification and ordering. Terminal headings subdivide Soon and Next by exact due date as defined by terminal-interface.
+Closed tasks use the status sections defined by Planning order.
 Status and Trash visibility follow the combined-filter rules and selected view.
 Date arithmetic uses calendar days, including across months and years.
 
 #### Scenario: Classify the week boundary
 
 - **WHEN** today is `2026-11-08` and tasks are due on `2026-11-09`, `2026-11-10`, `2026-11-15`, and `2026-11-16`
-- **THEN** their groups are Tomorrow, Soon, Soon, and Next respectively
+- **THEN** their due buckets are Tomorrow, Soon, Soon, and Next respectively
 
 #### Scenario: Classify undated tasks
 
@@ -40,6 +41,7 @@ Date arithmetic uses calendar days, including across months and years.
 
 Husker SHALL sort ordinary task results using open due-date groups followed by closed-status groups.
 This order is shared by terminal task views, CLI task searches, and MCP task searches.
+The group names below identify sorting sections. Terminal headings for Soon and Next show each exact due date without changing this order.
 
 | Group | Contents |
 | --- | --- |
@@ -271,3 +273,22 @@ Presets change no status or status-change date. Due buckets, result grouping, an
 
 - **WHEN** Tomorrow is invoked with the maximum supported date as the supplied current date
 - **THEN** resolution fails and no task or draft value changes
+
+### Requirement: Preserve due-filter buckets independently from headings
+
+Husker SHALL preserve the existing due-filter meanings when terminal heading text or future display groups change.
+The `due:soon` filter matches stored due dates from today plus two through seven calendar days, inclusive.
+The `due:next` filter matches stored due dates at least eight calendar days after today.
+All existing exact-date, relative-date, and no-date filters keep their accepted syntax and matching rules.
+Display headings do not add new query tokens or change task due dates, status dates, or completion timestamps.
+
+#### Scenario: Keep Soon matching across date headings
+
+- **WHEN** today is `2026-11-08` and the query is `due:soon`
+- **THEN** tasks due November 10 through November 15 match regardless of how their terminal headings are displayed
+- **AND** tasks due November 9 or November 16 do not match
+
+#### Scenario: Keep Next matching
+
+- **WHEN** today is `2026-11-08` and the query is `due:next`
+- **THEN** tasks due November 16 or later match and earlier due dates do not match

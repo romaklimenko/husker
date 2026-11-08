@@ -387,6 +387,23 @@ async fn current_discovery_handles_versioned_task_workflow_and_pagination() {
         rejected(&client, "list_tasks", args).await;
     }
     rejected(&client, "get_task", json!({"id":id,"scope":"all"})).await;
+    let before_compact_dates = fixture.store.tasks().unwrap();
+    for due in ["20261109", "261109", "1109"] {
+        rejected(
+            &client,
+            "add_task",
+            json!({"title":"Compact date", "due":due}),
+        )
+        .await;
+        rejected(
+            &client,
+            "update_task",
+            json!({"id":id, "version":5, "due":due}),
+        )
+        .await;
+        rejected(&client, "list_tasks", json!({"query":format!("due:{due}")})).await;
+    }
+    assert_eq!(fixture.store.tasks().unwrap(), before_compact_dates);
     for args in [
         json!({"title":"Removed field", "tags":["old"]}),
         json!({"title":"Removed field", "readiness":"maybe"}),

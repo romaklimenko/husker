@@ -86,7 +86,19 @@ pub fn tr(language: Language, key: &str) -> &'static str {
         "title" => ("Title", "Titel"),
         "description" => ("Description", "Beskrivelse"),
         "due" => ("Due date", "Forfaldsdato"),
+        "due_format_hint" => (
+            "YYYY-MM-DD / YYYYMMDD / YYMMDD / MMDD",
+            "YYYY-MM-DD / YYYYMMDD / YYMMDD / MMDD",
+        ),
         "list" => ("List", "Liste"),
+        "list_keys_hint" => (
+            "Ctrl+Z undo | Ctrl+Y redo",
+            "Ctrl+Z fortryd | Ctrl+Y gentag",
+        ),
+        "list_unavailable" => (
+            "List unavailable. Choose another list.",
+            "Listen findes ikke. Vælg en anden liste.",
+        ),
         "overdue" => ("Overdue", "Overskredet"),
         "today" => ("Today", "I dag"),
         "tomorrow" => ("Tomorrow", "I morgen"),
@@ -109,10 +121,7 @@ pub fn tr(language: Language, key: &str) -> &'static str {
         "reopened" => ("Reopened", "Genåbnet"),
         "deleted" => ("Moved to Trash", "Flyttet til papirkurven"),
         "updated" => ("Updated", "Opdateret"),
-        "invalid_date" => (
-            "Use a valid date in YYYY-MM-DD format",
-            "Brug en gyldig dato i formatet YYYY-MM-DD",
-        ),
+        "invalid_date" => ("Invalid date", "Ugyldig dato"),
         "unknown_list" => ("List not found", "Listen findes ikke"),
         "error" => ("Error", "Fejl"),
         "save_failed" => (
@@ -297,6 +306,13 @@ fn danish_error(message: &str) -> String {
     if let Some(value) = between(
         message,
         "Invalid date '",
+        "'. Use YYYY-MM-DD, YYYYMMDD, YYMMDD, or MMDD.",
+    ) {
+        return format!("Ugyldig dato '{value}'. Brug YYYY-MM-DD, YYYYMMDD, YYMMDD eller MMDD.");
+    }
+    if let Some(value) = between(
+        message,
+        "Invalid date '",
         "'. Use a valid date in YYYY-MM-DD format.",
     ) {
         return format!("Ugyldig dato '{value}'. Brug en gyldig dato i formatet YYYY-MM-DD.");
@@ -386,6 +402,25 @@ mod tests {
         assert_eq!(
             error_message(Language::Da, &null_text),
             "Den markerede tekst indeholder et nultegn."
+        );
+    }
+
+    #[test]
+    fn editor_date_errors_explain_compact_formats_without_changing_query_errors() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 11, 8).unwrap();
+        let error = crate::editor_date::parse_editor_date("0230", today).unwrap_err();
+        assert_eq!(
+            error_message(Language::En, &error),
+            "Invalid date '0230'. Use YYYY-MM-DD, YYYYMMDD, YYMMDD, or MMDD."
+        );
+        assert_eq!(
+            error_message(Language::Da, &error),
+            "Ugyldig dato '0230'. Brug YYYY-MM-DD, YYYYMMDD, YYMMDD eller MMDD."
+        );
+        let query_error = crate::query::parse_date("0230").unwrap_err();
+        assert_eq!(
+            error_message(Language::Da, &query_error),
+            "Ugyldig dato '0230'. Brug en gyldig dato i formatet YYYY-MM-DD."
         );
     }
 }

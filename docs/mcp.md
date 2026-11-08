@@ -6,7 +6,7 @@ The client starts Husker as a local process and communicates over standard input
 
 ## Install or update Husker
 
-This guide describes Husker 0.9.0 and its task tools.
+This guide describes Husker 0.10.0 and its task tools.
 Close running Husker instances before updating the executable.
 Disconnect MCP clients that already use Husker, then run this command from the source directory:
 
@@ -237,6 +237,9 @@ Use `s:done` or `s:cancelled` to retrieve older closed tasks as well as today's.
 Due filters always inspect the stored due date, even for completed tasks.
 The terminal's date-preset keys do not add MCP arguments. Agents still send
 ISO dates such as `2026-11-09`, or `clear_due = true` to remove a date.
+Compact dates such as `261109` work only in the terminal editor and are
+rejected by MCP. The `due:soon` and `due:next` filters retain their existing
+ranges even though the terminal displays individual future-date headings.
 `#shopping` searches for that literal text in titles and descriptions.
 Tasks have no separate tags or readiness fields.
 Searching another list with `l:Work` cannot broaden the connection's access.
