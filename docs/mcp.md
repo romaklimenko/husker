@@ -6,7 +6,7 @@ The client starts Husker as a local process and communicates over standard input
 
 ## Install or update Husker
 
-This guide describes Husker 0.12.0 and its task tools.
+This guide describes Husker 0.12.1 and its task tools.
 Close running Husker instances before updating the executable.
 Disconnect MCP clients that already use Husker, then run this command from the source directory:
 

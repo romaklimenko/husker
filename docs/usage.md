@@ -316,6 +316,10 @@ Husker uses your computer's local calendar date to group open tasks:
 If today is November 8, tasks planned for November 10 and November 16 appear
 under separate headings for those dates. Today and Tomorrow also include
 the actual date, such as `Tomorrow - 2026-11-09 Mon W46`.
+Every heading ends with the number of tasks under it, such as
+`Tomorrow - 2026-11-09 Mon W46 (3)` or `Sometime (5)`. With a filter
+applied, the count covers the matching tasks only. A task you just marked
+done still counts under its old heading while its row is held.
 Future dates appear in ascending order. Sometime is the
 last open-task group. Earlier can contain several dates, so its heading
 does not claim a single day.
@@ -425,8 +429,9 @@ currently done and cancelled tasks from every date. Tasks do not expire.
 History excludes open tasks and Trash.
 
 The most recent recorded status dates appear first. Today and Yesterday
-headings include the actual date, such as `Today - 2026-11-08 Sun W45`.
-Older headings show the date, weekday, and week, such as `2026-11-06 Fri W45`.
+headings include the actual date, such as `Today - 2026-11-08 Sun W45 (2)`.
+Older headings show the date, weekday, and week, such as `2026-11-06 Fri W45 (1)`.
+The number in parentheses is the count of tasks under that heading.
 Within one date, later completion or
 cancellation times appear first. Tasks migrated without a recorded time
 follow tasks with known times on the same date. Equal or unknown times use
@@ -861,7 +866,7 @@ Every command accepts `--profile DIRECTORY` to select its task collection.
 
 ## Update an existing profile
 
-Back up your profile before updating to 0.12.0.
+Back up your profile before updating to 0.12.1.
 Follow [Back up your tasks](#back-up-your-tasks), then keep every old Husker
 process closed, including MCP clients, until the upgrade is complete.
 
@@ -871,8 +876,9 @@ Install the current version from the repository:
 cargo install --path . --locked
 ```
 
-Version 0.12.0 uses schema version 4, the same database format as 0.9.0
-through 0.11.1. Updating from these versions requires no database migration.
+Version 0.12.1 uses schema version 4, the same database format as 0.9.0
+through 0.12.0. Updating from these versions requires no database migration.
+Version 0.12.1 adds a task count to every group heading in the terminal.
 CLI commands, JSON fields, MCP tools, and filter syntax are unchanged.
 
 Version 0.12.0 adds default shortcuts: `n` and `r` in the list picker, `K`

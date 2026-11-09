@@ -2709,45 +2709,58 @@ impl App {
             return;
         }
         let trash = self.view == View::Trash;
-        let mut previous_group = None;
+        let labels: Vec<(String, bool)> = self
+            .visible
+            .iter()
+            .map(|task| {
+                let held = self.is_held(task.id);
+                if history {
+                    (
+                        history_group_label(task.status_changed_on, self.today, language),
+                        false,
+                    )
+                } else if held {
+                    (
+                        open_group_label(task, self.today, language),
+                        Bucket::for_task(task, self.today) == Bucket::Overdue,
+                    )
+                } else {
+                    let dated_heading = matches!(
+                        planned_group(task, self.today),
+                        PlannedGroup::Due(
+                            Bucket::Today
+                                | Bucket::Tomorrow
+                                | Bucket::Soon
+                                | Bucket::Next
+                                | Bucket::Undated
+                        )
+                    );
+                    (
+                        ordinary_group_label(task, self.today, language),
+                        trash || !dated_heading,
+                    )
+                }
+            })
+            .collect();
         let mut rows = Vec::new();
         let mut row_tasks = Vec::new();
         for (index, task) in self.visible.iter().enumerate() {
             let held = self.is_held(task.id);
-            let (group, show_date) = if history {
-                (
-                    history_group_label(task.status_changed_on, self.today, language),
-                    false,
-                )
-            } else if held {
-                (
-                    open_group_label(task, self.today, language),
-                    Bucket::for_task(task, self.today) == Bucket::Overdue,
-                )
-            } else {
-                let dated_heading = matches!(
-                    planned_group(task, self.today),
-                    PlannedGroup::Due(
-                        Bucket::Today
-                            | Bucket::Tomorrow
-                            | Bucket::Soon
-                            | Bucket::Next
-                            | Bucket::Undated
-                    )
-                );
-                (
-                    ordinary_group_label(task, self.today, language),
-                    trash || !dated_heading,
-                )
-            };
-            if !trash && previous_group.as_ref() != Some(&group) {
+            let (group, show_date) = &labels[index];
+            let starts_group = index == 0 || labels[index - 1].0 != *group;
+            if !trash && starts_group {
+                // The heading counts the rows displayed under it, held rows included.
+                let count = labels[index..]
+                    .iter()
+                    .take_while(|(label, _)| label == group)
+                    .count();
                 rows.push(ListItem::new(Line::from(Span::styled(
-                    group.clone(),
+                    format!("{group} ({count})"),
                     Style::default().fg(Color::Yellow),
                 ))));
                 row_tasks.push(None);
             }
-            previous_group = Some(group);
+            let show_date = *show_date;
             if index == self.selection {
                 self.list_state.select(Some(rows.len()));
             }
@@ -6947,20 +6960,20 @@ mod tests {
             })
             .collect();
         let mut expected = vec![
-            format!("Today - {}", date_label(today(), Language::En)),
+            format!("Today - {} (1)", date_label(today(), Language::En)),
             format!(
-                "Tomorrow - {}",
+                "Tomorrow - {} (1)",
                 date_label(today().succ_opt().unwrap(), Language::En)
             ),
         ];
-        for days in [2, 3, 30] {
-            expected.push(date_label(
-                today() + chrono::Duration::days(days),
-                Language::En,
+        for (days, count) in [(2, 2), (3, 1), (30, 1)] {
+            expected.push(format!(
+                "{} ({count})",
+                date_label(today() + chrono::Duration::days(days), Language::En)
             ));
         }
         expected.push(format!(
-            "Done today - {}",
+            "Done today - {} (1)",
             date_label(today(), Language::En)
         ));
         assert_eq!(headings, expected);
@@ -7494,11 +7507,13 @@ mod tests {
         app.visible.iter().map(|task| task.id).collect()
     }
 
+    /// The first screen row containing `needle`. Rows are `width` cells of single-width symbols.
     fn row_text(screen: &str, width: usize, needle: &str) -> Option<String> {
         screen
-            .as_bytes()
+            .chars()
+            .collect::<Vec<_>>()
             .chunks(width)
-            .map(|row| String::from_utf8_lossy(row).into_owned())
+            .map(|row| row.iter().collect::<String>())
             .find(|row| row.contains(needle))
     }
 
@@ -8322,5 +8337,86 @@ mod tests {
         assert!(danish_screen.contains("q Afslut"));
         let danish_hints = pack_hints(&app.footer_hints(&danish), 80, 2);
         assert!(danish_hints.iter().all(|line| line.width() <= 80));
+    }
+
+    #[test]
+    fn group_headings_show_their_row_counts() {
+        let (_directory, mut store, config) = fixture();
+        let today = Local::now().date_naive();
+        let mut ids = Vec::new();
+        for (title, offset) in [("A", 0), ("B", 0), ("C", 1), ("D", 1), ("E", 1)] {
+            let mut fields = input(1, title);
+            fields.due = today.checked_add_days(chrono::Days::new(offset));
+            ids.push(store.create_task(&fields).unwrap().id);
+        }
+        store.create_task(&input(1, "Undated")).unwrap();
+        let mut app = App::new(&store, today).unwrap();
+        let screen = rendered(&mut app, &config, 100, 30);
+        assert!(row_text(&screen, 100, "Today -").unwrap().contains("(2)"));
+        assert!(
+            row_text(&screen, 100, "Tomorrow -")
+                .unwrap()
+                .contains("(3)")
+        );
+        assert!(
+            row_text(&screen, 100, "Sometime")
+                .unwrap()
+                .contains("Sometime (1)")
+        );
+        app.select_task_id(Some(ids[2]));
+        app.handle_key(key(KeyCode::Char(' ')), &mut store, &config);
+        let held = rendered(&mut app, &config, 100, 30);
+        assert!(row_text(&held, 100, "Tomorrow -").unwrap().contains("(3)"));
+        assert!(!held.contains("Done today"));
+        app.handle_key(key(KeyCode::Char('/')), &mut store, &config);
+        app.paste("s:open");
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        let filtered = rendered(&mut app, &config, 100, 30);
+        assert!(
+            row_text(&filtered, 100, "Tomorrow -")
+                .unwrap()
+                .contains("(2)")
+        );
+        assert!(!filtered.contains("Done today"));
+        app.clear_filter(&store).unwrap();
+        let released = rendered(&mut app, &config, 100, 30);
+        assert!(
+            row_text(&released, 100, "Tomorrow -")
+                .unwrap()
+                .contains("(2)")
+        );
+        assert!(
+            row_text(&released, 100, "Done today -")
+                .unwrap()
+                .contains("(1)")
+        );
+        app.open_history(&store).unwrap();
+        let history = rendered(&mut app, &config, 100, 30);
+        assert!(row_text(&history, 100, "Today -").unwrap().contains("(1)"));
+        store
+            .set_deleted(ids[0], store.task(ids[0]).unwrap().version, true)
+            .unwrap();
+        app.set_view(View::Trash, &store).unwrap();
+        let trash = rendered(&mut app, &config, 100, 30);
+        assert!(trash.contains("[ ] A"));
+        assert!(!trash.contains("(1)"));
+        let danish = Config::from_toml("language = 'da'").unwrap();
+        app.set_view(View::Planned, &store).unwrap();
+        let danish_screen = rendered(&mut app, &danish, 100, 30);
+        assert!(
+            row_text(&danish_screen, 100, "I dag -")
+                .unwrap()
+                .contains("(1)")
+        );
+        assert!(
+            row_text(&danish_screen, 100, "I morgen -")
+                .unwrap()
+                .contains("(2)")
+        );
+        assert!(
+            row_text(&danish_screen, 100, "Engang")
+                .unwrap()
+                .contains("Engang (1)")
+        );
     }
 }

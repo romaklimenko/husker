@@ -36,12 +36,28 @@ Close installed Husker processes and disconnect MCP clients before replacing
 the installed copy with `cargo install --path . --locked`.
 
 Use only temporary profiles for migration tests. Versions 0.9.0 through
-0.12.0 use schema version 4. Updating between them requires no migration.
+0.12.1 use schema version 4. Updating between them requires no migration.
 Starting the current version against a schema version 1, 2, or 3 profile
 migrates it to version 4 on writable
 access. Versions 0.4.0 through 0.8.0 use schema version 3 and cannot open an
 upgraded profile. Read-only connections require the writable upgrade first.
 Follow the [upgrade instructions](usage.md#update-an-existing-profile) for a real profile.
+
+## Checks for version 0.12.1
+
+The heading-count update completed these checks on November 9, 2026:
+
+| Check | Result |
+| --- | --- |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Unit tests | 214 passed, including a rendered check that every heading in task views and History ends with its row count in English and Danish, that a held row counts under its old heading, that a filter changes the counts, and that Trash shows no headings. |
+| CLI integration tests | 9 passed against isolated profiles. |
+| MCP integration tests | 8 passed through child processes. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.12.1. |
+| OpenSpec | The change validated strictly, and all six capability specs passed strict validation after archiving. |
+
+No live pseudo-terminal session was driven. Linux and macOS were not tested in this session.
 
 ## Checks for version 0.12.0
 

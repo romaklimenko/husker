@@ -133,8 +133,9 @@ Search treats those words as ordinary text.
 Concurrent task edits use version checks so an older edit cannot silently
 overwrite a newer save.
 Open tasks planned before today appear under Earlier, or Tidligere in Danish.
-Future open tasks appear under their exact planned dates. Today and Tomorrow
-headings also show the date, weekday, and ISO week. Open tasks without dates appear under
+Future open tasks appear under their exact planned dates. Every heading shows
+the number of tasks in its group. Today and Tomorrow headings also show the
+date, weekday, and ISO week. Open tasks without dates appear under
 Sometime, or Engang in Danish. Tasks completed or cancelled today appear in
 Done today or Cancelled today after the open tasks. A task you mark done
 with Space keeps its row, dimmed, until you change the view.

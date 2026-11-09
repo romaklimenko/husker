@@ -1136,6 +1136,9 @@ Done today and Cancelled today headings include the actual local status date alo
 History's Today and Yesterday headings include their actual recorded status dates alongside their localized labels.
 Other known History dates retain calendar-date headings.
 Earlier, Sometime, older aggregate Done and Cancelled, and Unknown date remain aggregate or unknown headings without an invented single date.
+Every heading in an ordinary task view and in History ends with the number of task rows displayed under it in parentheses, such as `Today - 2026-11-09 Mon W46 (3)` or `Sometime (1)`.
+The count covers the rows under that heading in the current results, so it follows the active filter and includes a held row under the heading it keeps.
+Trash has no headings and shows no counts.
 Headings do not change sorting, due-filter meanings, manual-reorder eligibility, or stored task data.
 Heading rows remain unselectable, unhighlighted, and inert to mouse clicks.
 
@@ -1160,6 +1163,12 @@ Heading rows remain unselectable, unhighlighted, and inert to mouse clicks.
 
 - **WHEN** Earlier contains tasks due on different past dates and Done contains older completions
 - **THEN** neither aggregate heading claims one date for all of its tasks
+
+#### Scenario: Count the rows under each heading
+
+- **WHEN** today is `2026-11-08`, two open tasks are due today, three are due tomorrow, and one task was completed today
+- **THEN** the headings read `Today - 2026-11-08 Sun W45 (2)`, `Tomorrow - 2026-11-09 Mon W46 (3)`, and `Done today - 2026-11-08 Sun W45 (1)`
+- **AND** marking one of the tomorrow tasks done keeps `(3)` on Tomorrow while its row is held, and the next view change shows `(2)` there and `(2)` on Done today
 
 ### Requirement: Choose a list for a draft by stable identity
 
