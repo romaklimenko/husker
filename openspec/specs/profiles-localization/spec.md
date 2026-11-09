@@ -89,7 +89,7 @@ Unspecified actions keep their defaults.
 All action shortcuts shown by the interface use the resolved configuration.
 Printable text and ordinary text editing remain available in text input fields.
 
-For example, `quit = ["ctrl+q"]` replaces the default quit shortcut.
+For example, `quit = ["ctrl+q"]` replaces the default quit shortcuts.
 Key strings accept characters, named keys, and the `ctrl`, `alt`, and `shift` modifiers.
 The shipped example configuration lists every action and its defaults.
 The `copy_selection` action defaults to `ctrl+c` and is active only in task text fields, filter inputs, and list-name inputs.
@@ -106,8 +106,12 @@ The generated example configuration and visible help use `all_tasks` and All tas
 The `history` action defaults to `h` in ordinary task navigation and History.
 The `reopen` action defaults to `r` in History. The existing `restore` action remains available for Trash.
 The `delete_list` action defaults to `d` and Delete in the list picker.
+The `new_list` action defaults to `n` and `N`, and `rename_list` defaults to `r` and `R`, both in the list picker only.
+The `quit` action defaults to `q` and `ctrl+c` in task navigation, History, and the list picker. Text inputs keep `ctrl+c` for `copy_selection`.
+The `save` action defaults to `ctrl+s` and `ctrl+enter`.
+The `move_up` action defaults to `alt+up` and `K`. The `move_down` action defaults to `alt+down` and `J`.
 
-The `language` action defaults to F3 in task navigation, History, both list pickers, task editing, filter editing, list-name editing, and Help.
+The `language` action defaults to F3 in task navigation, History, both list pickers, the move-task picker, task editing, filter editing, list-name editing, and Help.
 It is unavailable in confirmation screens and Copy text.
 
 The due preset actions have these defaults.
@@ -124,20 +128,35 @@ They are unavailable in other editor fields, filter and list-name inputs, list p
 Each override replaces that action's defaults, and an empty array disables it.
 Help and Planned date hints use the configured bindings and selected language.
 
-The List selector and editor list picker reuse the existing `open`, `lists`, `back`, navigation, Help, Language, Refresh, and Toggle mouse actions.
+The `move_task` action defaults to `m` and the `undo` action defaults to `u`. Both are available in ordinary task navigation and History.
+
+The List selector, editor list picker, and move-task picker reuse the existing `open`, `lists`, `back`, navigation, Help, Language, Refresh, and Toggle mouse actions.
 
 The `first` action defaults to Home, `g`, and Left. The `last` action defaults to End, `G`, and Right.
-Both actions are available only in task navigation, History, the navigation list picker, editor list picker, and language picker.
+Both actions are available in task navigation, History, the navigation list picker, editor list picker, move-task picker, language picker, and Help.
+The `page_up` action defaults to PageUp and the `page_down` action defaults to PageDown.
+Both are available in task navigation, History, the navigation list picker, editor list picker, move-task picker, Help, and Copy text.
 Their overrides replace defaults, and empty arrays disable their shortcuts. Visible hints use the configured bindings and selected language.
-A custom action that conflicts with these new defaults remains a configuration error.
-Users can rebind First or Last or set `first = []` or `last = []` to retain their existing custom action.
+A custom action that conflicts with these defaults remains a configuration error.
+Users can rebind the action or set its array empty to retain their existing custom action.
 The existing `history` and `lists` defaults remain `h` and `l`.
 The `due_*` and `clear_due` action names remain unchanged when visible labels use Planned date.
+
+Esc is the default key of three actions: `back` in navigation, pickers, forms, and the list-deletion confirmation; `discard` in the task editor and its discard confirmation; and `close` in Help and Copy text.
+An override of one of these actions changes only that action. The example configuration and the guide name all three.
+
+Hints and Help print every key in display form.
+Modifiers print as `Ctrl`, `Alt`, and `Shift`, joined to the key with `+`.
+Named keys print as Enter, Esc, Space, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown, Up, Down, Left, Right, and F1 through F24.
+Character keys print as written in the configuration, such as `q`, `N`, or `?`.
+Danish prints the arrow keys as Op, Ned, Venstre, and Højre. Other key names are identical in both languages.
+Footer hints show the first configured key of an action. Help shows every configured key separated by ` / `.
+An action without keys shows `unbound` in English and `ingen genvej` in Danish.
 
 #### Scenario: Replace a shortcut
 
 - **WHEN** `[keys]` contains `quit = ["ctrl+q"]`
-- **THEN** Ctrl+Q quits from navigation and the default quit key no longer triggers quit
+- **THEN** Ctrl+Q quits from navigation and neither `q` nor Ctrl+C triggers quit
 
 #### Scenario: Rebind copying
 
@@ -188,6 +207,21 @@ The `due_*` and `clear_due` action names remain unchanged when visible labels us
 - **THEN** Ctrl+Home selects the first item in supported selection modes and Home, `g`, or Left no longer invokes First
 - **AND** no shortcut invokes Last while existing text-editing Home, End, Left, and Right behavior remains available
 
+#### Scenario: Show display names
+
+- **WHEN** `[keys]` contains `save = ["ctrl+s", "f6"]` and the English interface shows the editor footer and Help
+- **THEN** the footer shows `Ctrl+S` for Save and Help shows `Ctrl+S / F6`
+
+#### Scenario: Localize arrow names
+
+- **WHEN** Danish is selected and Help lists the default Up action
+- **THEN** its keys print as `Op / k`
+
+#### Scenario: Keep the lowercase picker keys optional
+
+- **WHEN** `[keys]` contains `new_list = ["N"]`
+- **THEN** only `N` creates a list from the picker and `n` does nothing there
+
 ### Requirement: Key conflict validation
 
 Husker SHALL reject unknown action names, invalid key strings, and shortcuts assigned to multiple actions in the same mode.
@@ -201,7 +235,7 @@ Husker SHALL reject unknown action names, invalid key strings, and shortcuts ass
 | Language picker | Choose English or Danish and save the interface language. |
 | Task editor | Enter Title or Description. |
 | List field | Select a draft list and open its picker. |
-| Editor list picker | Choose an ordinary list for an unsaved draft. |
+| Editor list picker | Choose an ordinary list for an unsaved draft, or a destination for the move-task action. |
 | Planned date field | Enter a supported editor date or use a preset while retaining all task-editor controls. |
 | Filter editor | Enter a task filter. |
 | List-name editor | Enter a new or replacement list name. |
@@ -210,21 +244,23 @@ Husker SHALL reject unknown action names, invalid key strings, and shortcuts ass
 | Copy text | Scroll plain task text for native terminal selection. |
 
 The same key may trigger different actions in different modes.
-The list picker retains its existing configurable bindings and conflict checks and adds `delete_list`.
+The list picker retains its existing configurable bindings and conflict checks and adds `delete_list`, the lowercase `new_list` and `rename_list` defaults, and `page_up` and `page_down`.
 Text input modes do not execute task-navigation writes.
 Planned date field mode includes every normal task-editor action and the due preset actions.
 Preset actions in that mode edit only the draft field.
 List field mode includes normal task-editor actions except Copy selection, and adds Open and Lists.
-Editor list picker mode permits only Up, Down, First, Last, Open, Lists, Back, Help, Language, Refresh, and Toggle mouse.
+Editor list picker mode permits only Up, Down, First, Last, PageUp, PageDown, Open, Lists, Back, Help, Language, Refresh, and Toggle mouse. The move-task picker uses this mode.
 Neither List mode permits text input or task-navigation writes. Choice Undo and Redo remain built-in List field controls.
 The navigation list picker retains its existing management actions.
+Task navigation and History add `move_task`, `undo`, `page_up`, and `page_down`. Task navigation also accepts the `K` and `J` defaults for reordering beside Alt+Up and Alt+Down.
 Configured actions take precedence over built-in text-editing shortcuts in their active mode.
-Discard confirmation uses fixed choice keys defined by the terminal-interface spec and retains configured Discard and Refresh actions.
-List-deletion confirmation uses fixed choice keys and retains configured Back and Refresh actions.
-History has a separate input mode so `reopen` and Trash's `restore` can both use `r`.
+Discard confirmation uses fixed choice keys defined by the terminal-interface spec, including `y` and `n`, and retains configured Discard and Refresh actions.
+List-deletion confirmation uses the same fixed choice keys and retains configured Back and Refresh actions.
+History has a separate input mode so `reopen` and Trash's `restore` can both use `r`. The list picker reuses `r` for `rename_list` because History and Trash actions are unavailable there.
 The language picker uses the configured Up, Down, First, Last, Apply, and Back actions.
-First and Last are available in task navigation, History, both list pickers, and the language picker.
-They are unavailable in text-input modes, the List field selector, confirmations, Help, and Copy text.
+First and Last are available in task navigation, History, both list pickers, the language picker, and Help.
+PageUp and PageDown are available in task navigation, History, both list pickers, Help, and Copy text.
+They are unavailable in text-input modes, the List field selector, and confirmations.
 Removed action names `anytime` and `maybe` are unknown actions.
 Existing configuration files must remove those overrides before loading.
 
@@ -306,6 +342,17 @@ Existing configuration files must remove those overrides before loading.
 - **WHEN** a text field is focused with default bindings
 - **THEN** Home, End, Left, and Right move the text cursor, and `g` or `G` inserts text without invoking First or Last
 
+#### Scenario: Reject a new default conflict
+
+- **WHEN** `[keys]` assigns `history = ["m"]` or `filter = ["pageup"]` while `move_task` or `page_up` keeps its default
+- **THEN** configuration loading reports the conflict in task navigation before opening the terminal interface
+- **AND** adding `move_task = []` or `page_up = []` removes that conflict
+
+#### Scenario: Keep Ctrl+C separate between modes
+
+- **WHEN** default bindings are active
+- **THEN** Ctrl+C quits from task navigation and copies the selection in a text field without a conflict error
+
 ### Requirement: Persist an interface-language choice without replacing configuration
 
 Husker SHALL save a language-picker choice to the active configuration path before switching the running interface language.
@@ -370,3 +417,4 @@ These labels do not introduce a second date field or change grouping, ordering, 
 
 - **WHEN** the English interface shows Planned date and Earlier
 - **THEN** CLI `--due`, MCP `due`, query `due:overdue`, and configuration `due_today` retain their existing behavior
+

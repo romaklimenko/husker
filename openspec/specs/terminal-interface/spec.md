@@ -15,42 +15,46 @@ Husker SHALL provide the following default shortcuts in task navigation and the 
 | Down or `j` | Select the next task or picker entry |
 | Left, Home, or `g` | Select the first visible task or picker entry |
 | Right, End, or `G` | Select the last visible task or picker entry |
+| PageUp or PageDown | Move the selection one displayed page up or down |
 | `l` | Open or cancel the list picker |
 | `h` | Open History from ordinary task navigation, or return from History |
 | `t` | Set the selected task due today |
 | `T` | Set the selected task due tomorrow |
 | `w` | Set the selected task due next week on Monday |
 | `x` | Clear the selected task's due date |
+| `m` | Move the selected task to another list |
+| `u` | Undo the last recorded task action |
 | `/` | Edit the task filter |
 | Enter | Choose the picker entry or edit the selected task |
-| Esc | Cancel the picker, or return from a scoped task view to All tasks |
-| `n` | Create a task from a task view |
+| Esc | Cancel the picker, clear an active filter, or return from a scoped task view to All tasks |
+| `n` | Create a task from a task view, or create a list from the picker |
 | `N` | Create a list from the picker |
+| `r` | Restore the selected task from Trash, reopen it from History, or rename the selected ordinary list from the picker |
 | `R` | Rename the selected ordinary list from the picker |
 | Space | Toggle the selected task between open and done |
 | `c` | Toggle the selected task between open and cancelled |
 | `d` or Delete | Move a task to Trash, or start deleting the selected list in the picker |
-| `r` | Restore the selected task from Trash, or reopen it from History |
-| Alt+Up | Move an open task before its eligible neighbor, or move the selected list up |
-| Alt+Down | Move an open task after its eligible neighbor, or move the selected list down |
+| Alt+Up or `K` | Move an open task before its eligible neighbor, or move the selected list up |
+| Alt+Down or `J` | Move an open task after its eligible neighbor, or move the selected list down |
 | F2 | Toggle mouse capture |
 | F3 | Choose and save the interface language |
 | F4 | Show the selected task's plain text for copying |
 | F5 | Refresh database contents |
 | `?` | Show help with the effective shortcuts |
-| `q` | Quit |
+| `q` or Ctrl+C | Quit |
 
-Keyboard Up/Down wrap and First/Last jump according to the selection requirement below.
+Keyboard Up/Down wrap, First/Last jump, and PageUp/PageDown page according to the selection requirement below.
+Ctrl+C quits only in task navigation, History, and the list picker. Text inputs keep Ctrl+C for Copy selection.
 Actions that require a selected task do nothing when no task is selected.
 Creating, renaming, moving, or deleting a list requires the picker. All tasks and Trash cannot be renamed, moved, or deleted.
 The default ordinary list cannot move or be deleted. Other list moves follow the pinned boundaries defined by task storage.
-Task creation, editing, completion, cancellation, deletion, and task reordering are unavailable in Trash. Restore is available only in Trash.
+Task creation, editing, completion, cancellation, deletion, task reordering, moving to another list, and undo are unavailable in Trash. Restore is available only in Trash.
 Task actions do not affect background tasks while the picker is open.
 Due-date presets are unavailable in Trash and use the navigation and editor contracts below.
 The `profiles-localization` spec owns configuration syntax and binding validation. The optional `all_tasks` action and legacy `planned` alias follow that spec's compatibility rules.
 The `all_tasks` action has no default shortcut. Back and the All tasks picker entry provide normal root navigation.
 History is unavailable from Trash and the picker.
-History supports opening, filtering, copying, due-date presets, status changes, moving tasks to Trash, reopening, help, refreshing, and navigation.
+History supports opening, filtering, copying, due-date presets, status changes, moving tasks to Trash, moving tasks to another list, undo, reopening, help, refreshing, and navigation.
 New-task creation and manual reordering are unavailable in History.
 
 #### Scenario: Rebind an action
@@ -69,10 +73,21 @@ New-task creation and manual reordering are unavailable in History.
 - **WHEN** the picker is open over Work and the user chooses All tasks
 - **THEN** the picker closes and All tasks returns with its saved task state
 
+#### Scenario: Quit with Ctrl+C
+
+- **WHEN** a user presses Ctrl+C in task navigation with default bindings
+- **THEN** Husker quits and restores the terminal
+- **AND** Ctrl+C in a Title field still copies the selection
+
+#### Scenario: Reorder with Shift letters
+
+- **WHEN** two open undated tasks are listed and the user presses `J` on the first
+- **THEN** the tasks swap positions as Alt+Down would
+
 ### Requirement: Edit task fields
 
 Husker SHALL provide a task editor with these fields and save all valid changes together when the user invokes Save.
-Default Save shortcuts are Ctrl+Enter and Ctrl+S. Esc and Ctrl+G invoke Discard with the confirmation rules defined below.
+Default Save shortcuts are Ctrl+S and Ctrl+Enter. Esc and Ctrl+G invoke Discard with the confirmation rules defined below.
 
 | Field | Input |
 | --- | --- |
@@ -81,7 +96,8 @@ Default Save shortcuts are Ctrl+Enter and Ctrl+S. Esc and Ctrl+G invoke Discard 
 | Planned date | `YYYY-MM-DD`, `YYYYMMDD`, `YYMMDD`, `MMDD`, or empty for no date |
 | List | A read-only selector for an existing ordinary list ID, displayed by its current name |
 
-Tab selects the next field. Shift+Tab selects the previous field. Enter inserts a newline only in Description and opens the picker when List is focused.
+Tab selects the next field. Shift+Tab selects the previous field.
+Enter inserts a newline in Description, opens the picker when List is focused, and invokes Save when Title or Planned date is focused.
 Opening an existing task focuses Description. Creating a task focuses Title.
 Ordinary text input does not invoke task-navigation writes.
 The Planned date field also accepts the preset actions defined below as draft edits. Title and Description retain those characters as ordinary text. List uses its selector controls.
@@ -90,6 +106,7 @@ List changes use the picker and its choice history. Saving resolves the selected
 Field labels and hints use the selected language.
 Validation follows the `task-storage` spec. Invalid input leaves the editor open with its entered text and an error message.
 A failed write does not show a saved message.
+A successful save shows Created for a new task and Saved for an existing task.
 
 #### Scenario: Save a description and due date
 
@@ -108,6 +125,16 @@ A failed write does not show a saved message.
 - **WHEN** a user changes a title, presses Esc or Ctrl+G, and confirms Yes in the discard prompt
 - **THEN** Husker returns to navigation without changing the stored task
 
+#### Scenario: Capture a task with Enter
+
+- **WHEN** a user presses `n`, types `Buy milk`, and presses Enter while Title is focused
+- **THEN** Husker creates `Buy milk`, returns to navigation, and shows Created
+
+#### Scenario: Keep Enter as a newline in Description
+
+- **WHEN** Description is focused and the user presses Enter
+- **THEN** the draft gains a line break and no save occurs
+
 ### Requirement: Create tasks and lists
 
 Husker SHALL create tasks and lists through input forms without requiring the user to leave the terminal interface.
@@ -115,10 +142,12 @@ Husker SHALL create tasks and lists through input forms without requiring the us
 The new-task action opens the editor with an empty title, description, and due date. New-task actions are unavailable in History and Trash.
 A list-scoped task view supplies its list. All tasks supplies the lowest-ID ordinary list.
 Saving an empty or invalid title leaves the editor open. Discarding a new task creates no stored task.
+The new-list action defaults to `n` and `N` in the picker. The rename-list action defaults to `r` and `R` there.
 A valid new list appears after existing ordinary lists and before Trash in the picker.
 Renaming a list preserves its position. A successful create or rename returns to the picker with the saved list selected by ID.
 Canceling the list-name form returns to the picker with its prior selected entry and scroll position.
 Creating or renaming a list does not change the task view beneath the picker.
+The list-name form footer shows the configured Apply and Back keys and the list-name hint.
 
 #### Scenario: Capture a task in a list
 
@@ -128,9 +157,9 @@ Creating or renaming a list does not change the task view beneath the picker.
 
 #### Scenario: Create and rename a list
 
-- **WHEN** a user presses `N` in the picker, enters `Errands`, and saves
+- **WHEN** a user presses `n` or `N` in the picker, enters `Errands`, and saves
 - **THEN** the picker reappears with Errands immediately before Trash and selected
-- **AND** pressing `R`, entering `Shopping`, and saving returns to the picker with that same list selected in the same position
+- **AND** pressing `r` or `R`, entering `Shopping`, and saving returns to the picker with that same list selected in the same position
 
 #### Scenario: Cancel a list-name form
 
@@ -149,12 +178,14 @@ If no next open task remains, selection moves to the previous open task.
 If no open task remains, selection follows the changed task when visible, or clamps the prior index.
 Other actions that remove a task from the results clamp the prior selection index.
 An empty result has no selected task.
+A task closed from an ordinary task view keeps its row according to the hold requirement.
+Each successful action records an undo entry and shows a localized result: Marked done, Marked cancelled, Reopened, Moved to Trash, Restored, or Updated for a reorder.
 
 #### Scenario: Complete a planned task
 
 - **WHEN** a user selects an open task and presses Space with default shortcuts
 - **THEN** its stored status becomes `done` and its status-change date becomes today
-- **AND** the task appears in Done today for the rest of the local day
+- **AND** the task appears in Done today for the rest of the local day after the view changes
 - **AND** selection moves to a nearby open task when one remains
 
 #### Scenario: Complete a task under an open-only filter
@@ -165,15 +196,22 @@ An empty result has no selected task.
 #### Scenario: Cancel an undated task
 
 - **WHEN** a user cancels an open task in Sometime
-- **THEN** the task moves to Cancelled today with its due date still empty
+- **THEN** the task moves to Cancelled today with its due date still empty after the view changes
 - **AND** selection moves to a nearby open task when one remains
+
+#### Scenario: Report the action
+
+- **WHEN** a user presses `d` on an open task and then opens Trash and presses `r`
+- **THEN** the messages show Moved to Trash and then Restored
 
 ### Requirement: Filter tasks interactively
 
 Husker SHALL let the user enter a task filter without leaving the current task view.
 
 The filter action opens a single-line input. Enter applies a valid filter and returns to navigation. Esc discards filter edits.
+While the input is open, the footer shows the configured Apply, Back, and Copy selection keys and the filter syntax hint.
 An empty filter removes text restrictions while preserving any list scope and the default status rules.
+Back in navigation with a nonempty applied filter clears that filter, keeps the current view, and keeps the selected task when it is still visible. It does not leave the view.
 A list-scoped view combines its list scope with the filter.
 History combines its retained list scope and closed-task restriction with the filter.
 An empty History filter includes completed and cancelled tasks from every date.
@@ -198,15 +236,22 @@ The `planning-search` spec defines accepted syntax.
 - **WHEN** a user applies `s:all milk` in Work's History
 - **THEN** results contain only Work's non-Trash done or cancelled tasks matching `milk`, regardless of completion date
 
+#### Scenario: Clear a filter with Back
+
+- **WHEN** Work is filtered by `milk` with task 4 selected and the user presses Esc
+- **THEN** Work shows all its tasks with task 4 selected and the filter box is gone
+- **AND** a second Esc returns to All tasks
+
 ### Requirement: Reorder comparable tasks
 
 Husker SHALL reorder a selected task only within the ordering group defined by the `planning-search` spec.
 
 Manual reordering is available only for open tasks outside History and Trash.
+The default shortcuts are Alt+Up or `K` to move before the neighbor and Alt+Down or `J` to move after it.
 Dated tasks can move only relative to other open tasks with the same exact due date.
 Undated open tasks can move relative to other undated open tasks.
 Moving a task does not change its due date, list, or status.
-The operation uses adjacent matching rows in the current results.
+The operation uses adjacent matching rows in the current results. A held closed row is skipped when looking for the neighbor.
 At the beginning or end of eligible rows, the move leaves the order unchanged.
 
 #### Scenario: Keep dates unchanged
@@ -228,8 +273,13 @@ The interface shows its current view and active filter.
 Action results and errors follow the requirement to expire action messages after five seconds.
 Enter opens the task editor at Description. F4 opens plain task text for copying.
 A small terminal receives a readable size message instead of causing a panic.
-Help shows the available actions and effective shortcuts for the current configuration. Esc closes help without changing stored data.
-The configured Up and Down actions scroll help when its entries do not fit in the terminal.
+
+The footer lists hint entries in priority order and packs them into at most two lines at the current width, dropping entries that do not fit. Each entry shows the first configured key and a short label.
+Task views list Open, Toggle done, Toggle cancelled, Trash, the four presets as one entry, Undo, Move task, Filter, Lists, New task, History, Back outside All tasks, Help, and Quit. Trash lists Restore and Copy text instead of the task edits. History lists Reopen beside the task edits.
+Help shows the available actions and effective shortcuts for the current configuration in sections: task views, list picker, task editor, text editing, filter and list-name forms, confirmations, and everywhere.
+The section for the screen that opened Help appears first. Built-in text-editing keys appear with fixed labels.
+Help shows every configured key of an action. Esc closes help without changing stored data.
+The configured Up, Down, PageUp, PageDown, First, and Last actions and the mouse wheel scroll help. Mouse clicks in help do nothing.
 
 #### Scenario: Use the full task area
 
@@ -245,6 +295,16 @@ The configured Up and Down actions scroll help when its entries do not fit in th
 
 - **WHEN** an applied filter matches no tasks
 - **THEN** Husker shows an empty-result message and no task selection
+
+#### Scenario: Show the most-used keys
+
+- **WHEN** All tasks is open in an 80-column English terminal with default bindings
+- **THEN** the footer shows `Enter`, `Space`, `c`, `d`, `t/T/w/x`, `u`, `/`, `l`, `n`, `m`, `h`, `?`, and `q` with their labels on two lines
+
+#### Scenario: Open help from the picker
+
+- **WHEN** a user presses `?` in the list picker
+- **THEN** the list picker section appears first and the text-editing section lists Ctrl+A with Select the whole field
 
 ### Requirement: Refresh dates and external changes
 
@@ -346,7 +406,7 @@ The view displays the task title, a blank line, and description without borders 
 
 The editor opens this view with its current draft text, including unsaved changes.
 Mouse capture is disabled while the view is open so terminal-native selection can copy multiline text without border glyphs.
-Arrow keys scroll vertically and horizontally without changing task data.
+Arrow keys scroll vertically and horizontally without changing task data. PageUp and PageDown scroll vertically by one viewport.
 Esc returns to the previous screen, preserves the editor draft when present, and restores the earlier mouse-capture setting.
 
 #### Scenario: Copy multiline description text
@@ -575,6 +635,7 @@ The rule applies to existing tasks and unsaved new tasks. Cursor movement, selec
 An unchanged editor closes immediately when Discard is invoked.
 The confirmation initially selects No, which returns to editing without losing text, cursor positions, selections, or histories.
 Arrow keys, Tab, or Shift+Tab change the selected No or Yes choice. Enter applies that choice.
+`y` discards immediately and `n` returns to editing immediately, in both languages.
 The configured Discard action, including Esc and Ctrl+G by default, closes the prompt and returns to the unchanged draft.
 Only an explicit Yes closes the changed editor and discards its draft.
 Typing, pasting, and Save do not change or save the draft while the prompt is open.
@@ -601,6 +662,11 @@ Filter and list-name forms keep their existing immediate cancellation behavior.
 - **WHEN** a discard prompt is open and another connection changes the same task before a refresh
 - **THEN** the prompt and draft remain intact with the originally read task version
 - **AND** choosing No returns to that draft without bypassing the later save's version check
+
+#### Scenario: Answer with a letter
+
+- **WHEN** the discard prompt is open and the user presses `n`, then invokes Discard again and presses `y`
+- **THEN** the first key returns to the unchanged draft and the second key discards it
 
 ### Requirement: Copy selected input text to the system clipboard
 
@@ -709,10 +775,11 @@ Husker SHALL open All tasks as the top-level task view and use a modal list pick
 The global view heading is `All tasks`. A selected list uses a breadcrumb such as `All tasks > Work`; Trash uses `All tasks > Trash`.
 The `lists` action opens the picker from any task view. Invoking `lists` again or Back while the picker is open cancels it.
 Canceling the picker preserves the underlying view, filter, selected task, and scroll position.
-The initial picker selection matches the current scope: All tasks, the ordinary list by ID, or Trash.
+The initial picker selection matches the current scope: the ordinary list by ID, or Trash.
+From All tasks or all-list History, the picker selects the ordinary list most recently visited in the running process when it still exists, and All tasks otherwise.
 Choosing the current scope closes the picker without resetting task state.
 Choosing a different ordinary list or Trash starts that view with an empty filter and its first task selected, if present.
-Back from an ordinary list or Trash returns to All tasks. Back at All tasks leaves it unchanged.
+Back with an active filter clears the filter as defined by the filter requirement. Back without a filter from an ordinary list or Trash returns to All tasks. Back at All tasks without a filter leaves it unchanged.
 The `all_tasks` action and choosing All tasks also return to All tasks with the saved parent state defined below.
 All tasks groups, task ordering, and filter matching follow the `planning-search` spec. Trash shows deleted tasks without planned groups.
 Editor save and dirty-discard confirmation keep their existing behavior and return to the task view from which the editor opened.
@@ -738,6 +805,12 @@ Editor save and dirty-discard confirmation keep their existing behavior and retu
 - **WHEN** a user chooses the last picker entry, Trash
 - **THEN** Husker shows `All tasks > Trash` with deleted tasks, no planning-group headings, and an empty filter
 - **AND** Esc returns to All tasks
+
+#### Scenario: Preselect the last visited list
+
+- **WHEN** a user visits Work, presses Esc to return to All tasks, and presses `l`
+- **THEN** the picker opens with Work selected
+- **AND** after Work is deleted elsewhere the picker opens with All tasks selected
 
 History is a separate task view defined below. Choosing its underlying task scope in the picker restores its saved origin state.
 Choosing another ordinary list exits History and starts that list with an empty filter and its first task selected.
@@ -793,15 +866,16 @@ History groups tasks under localized Today, Yesterday, calendar-date, or Unknown
 The display date remains the local calendar date even though same-day ordering uses a UTC timestamp.
 The headings identify each task's recorded status date.
 History rows do not append the stored planned date as metadata. Task titles, including dates typed into titles, remain unchanged.
-The planned date remains available in the editor and retains its row suffix in other task views, including Trash.
+The planned date remains available in the editor and retains its row suffix in other task views where the row-suffix requirement shows it.
 Unknown closure dates remain Unknown date even when a task has a known planned date.
 History uses breadcrumbs such as `All tasks > History` and `All tasks > Work > History`.
 History is a view of retained task records. It does not claim to preserve every status transition, edit, or previous task text.
 Reopening clears the task's status date and timestamp according to task storage and removes the task from History after the write succeeds.
 History starts with an empty filter and remembers the origin view, filter, parsed query, task ID, selection index, and scroll state.
-Back or the `history` action restores that origin against fresh data, preserving task identity when present and clamping the prior index otherwise.
+The `history` action restores that origin against fresh data, preserving task identity when present and clamping the prior index otherwise.
+Back with an active History filter clears the filter first. Back without a filter restores the origin in the same way as the `history` action.
 The `all_tasks` action returns to the saved root task state. Choosing a picker entry follows the navigation requirement.
-History supports filtering, editing, copying, status changes, task Trash, reopening, and reading task descriptions.
+History supports filtering, editing, copying, status changes, task Trash, moving tasks to another list, undo, reopening, and reading task descriptions.
 Status changes refresh History after the write. Tasks that become open or move to Trash leave its results.
 Its empty state explains that no completed or cancelled tasks match and identifies the configured return shortcut.
 
@@ -838,6 +912,12 @@ Its empty state explains that no completed or cancelled tasks match and identifi
 - **WHEN** a completed task has a planned date but no recorded status date
 - **THEN** History places it under Unknown date without appending the planned-date suffix or inventing a closure day
 
+#### Scenario: Clear a History filter with Back
+
+- **WHEN** History is filtered by `milk` and the user presses Esc
+- **THEN** History shows all its tasks and remains open
+- **AND** a second Esc restores the origin view
+
 ### Requirement: Confirm list removal while preserving its tasks
 
 Husker SHALL confirm deletion of an ordinary nondefault list before moving its tasks to the default list and deleting only its list metadata.
@@ -846,6 +926,7 @@ All tasks, Trash, and the lowest-ID default list are protected and never open a 
 The confirmation shows the source name, destination name, and separate counts of open, done, cancelled, and Trash tasks from a consistent store preview.
 The confirmation explicitly warns when unfinished tasks exist and states that every task moves to the destination.
 No is selected by default. Arrow keys, Tab, and Shift+Tab change the choice. Enter accepts the selected choice.
+`y` confirms the current preview immediately and `n` keeps the list immediately, in both languages.
 Configured Back cancels to the picker. Other typing, paste, save, and task-action keys do not confirm or change task data.
 Configured Refresh is available. A changed preview resets the choice to No and explains that the updated operation requires confirmation again.
 The write revalidates the preview atomically according to task storage. A changed result displays the fresh preview and requires a new explicit Yes.
@@ -878,6 +959,12 @@ This terminal action adds no CLI command or MCP tool.
 
 - **WHEN** the user invokes Delete on All tasks, Trash, or the default list
 - **THEN** no confirmation opens and no stored data changes
+
+#### Scenario: Confirm with a letter
+
+- **WHEN** the deletion confirmation shows the current Work preview and the user presses `y`
+- **THEN** Work is deleted as an explicit Yes would delete it
+- **AND** pressing `n` on another confirmation returns to the picker without changes
 
 ### Requirement: Change language without leaving the current screen
 
@@ -929,14 +1016,16 @@ If it no longer matches, selection clamps the prior index to remaining results. 
 Presets change no title, description, list, status, status-change date and timestamp, Trash state, or saved position.
 Closed tasks remain in their existing status group or History unless a filter excludes their changed due date.
 At midnight, the preset uses the new local date but retains the task identity and version from before result refresh.
+A changed date shows Planned for followed by the new date label. A cleared date shows Planned date cleared and the previous date label. A no-op shows no message.
+A changed date records an undo entry with the previous date.
 Errors and action results use the selected language and existing message-lifetime rules.
-The four actions appear in Help with configured shortcuts. They add no persistent navigation-header hint.
+The four actions appear in Help with configured shortcuts and as one footer entry in task views.
 
 #### Scenario: Move an open task to Tomorrow
 
 - **WHEN** an undated open task is selected on `2026-11-08` and the user presses `T` with default bindings
 - **THEN** the stored due date becomes `2026-11-09` and the task moves to Tomorrow
-- **AND** that same task remains selected
+- **AND** that same task remains selected and the message shows Planned for `2026-11-09 Mon W46`
 
 #### Scenario: Leave a due-date filter
 
@@ -960,6 +1049,12 @@ The four actions appear in Help with configured shortcuts. They add no persisten
 
 - **WHEN** a user presses `t`, `T`, `w`, or `x` while Trash is open with default bindings
 - **THEN** no task date, status, or version changes
+
+#### Scenario: Report a cleared date
+
+- **WHEN** a task planned for `2026-11-10` receives `x`
+- **THEN** the message shows Planned date cleared with `2026-11-10 Tue W46`
+- **AND** pressing `x` on an undated task shows no message and writes nothing
 
 ### Requirement: Apply due-date presets as whole-field draft edits
 
@@ -1233,20 +1328,23 @@ Husker SHALL wrap configured Up and Down selection and support configured First 
 | Trash | Tasks in the current visible Trash results. |
 | Navigation list picker | All tasks, ordinary lists, and Trash in their existing order. |
 | Editor list picker | Ordinary destination lists in their existing order. |
+| Move-task picker | Ordinary destination lists in their existing order. |
 | Language picker | English, then Dansk. |
 
 Up on the first item selects the last item. Down on the last item selects the first item.
 First selects the first item and Last selects the last item without changing result order or applying a picker choice.
 Default keys are Up or `k` and Down or `j`.
 First defaults to Home, `g`, and Left. Last defaults to End, `G`, and Right.
+Configured PageUp and PageDown move the selection by the number of selectable rows last displayed in that selection area, not counting heading rows, clamped at the first or last item without wrapping. They are unavailable in the language picker.
+In Help, Up, Down, PageUp, PageDown, First, and Last scroll the text by one row, one viewport, or to an end. In Copy text, PageUp and PageDown scroll by one viewport.
 An empty result has no selection and each movement action is a no-op. One item stays selected after every movement action.
 Group headings remain unselectable and do not count as items.
-Selection uses the filtered visible results. After wrapping or jumping, the selected target is visible within the existing scrollable layout.
+Selection uses the filtered visible results. After wrapping, jumping, or paging, the selected target is visible within the existing scrollable layout.
 Selection does not save tasks, choose a list, change the interface language, or alter task and list positions.
 Refresh retains its existing identity-preservation and missing-selection clamping rules. It does not wrap a removed selection.
-Mouse wheels remain bounded. Text cursor movement, Help and Copy text scrolling, and Alt+Up/Alt+Down reordering retain their bounded behavior.
-First and Last have no selection action in text fields, the closed List selector, Help, Copy text, or confirmation screens.
-Left and Right retain text-cursor movement in text inputs and horizontal scrolling in Copy text. Help controls remain unchanged.
+Mouse wheels remain bounded. Text cursor movement, Help and Copy text scrolling, and reordering retain their bounded behavior.
+First and Last have no selection action in text fields, the closed List selector, Copy text, or confirmation screens.
+Left and Right retain text-cursor movement in text inputs and horizontal scrolling in Copy text.
 
 #### Scenario: Wrap a filtered task list without selecting headings
 
@@ -1266,7 +1364,7 @@ Left and Right retain text-cursor movement in text inputs and horizontal scrolli
 
 #### Scenario: Keep empty and single-item results stable
 
-- **WHEN** a selection view has zero or one item and receives Up, Down, First, or Last
+- **WHEN** a selection view has zero or one item and receives Up, Down, First, Last, PageUp, or PageDown
 - **THEN** zero items remain unselected and one item remains selected without an error
 
 #### Scenario: Navigate both list pickers
@@ -1286,3 +1384,126 @@ Left and Right retain text-cursor movement in text inputs and horizontal scrolli
 - **WHEN** the user wheels past the last task or picker item
 - **THEN** selection remains at that last item
 - **AND** text editing, Help/Copy text scrolling, and manual reordering do not wrap at their boundaries
+
+#### Scenario: Page through a long task view
+
+- **WHEN** a task view shows 10 rows, 30 tasks match, and the first task is selected
+- **THEN** PageDown selects a task about ten rows further and scrolls it into view
+- **AND** repeated PageDown stops at the last task and PageUp returns toward the first
+
+### Requirement: Hold a just-closed task in its row
+
+Husker SHALL keep a task that the user marks done or cancelled from an ordinary task view in its current row and under its previous heading until the view changes.
+The held row shows the new status marker and is drawn dimmed. Selection moves as defined by the task-action requirement.
+Several held rows keep their relative order, including a row held directly below another held row.
+The heading is the one the task would have while open. A held task under Earlier keeps its planned-date suffix. Other held rows omit it.
+The hold ends when the user changes the task view, applies or clears a filter, opens History, opens the task editor, creates a task, refreshes manually, or when the local date changes.
+The hold also ends when the task's version changes again, the task becomes open, or the task leaves the visible results.
+Opening the list picker, the move-task picker, Help, the language picker, or the copy view does not end the hold.
+Holding changes no stored data, no ordering outside the current terminal view, and no CLI or MCP result.
+History and Trash never hold rows.
+
+#### Scenario: Keep a completed task under Today
+
+- **WHEN** Today lists tasks 3, 4, and 5 and the user presses Space on task 4
+- **THEN** task 4 stays between tasks 3 and 5 under Today with an `[x]` marker and task 5 becomes selected
+- **AND** the stored task is done and a CLI search lists it in Done today
+
+#### Scenario: Release the hold when leaving the view
+
+- **WHEN** task 4 is held under Today and the user opens Work from the picker and returns to All tasks
+- **THEN** task 4 appears under Done today
+
+#### Scenario: Release the hold under an open-only filter
+
+- **WHEN** the filter is `s:open` and the user presses Space on task 4
+- **THEN** task 4 leaves the results immediately
+
+#### Scenario: Release the hold after another change
+
+- **WHEN** task 4 is held and another connection edits task 4
+- **THEN** the next refresh shows task 4 under Done today
+
+### Requirement: Move the selected task to another list
+
+Husker SHALL provide a configurable `move_task` action, bound to `m` by default, in ordinary task navigation and History outside Trash.
+The action opens a modal picker over the current task view containing only ordinary lists in their persistent order with the default marker. The task's current list is selected.
+The picker uses the editor list picker key mode. Up, Down, First, Last, PageUp, and PageDown move its selection. Open chooses. Back or Lists cancels without a write.
+Help, Language, Refresh, and mouse behavior follow the editor list picker requirement. The underlying task view receives no popup input.
+Choosing the task's current list closes the picker without a write.
+Choosing another list changes only the task's list membership through the list-only mutation defined by task storage, using the originally read version.
+After a successful move the message shows Moved to and the destination name. The same task remains selected if it is still visible. Otherwise selection clamps to the prior index.
+The move records an undo entry with the previous list. A stale version returns an error without changing data.
+No selected task, or a task in Trash, means no action.
+
+#### Scenario: Move a task from All tasks
+
+- **WHEN** task 4 in Inbox is selected in All tasks and the user presses `m`, selects Work, and presses Enter
+- **THEN** task 4 belongs to Work with its other fields unchanged and its row shows `[Work]`
+- **AND** the message shows Moved to Work and task 4 remains selected
+
+#### Scenario: Cancel a move
+
+- **WHEN** the move-task picker is open and the user presses Esc or `l`
+- **THEN** the picker closes and the task's list and version remain unchanged
+
+#### Scenario: Move a task out of its scoped view
+
+- **WHEN** the user moves the only task in Work to Home while viewing Work
+- **THEN** Work shows no tasks and the task appears in Home
+
+### Requirement: Undo the last task action
+
+Husker SHALL provide a configurable `undo` action, bound to `u` by default, in ordinary task navigation and History, that reverses the most recent recorded task action of the running process.
+Recorded actions are done and cancelled toggles, reopen, Trash, restore, a due-date preset that changed the date, a manual reorder, a move to another list, and an editor save.
+A new recorded action replaces the previous entry. Undo consumes the entry. There is no redo and no second level.
+Undo targets the task by ID and requires the task's current version to equal the version produced by the recorded action.
+A different version shows the error `Task {id} changed since the last action. Nothing was undone.` and discards the entry.
+A status undo restores the previous status with its previous status-change date and timestamp through the status-restore mutation. A due undo restores the previous date. A Trash or restore undo restores the previous Trash state. A move undo restores the previous list. A reorder undo swaps the two tasks again and requires both of their versions to be current.
+An editor-save undo restores the previous title, description, planned date, and list of an existing task. Undoing the creation of a task moves the new task to Trash.
+After a successful undo the task remains selected if visible, the message shows Undone, and any hold on that task ends. Without an entry the message shows Nothing to undo.
+A successful list deletion discards the entry. List creation, renaming, reordering, language changes, and filter changes are not recorded and leave the entry in place.
+
+#### Scenario: Undo a cleared date
+
+- **WHEN** a task planned for `2026-11-10` receives `x` and then `u`
+- **THEN** its planned date is `2026-11-10` again and the message shows Undone
+
+#### Scenario: Undo a reopen with the original closure time
+
+- **WHEN** a task completed on `2026-11-01` is reopened from History and the user presses `u`
+- **THEN** the task is done with `status_changed_on` `2026-11-01` and its original timestamp
+
+#### Scenario: Refuse undo after an external change
+
+- **WHEN** the user completes task 4, another connection edits task 4, and the user presses `u`
+- **THEN** task 4 keeps the external edit and the message names task 4 as changed
+
+#### Scenario: Nothing to undo
+
+- **WHEN** the user presses `u` before any recorded action
+- **THEN** no task changes and the message shows Nothing to undo
+
+#### Scenario: Undo an edit and a creation
+
+- **WHEN** the user changes a task's title from `Buy milk` to `Buy bread`, saves, and presses `u`
+- **THEN** the stored title is `Buy milk` again with the other fields unchanged
+- **AND** creating a task with `n` and pressing `u` moves that new task to Trash
+
+### Requirement: Omit planned-date suffixes under dated headings
+
+Husker SHALL append the planned-date label to a task row only where the row's heading does not already state that date.
+Rows show the suffix in Trash, under Earlier, and in the Done today, Cancelled today, Done, and Cancelled sections.
+Rows omit the suffix under Today, Tomorrow, exact-date headings, and Sometime. History rows omit it as defined by the History requirement.
+A held row follows the heading it keeps. The stored due date, filters, editor fields, and copy text are unchanged.
+
+#### Scenario: Hide a repeated date
+
+- **WHEN** an open task is planned for `2026-11-10` and today is `2026-11-08`
+- **THEN** its row under the `2026-11-10 Tue W46` heading shows the title without a date suffix
+
+#### Scenario: Keep informative dates
+
+- **WHEN** an open task planned for `2026-11-01` appears under Earlier, and a task planned for `2026-11-10` is completed today
+- **THEN** both rows end with their planned-date labels
+

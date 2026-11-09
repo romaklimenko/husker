@@ -6,7 +6,7 @@ The client starts Husker as a local process and communicates over standard input
 
 ## Install or update Husker
 
-This guide describes Husker 0.11.1 and its task tools.
+This guide describes Husker 0.12.0 and its task tools.
 Close running Husker instances before updating the executable.
 Disconnect MCP clients that already use Husker, then run this command from the source directory:
 
@@ -258,7 +258,7 @@ An unrestricted writable connection can also create and rename lists.
 Ordinary list results follow the order saved in the terminal, with the default list first.
 The terminal picker's virtual All tasks entry is not added to MCP list results.
 New lists append after existing lists. Renaming a list keeps its position.
-Use Alt+Up or Alt+Down in the terminal's list picker to change that order.
+Use Alt+Up, Alt+Down, `K`, or `J` in the terminal's list picker to change that order.
 List deletion is available only in the terminal. It moves every task to the
 default list before removing the old list. An existing MCP connection scoped
 to the removed list returns no tasks. It does not gain access to the destination.
@@ -282,6 +282,10 @@ records. MCP clients can retrieve the same records through status-filtered searc
 While an agent works, the terminal refreshes automatically and shows a notice
 when another process changes tasks. Press F5 to refresh immediately.
 See [Refresh changes from an agent](usage.md#refresh-changes-from-an-agent) for editor conflicts.
+A task you mark done in the terminal is stored at once, even though its row
+stays in place until the view changes. The agent's next search lists it under
+Done today. If the agent then edits that task, `u` in the terminal no longer
+undoes your change. Husker reports that the task changed and keeps the agent's edit.
 
 ## Check a failed connection
 

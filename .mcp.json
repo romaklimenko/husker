@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "husker-husker": {
+      "type": "stdio",
+      "command": "husker",
+      "args": ["mcp", "--list", "Husker"]
+    }
+  }
+}

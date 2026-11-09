@@ -133,8 +133,26 @@ pub fn planned_group(task: &Task, today: NaiveDate) -> PlannedGroup {
 }
 
 pub fn ordinary_group_label(task: &Task, today: NaiveDate, language: Language) -> String {
-    let group = planned_group(task, today);
-    match (group, task.due) {
+    group_label(planned_group(task, today), task.due, today, language)
+}
+
+/// The heading a task has while open, used for a closed task held in its row.
+pub fn open_group_label(task: &Task, today: NaiveDate, language: Language) -> String {
+    group_label(
+        PlannedGroup::Due(Bucket::for_task(task, today)),
+        task.due,
+        today,
+        language,
+    )
+}
+
+fn group_label(
+    group: PlannedGroup,
+    due: Option<NaiveDate>,
+    today: NaiveDate,
+    language: Language,
+) -> String {
+    match (group, due) {
         (PlannedGroup::Due(Bucket::Today | Bucket::Tomorrow), Some(date)) => {
             relative_date_label(group.key(), date, language)
         }

@@ -413,6 +413,62 @@ impl Store {
         Ok(task)
     }
 
+    pub fn set_list(&mut self, id: i64, version: i64, list_id: i64) -> Result<Task> {
+        self.require_writable()?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored = find_task(&transaction, id, self.list_scope)?;
+        require_destination(self.list_scope, list_id)?;
+        require_version(&stored, version)?;
+        if stored.list_id == list_id {
+            transaction.commit()?;
+            return Ok(stored);
+        }
+        require_list(&transaction, list_id)?;
+        transaction.execute(
+            "UPDATE tasks SET list_id = ?1, version = version + 1 WHERE id = ?2 AND version = ?3",
+            params![list_id, id, version],
+        )?;
+        let task = find_task(&transaction, id, self.list_scope)?;
+        transaction.commit()?;
+        Ok(task)
+    }
+
+    pub fn restore_status(
+        &mut self,
+        id: i64,
+        version: i64,
+        status: Status,
+        status_changed_on: Option<NaiveDate>,
+        status_changed_at: Option<DateTime<Utc>>,
+    ) -> Result<Task> {
+        self.require_writable()?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored = find_task(&transaction, id, self.list_scope)?;
+        require_version(&stored, version)?;
+        let (status_changed_on, status_changed_at) = match status {
+            Status::Open => (None, None),
+            _ => (status_changed_on, status_changed_at),
+        };
+        transaction.execute(
+            "UPDATE tasks SET status = ?1, status_changed_on = ?2, status_changed_at = ?3,
+                 version = version + 1 WHERE id = ?4 AND version = ?5",
+            params![
+                status.as_str(),
+                status_changed_on.map(|date| date.to_string()),
+                status_changed_at.map(|instant| instant.to_rfc3339()),
+                id,
+                version
+            ],
+        )?;
+        let task = find_task(&transaction, id, self.list_scope)?;
+        transaction.commit()?;
+        Ok(task)
+    }
+
     pub fn set_status(&mut self, id: i64, version: i64, status: Status) -> Result<Task> {
         let now = Local::now();
         self.set_status_at(
@@ -2097,6 +2153,127 @@ mod tests {
             );
             assert_eq!(second.task(current.id).unwrap(), current);
         }
+    }
+
+    #[test]
+    fn list_only_updates_change_membership_and_keep_every_other_field() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.db");
+        let mut store = Store::open(&path).unwrap();
+        let work = store.create_list("Work").unwrap();
+        let home = store.create_list("Home").unwrap();
+        let mut fields = input("Original");
+        fields.list_id = work.id;
+        fields.due = NaiveDate::from_ymd_opt(2026, 11, 8);
+        let task = store.create_task(&fields).unwrap();
+        let task = store
+            .set_status_at(
+                task.id,
+                task.version,
+                Status::Done,
+                NaiveDate::from_ymd_opt(2026, 11, 7).unwrap(),
+                timestamp("2026-11-07T15:30:00Z"),
+            )
+            .unwrap();
+        let task = store.set_deleted(task.id, task.version, true).unwrap();
+        let mut expected = task.clone();
+        let data_version = store.data_version().unwrap();
+        assert_eq!(
+            store.set_list(task.id, task.version, work.id).unwrap(),
+            expected
+        );
+        assert_eq!(store.data_version().unwrap(), data_version);
+        let moved = store.set_list(task.id, task.version, home.id).unwrap();
+        expected.list_id = home.id;
+        expected.version += 1;
+        assert_eq!(moved, expected);
+        assert_eq!(store.task(task.id).unwrap(), expected);
+        let stale = store.set_list(task.id, task.version, home.id).unwrap_err();
+        assert!(stale.to_string().contains("changed in another process"));
+        let missing = store.set_list(task.id, moved.version, 999).unwrap_err();
+        assert_eq!(missing.to_string(), "List 999 does not exist.");
+        assert_eq!(store.task(task.id).unwrap(), expected);
+        let mut scoped = Store::open_for_mcp(&path, Some("Home"), false).unwrap();
+        let denied = scoped
+            .set_list(task.id, moved.version, work.id)
+            .unwrap_err();
+        assert_eq!(denied.to_string(), "This store is restricted to one list.");
+        assert_eq!(
+            scoped.set_list(task.id, moved.version, home.id).unwrap(),
+            expected
+        );
+        let mut readonly = Store::open_for_mcp(&path, Some("Home"), true).unwrap();
+        assert_eq!(
+            readonly
+                .set_list(task.id, moved.version, home.id)
+                .unwrap_err()
+                .to_string(),
+            "This store is read-only."
+        );
+        assert_eq!(store.task(task.id).unwrap(), expected);
+    }
+
+    #[test]
+    fn restoring_a_status_writes_the_supplied_closure_fields() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.db");
+        let mut store = Store::open(&path).unwrap();
+        let task = store.create_task(&input("Original")).unwrap();
+        let closed_on = NaiveDate::from_ymd_opt(2026, 11, 1).unwrap();
+        let closed_at = timestamp("2026-11-01T08:15:00Z");
+        let done = store
+            .set_status_at(task.id, task.version, Status::Done, closed_on, closed_at)
+            .unwrap();
+        let reopened = store
+            .set_status(done.id, done.version, Status::Open)
+            .unwrap();
+        assert_eq!(reopened.status_changed_on, None);
+        let restored = store
+            .restore_status(
+                reopened.id,
+                reopened.version,
+                Status::Done,
+                Some(closed_on),
+                Some(closed_at),
+            )
+            .unwrap();
+        let mut expected = reopened.clone();
+        expected.status = Status::Done;
+        expected.status_changed_on = Some(closed_on);
+        expected.status_changed_at = Some(closed_at);
+        expected.version += 1;
+        assert_eq!(restored, expected);
+        let unknown = store
+            .restore_status(restored.id, restored.version, Status::Cancelled, None, None)
+            .unwrap();
+        assert_eq!(unknown.status, Status::Cancelled);
+        assert_eq!(unknown.status_changed_on, None);
+        assert_eq!(unknown.status_changed_at, None);
+        let open = store
+            .restore_status(
+                unknown.id,
+                unknown.version,
+                Status::Open,
+                Some(closed_on),
+                Some(closed_at),
+            )
+            .unwrap();
+        assert_eq!(open.status, Status::Open);
+        assert_eq!(open.status_changed_on, None);
+        assert_eq!(open.status_changed_at, None);
+        let stale = store
+            .restore_status(open.id, unknown.version, Status::Done, None, None)
+            .unwrap_err();
+        assert!(stale.to_string().contains("changed in another process"));
+        assert_eq!(store.task(open.id).unwrap(), open);
+        let mut readonly = Store::open_for_mcp(&path, None, true).unwrap();
+        assert_eq!(
+            readonly
+                .restore_status(open.id, open.version, Status::Done, None, None)
+                .unwrap_err()
+                .to_string(),
+            "This store is read-only."
+        );
     }
 
     #[test]

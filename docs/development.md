@@ -35,13 +35,44 @@ The installed copy does not lock the repository's build executable.
 Close installed Husker processes and disconnect MCP clients before replacing
 the installed copy with `cargo install --path . --locked`.
 
-Use only temporary profiles for migration tests. Versions 0.9.0, 0.10.0,
-0.11.0, and 0.11.1 use schema version 4. Updating between them requires no migration.
+Use only temporary profiles for migration tests. Versions 0.9.0 through
+0.12.0 use schema version 4. Updating between them requires no migration.
 Starting the current version against a schema version 1, 2, or 3 profile
 migrates it to version 4 on writable
 access. Versions 0.4.0 through 0.8.0 use schema version 3 and cannot open an
 upgraded profile. Read-only connections require the writable upgrade first.
 Follow the [upgrade instructions](usage.md#update-an-existing-profile) for a real profile.
+
+## Checks for version 0.12.0
+
+Version 0.12.0 completed these checks on November 9, 2026:
+
+| Check | Result |
+| --- | --- |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Unit tests | 213 passed, including key display names, the new actions and their conflicts, list-only and status-restore mutations, held rows and their ordering, undo of every recorded action, the move picker, Enter saving, filter clearing, paging, confirmation letters, footer packing, and grouped Help. |
+| Review | An independent review reported eight findings. Hold ordering for chained rows, reorders next to held rows, hold release at a date change, paging by task rows, undo of editor saves, and a Help row that depends on the Enter binding were fixed and covered by tests. |
+| CLI integration tests | 9 passed against isolated profiles. |
+| MCP integration tests | 8 passed through child processes. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.12.0. |
+| OpenSpec | The change validated strictly before and after implementation. All six capability specs passed strict validation after archiving. |
+| CLI examples | The release executable created lists and tasks, completed a task, printed JSON, and printed the example configuration against an isolated profile. A configuration binding `history` to `m` was rejected with the conflict message, and adding `move_task = []` made it load. |
+
+The terminal screens were rendered through the test backend at 80 by 24
+cells with sample tasks in every date group, in English and Danish. The
+inspected screens were All tasks with a task held after Space, the filter
+input with its syntax hint, the move picker, Help from navigation and from
+the picker, the cleared-date and Undone messages, the new-task editor, the
+discard prompt, the list picker, the list-deletion confirmation, a list
+view, History, and Trash. Footers fit in two lines at 80 columns in both
+languages for All tasks. The Danish list view drops the last footer entry at
+exactly 80 columns, as the packing rule allows.
+
+No live pseudo-terminal session was driven in this session, so physical
+key delivery of Ctrl+C, PageUp, PageDown, and Shift letters was not tested
+on Windows. Mouse gestures were covered by automated tests only. Linux and
+macOS were not tested in this session.
 
 ## Checks for version 0.11.1
 

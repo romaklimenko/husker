@@ -4,19 +4,20 @@ This guide is for people who want to capture and manage tasks from a terminal.
 
 ## Capture your first task
 
-Run `husker` in an interactive terminal. Press `n`, enter a task title, and
-press Ctrl+S to save. For example, enter `Buy milk`.
-The task appears in Sometime because it has no planned date.
-Ctrl+Enter also saves when your terminal sends it as a distinct key.
+Run `husker` in an interactive terminal. Press `n`, type a task title, and
+press Enter to save. For example, type `Buy milk`. The message `Created`
+appears, and the task is listed under Sometime because it has no planned date.
+Ctrl+S saves from any field. Ctrl+Enter also saves when your terminal sends
+it as a distinct key.
 
 Press Enter on a task to open its editor at Description. New tasks start at
 Title. Use Tab and Shift+Tab to move between the fields:
 
 | Field | What to enter |
 | --- | --- |
-| Title | A nonempty task title, such as `Buy milk`. |
+| Title | A nonempty task title, such as `Buy milk`. Enter saves the task. |
 | Description | Plain text. Press Enter here to add another line. |
-| Planned date | `2026-11-09`, a compact date such as `261109`, or no date. |
+| Planned date | `2026-11-09`, a compact date such as `261109`, or no date. Enter saves the task. |
 | List | Press Enter to choose an existing list, such as `Inbox`. |
 
 Description text wraps at the editor's width. Words move to the next visual
@@ -28,11 +29,14 @@ row to place the cursor there.
 The heading shows an existing task's ID, such as `#42`. You can use that ID
 with `husker show 42` or give it to an agent. A new task has no ID until you save it.
 
-Press Ctrl+S or Ctrl+Enter to save every field together and return to the task list.
+Press Ctrl+S or Ctrl+Enter to save every field together and return to the
+task list. Enter does the same while Title or Planned date is focused.
+Saving an existing task shows `Saved`.
 Press Esc or Ctrl+G to leave the editor. If you changed any field, Husker asks
-whether to discard the changes. No is selected initially, so Enter keeps you
-in the editor. Use an arrow key or Tab to select Yes, then press Enter to discard.
-Esc or Ctrl+G at the prompt also returns to editing.
+whether to discard the changes. Press `y` to discard them or `n` to keep
+editing. No is selected initially, so Enter also keeps you in the editor.
+You can also use an arrow key or Tab to select Yes, then press Enter to discard.
+Esc or Ctrl+G at the prompt returns to editing as well.
 An unchanged editor closes without a prompt.
 Navigation shortcuts such as `q`, `d`, and `l` are ordinary text in Title
 and Description. Planned date also accepts the `t`, `T`, `w`, and `x` presets
@@ -49,7 +53,7 @@ Ctrl+S again. For example, replace `2026-02-30` with a date that exists.
 
 If another Husker process changes the task while you edit, your save fails
 and your text stays in the editor. Press F4 to copy any text you need to keep.
-Return from the copy view with Esc. Press Esc again and confirm Yes to discard
+Return from the copy view with Esc. Press Esc again and then `y` to discard
 the changed draft, then reopen the task to load its current values.
 
 ## Enter a date without separators
@@ -71,8 +75,8 @@ Once the entry shows a full year, that year stays fixed. If an unfinished
 
 Press Tab or Shift+Tab, or click another field, to turn a valid entry into
 `YYYY-MM-DD`. This changes the draft only. Ctrl+Z in Planned date restores the
-original entry in one step. You can also press Ctrl+S directly to save a
-compact date without leaving the field first.
+original entry in one step. You can also press Enter or Ctrl+S directly to
+save a compact date without leaving the field first.
 
 Husker leaves the text alone while you type. An invalid entry such as `0230`
 stays available for correction when you leave the field. Save reports the
@@ -112,6 +116,29 @@ Husker keeps the original list identity and does not substitute another list
 that happens to have the same name. Undoing to a removed list also requires
 a new valid choice before Save.
 
+To change only the list of a saved task, press `m` on the task instead of
+opening the editor. See [Move a task to another list](#move-a-task-to-another-list).
+
+## Move a task to another list
+
+Select a task in All tasks, an ordinary list, or History and press `m`.
+A picker titled `Move the task to` opens over the task view. It lists your
+ordinary lists in their saved order, marks the default list, and starts
+with the task's current list selected. Select the destination with Up or
+Down and press Enter. For example, to move `Buy milk` from Inbox to
+Private, press `m`, select Private, and press Enter. The message shows
+`Moved to Private`, and in All tasks the row starts with `[Private]`.
+
+The task keeps its title, description, planned date, and status, and it
+stays selected while it is still visible. If you move a task out of the
+list you are viewing, it leaves that view. Choosing the task's current list
+closes the picker without changing anything. Press Esc or `l` to cancel.
+Press `u` afterwards to move the task back.
+
+The shortcut does nothing in Trash. All tasks and Trash are not offered as
+destinations. Help and the language picker return to the move picker when
+you close them.
+
 ## Set a planned date with a shortcut
 
 Select a task in All tasks, an ordinary list, or History and use one of these keys:
@@ -123,8 +150,13 @@ Select a task in All tasks, an ordinary list, or History and use one of these ke
 | `w` | Next week on Monday. |
 | `x` | No planned date. |
 
-From a task row, the new planned date saves immediately. Other task fields stay
-unchanged. A done task stays done and keeps its completion date and time.
+From a task row, the new planned date saves immediately. The message shows
+the result, such as `Planned for 2026-11-10 Tue W46`. Clearing a date with
+`x` shows `Planned date cleared (was 2026-11-10 Tue W46)`. Press `u` to put
+the previous date back. A shortcut that changes nothing, such as `x` on an
+undated task, writes nothing and shows no message.
+Other task fields stay unchanged. A done task stays done and keeps its
+completion date and time.
 The same task stays selected if it still matches your filter. For example,
 pressing `t` under `due:none` removes that task from the filtered results.
 The shortcuts do nothing in Trash.
@@ -140,7 +172,7 @@ Ctrl+Z restores the previous field text, cursor, and selection in one step.
 You can still type a date such as `2026-11-09` manually.
 
 The Planned date field shows the configured shortcuts while it is focused.
-Press `?` from navigation to find all four actions in Help.
+Press `?` to find all four actions under Task views in Help.
 To rebind a preset, set an action such as `due_today = ["ctrl+t"]` under
 `[keys]`. Use `due_tomorrow`, `due_next_week`, or `clear_due` for the others.
 An empty array disables that preset, for example `clear_due = []`.
@@ -168,6 +200,8 @@ Type or paste to replace selected text. Backspace or Delete removes the selectio
 For example, focus Title, press Ctrl+A, and type `Read the report` to replace
 the title. Description and other fields stay unchanged.
 In Description, Shift+Up and Shift+Down select through the displayed wrapped rows.
+Enter inserts a line break only in Description. In Title and Planned date,
+Enter saves the task. Press `?` to see these keys under Text editing in Help.
 
 Undo belongs to the current field. If you change Title and then Description,
 Ctrl+Z in Description leaves the Title change in place. A paste is one undo
@@ -184,7 +218,10 @@ plain task text or when native clipboard access fails.
 
 Press `l` to open the list picker over your current tasks. The picker shows
 All tasks first, your ordinary lists next, and Trash last. It starts with
-your current list selected, or All tasks when you are in All tasks.
+your current list selected. From All tasks, it starts with the list you
+opened most recently in this Husker session, so pressing `l` and Enter
+takes you back there. If you have not opened a list yet, or that list was
+removed, it starts with All tasks selected.
 Press Esc or `l` again to close the picker without changing the view.
 
 Choose a list and press Enter. For example, choosing Private shows
@@ -192,24 +229,27 @@ Choose a list and press Enter. For example, choosing Private shows
 Press Esc to return to All tasks with its previous filter, selected task,
 and scroll position. Choosing All tasks in the picker gives the same result.
 For example, if All tasks was filtered by `milk`, that filter returns after
-you leave Private. Esc at All tasks leaves the view unchanged.
+you leave Private. If Private itself has a filter applied, the first Esc
+clears that filter and keeps you in Private. Press Esc again to leave.
+Esc at All tasks without a filter leaves the view unchanged.
 
 Choosing a different list or Trash starts that view without a filter.
 Choosing the current list again preserves its filter, task selection,
 and scroll position.
 
-To create a list, press `N` in the picker, enter a name such as `Private`,
-and press Enter. The picker returns with the new list selected immediately
+To create a list, press `n` or `N` in the picker, enter a name such as
+`Private`, and press Enter. The footer shows `Enter a list name` while you
+type. The picker returns with the new list selected immediately
 before Trash. Press Enter again to open the list.
 Esc in the list-name form returns to the picker without creating a list.
 
-Select an ordinary list and press Alt+Up or Alt+Down to change its position.
-Husker saves this order for the next session. The default list, initially
-Inbox, stays first among ordinary lists and is marked as the default.
-All tasks and Trash stay fixed.
+Select an ordinary list and press Alt+Up or Alt+Down, or `K` or `J`, to
+change its position. Husker saves this order for the next session.
+The default list, initially Inbox, stays first among ordinary lists and is
+marked as the default. All tasks and Trash stay fixed.
 New tasks in All tasks use the default list.
 
-Press `R` on a list to rename it. Enter the new name and press Enter.
+Press `r` or `R` on a list to rename it. Enter the new name and press Enter.
 The tasks stay in the same list. Names are unique without regard to case,
 so `Private` and `PRIVATE` cannot be separate lists.
 `Trash` and `Papirkurv` are reserved names.
@@ -239,8 +279,9 @@ For example, a list with three unfinished tasks warns you before moving them.
 A picker count of zero means there are no open tasks outside Trash.
 The list can still contain completed, cancelled, or trashed tasks.
 
-No is selected first. Press Enter or Esc to keep the list.
-To remove the list, use an arrow key or Tab to choose Yes and press Enter.
+No is selected first. Press `n`, Enter, or Esc to keep the list.
+To remove the list, press `y`. You can also use an arrow key or Tab to
+choose Yes and press Enter.
 All of the list's tasks move to the default list, including tasks in Trash.
 Their text, dates, and statuses stay unchanged. A trashed task stays in Trash
 and will belong to the default list when you restore it.
@@ -301,8 +342,19 @@ Date labels include the weekday and ISO week number:
 At a year boundary, `2027-01-01 Fri 2026-W53` shows that January 1 belongs
 to the final ISO week of 2026.
 
-Use Alt+Up or Alt+Down to change the order of open tasks sharing the same
-planned date. Undated open tasks can move among other open tasks in Sometime.
+A task row repeats its planned date after the title only where the heading
+does not already show that date. Rows under Earlier, in Done today,
+Cancelled today, Done, and Cancelled, and in Trash end with the date label.
+Rows under Today, Tomorrow, an exact date, or Sometime show only the title.
+For example, an open task planned for November 10 appears as
+`[ ] Write report` under `2026-11-10 Tue W46`. After you complete it, it
+appears as `[x] Write report  2026-11-10 Tue W46` under Done today.
+The stored date, filters, and the editor are not affected.
+
+Use Alt+Up or Alt+Down, or `K` or `J` (Shift+K and Shift+J), to change the
+order of open tasks sharing the same planned date. Undated open tasks can
+move among other open tasks in Sometime. The message shows `Updated`, and
+`u` undoes the move.
 Done and cancelled tasks use their recorded status dates and times and cannot
 be reordered manually.
 Reordering never changes a planned date or moves a task between lists.
@@ -310,8 +362,13 @@ With a filter active, reordering uses neighboring tasks in the visible results.
 
 ## Find tasks
 
-Press `/`, type a query, and press Enter to apply it. Press Esc to discard
-your query edits. Apply an empty query to clear the filter.
+Press `/`, type a query, and press Enter to apply it. While you type, the
+footer shows the hint `Combine text, l:list, due:today, and s:done. #words are text.`
+Press Esc in the input to discard your query edits.
+
+To clear an applied filter, press Esc in the task list. The view and the
+selected task stay as they are, and the footer entry `Esc Clear filter`
+disappears. Applying an empty query clears the filter too.
 If you opened a particular list, clearing the filter keeps that list selected.
 
 Combine terms to narrow the results. Every term must match:
@@ -391,12 +448,16 @@ Due filters still check the task's planned date. `due:today` does not mean
 completed today.
 
 Press Enter to edit a historical task or F4 to read and copy its text.
-Press `r` to reopen it. The task leaves History and becomes open in its list.
-You can also use the usual status and Trash shortcuts.
+Press `r` to reopen it. The task leaves History and becomes open in its
+list, and the message shows `Reopened`.
+You can also use the usual status and Trash shortcuts, press `m` to move
+the task to another list, and press `u` to undo your last task action.
 New-task creation and manual reordering are unavailable in History.
 
-Press Esc or `h` to return to the view where you opened History.
+Press `h` to return to the view where you opened History.
 Your previous filter, selected task, and scroll position return.
+Esc does the same when History has no filter applied. With a filter
+applied, the first Esc clears the filter and a second Esc returns.
 Press `l` to choose All tasks or another task list and leave History.
 Choosing the same list restores the view from before you opened History.
 Choosing another list starts with an empty filter.
@@ -408,19 +469,32 @@ the list picker instead.
 
 ## Complete, cancel, and restore tasks
 
-Press Space to mark a task done. Press `c` to cancel a task.
-The task moves to Done today or Cancelled today for the rest of the local day.
-Selection moves to the next open task, or the previous open task if none
-follows it. Tomorrow, the default view hides the closed task.
-Press `h` to find it in History. Use `s:open` to hide completed and cancelled
-tasks immediately.
+Press Space to mark a task done. Press `c` to cancel a task. The message
+shows `Marked done` or `Marked cancelled`, and the task is stored with its
+new status at once. Its row stays where it was, under the same heading,
+with a `[x]` or `[-]` marker and dimmed text, so you can see what you
+changed. Selection moves to the next open task, or the previous open task
+if none follows it.
 
-Apply `s:done` to see completed tasks, then press Space on a task to reopen
-it. Apply `s:cancelled` and press `c` to reopen a cancelled task.
-You can also use `s:all` to review every status.
+The held row moves to Done today or Cancelled today as soon as the view
+changes: when you choose another list, apply or clear a filter, open
+History, open the editor, create a task, press F5, or the date changes.
+Opening the list picker, the move picker, Help, the language picker, or the
+F4 copy view does not move it. With `s:open` applied, the task leaves the
+results immediately. Tomorrow, the default view hides the closed task.
+Press `h` to find it in History.
 
-Press `d` or Delete to move a task to Trash. Open `l` and select Trash, the
-last entry, to see deleted tasks. Press `r` to restore the selected task.
+If you pressed Space on the wrong task, press `u` to reopen it. See
+[Undo the last task action](#undo-the-last-task-action).
+
+Press Space on a task in Done today to reopen it. Press `c` on a task in
+Cancelled today to reopen a cancelled task. The message shows `Reopened`.
+Apply `s:done` or `s:cancelled` to find older closed tasks, or `s:all` to
+review every status.
+
+Press `d` or Delete to move a task to Trash. The message shows
+`Moved to Trash`. Open `l` and select Trash, the last entry, to see deleted
+tasks. Press `r` to restore the selected task. The message shows `Restored`.
 The task returns to its original list with its original status.
 A restored done task stays done. It appears in the default view only if
 it was completed today. Restoring a task does not reset its completion date.
@@ -431,12 +505,38 @@ Trash keeps the task's title, description, planned date, status date, and list m
 Trash uses the heading `All tasks > Trash` and has no date-group headings.
 Press Esc to return to your previous All tasks view.
 
+## Undo the last task action
+
+Press `u` in All tasks, an ordinary list, or History to reverse the last
+task action of this Husker session. The message shows `Undone` and the task
+stays selected. For example, press Space on the wrong task, then `u`: the
+task is open again with the status date and time it had before.
+
+Undo covers marking a task done or cancelled, reopening, moving to Trash,
+restoring from Trash, a date shortcut that changed the date, a reorder with
+Alt+Up, Alt+Down, `K`, or `J`, a move to another list with `m`, and a save
+in the task editor. Undoing a save restores the title, description, planned
+date, and list the task had before. Undoing a task you just created moves
+that task to Trash. Creating or renaming lists, changing the language, and
+filtering are not recorded, so `u` cannot reverse them. Deleting a list
+forgets the entry. `u` does nothing while Trash is open.
+
+Husker keeps one entry. Each new task action replaces it, and undoing uses
+it up. There is no redo and no second level. For example, after you trash
+two tasks, `u` restores only the second one.
+
+If the task changed after your action, for example because an agent edited
+it, Husker shows `Task 7 changed since the last action. Nothing was undone.`
+and forgets the entry. The task keeps the later change. With nothing
+recorded, `u` shows `Nothing to undo`.
+
 ## Use the mouse and copy text
 
 Select text with the keyboard in Title, Description, Planned date, a filter input,
 or a list-name form, then press Ctrl+C to copy that selection. A message confirms success.
 Copying preserves your unsaved text, cursor, and selection.
-Ctrl+C has no Husker clipboard action outside those inputs.
+Outside those inputs, Ctrl+C does not copy. In a task view, History, or the
+list picker, Ctrl+C quits Husker.
 
 If copying fails, the error leaves the selection intact. From a task editor,
 press F4 and use your terminal's Copy command instead.
@@ -456,6 +556,7 @@ F4 also works inside the task editor and shows your current unsaved text.
 The copy view has no vertical borders or inserted line wrapping.
 Drag to select text, then use your terminal's Copy command.
 Use arrow keys to scroll vertically or horizontally when the text does not fit.
+PageUp and PageDown scroll by one screen.
 Press Esc to return to the previous screen without saving or discarding edits.
 
 The copy view turns mouse capture off automatically and restores your
@@ -474,7 +575,8 @@ Press F5 to refresh database contents. Husker also checks for changes from
 other processes once per second. Navigation updates automatically.
 An on-screen notice tells you when another process changed the database.
 Press F5 to acknowledge a notice that is already visible.
-This notice has no time limit.
+This notice has no time limit. F5 also moves a task you marked done or
+cancelled from its held row to Done today or Cancelled today.
 
 Other status messages disappear after five seconds. For example, `Saved`
 clears after you save a task, even if you navigate to another list.
@@ -488,9 +590,28 @@ copy your draft with F4, cancel the editor, and reopen the task before saving ag
 
 ## Use the keyboard
 
-These are the default navigation shortcuts. Press `?` inside Husker to see
-the shortcuts from your own configuration. Use Up and Down to scroll help
-when all actions do not fit on screen.
+The footer of every screen shows its most useful keys with short labels,
+such as `Enter Edit`, `Space Done`, `t/T/w/x Date`, `u Undo`, and `m Move`.
+The footer uses up to two lines and leaves out entries that do not fit the
+terminal width, so widen the terminal to see more of them. Trash shows
+`r Restore` and `F4 Copy` instead of the task edits. History adds
+`r Reopen`. While a filter is applied, the Esc entry reads `Esc Clear filter`.
+An entry shows the first key of an action, so a rebound action shows your key.
+
+Press `?` to open Help with every shortcut from your own configuration.
+Help is grouped by screen: Task views, List picker, Task editor, Text
+editing, Filter and list name, Confirmations, and Everywhere. The section
+for the screen you opened Help from comes first. An action with several
+keys lists them separated by ` / `, such as `q / Ctrl+C`. Text editing
+lists the built-in keys from [Edit text with the keyboard](#edit-text-with-the-keyboard).
+Scroll Help with Up and Down, `k` and `j`, PageUp and PageDown, Home and
+End, `g` and `G`, or the mouse wheel. Clicking in Help does nothing.
+Press Esc or `?` to close Help.
+Keys are printed the way they are labelled on the keyboard: Ctrl+S, Esc,
+F4, Space, PageUp, Enter, Tab. Danish prints the arrow keys as Op, Ned,
+Venstre, and Højre.
+
+These are the default shortcuts:
 
 | Key | Action |
 | --- | --- |
@@ -498,29 +619,34 @@ when all actions do not fit on screen.
 | Down or `j` | Select the next item, wrapping from last to first. |
 | Left, Home, or `g` | Select the first item. |
 | Right, End, or `G` | Select the last item. |
+| PageUp or PageDown | Move the selection by one screen without wrapping. |
 | Enter | Choose a picker entry or edit a task. |
-| `n` | Create a task outside History and Trash. |
+| `n` | Create a task outside History and Trash, or create a list from the picker. |
 | `N` | Create a list from the picker. |
+| `r` | Restore a task from Trash, reopen a task in History, or rename a list from the picker. |
 | `R` | Rename an ordinary list from the picker. |
 | `l` | Open or cancel the list picker. |
 | `h` | Open History, or return to the view where you opened it. |
 | `t`, `T`, `w`, `x` | Set today, tomorrow, next Monday, or no planned date outside Trash. |
+| `m` | Move the selected task to another list outside Trash. |
+| `u` | Undo the last task action. |
 | `/` | Edit the task filter. |
-| Esc | Return from a list to All tasks, return from History, or cancel the picker. |
+| Esc | Clear an applied filter, return from a list or History to the previous view, or cancel the picker. |
 | Space | Toggle done status. |
 | `c` | Toggle cancelled status. |
 | `d` or Delete | Move a task to Trash, or review deleting a list in the picker. |
-| `r` | Restore a task from Trash, or reopen a task in History. |
-| Alt+Up or Alt+Down | Reorder open tasks with the same planned date, or ordinary lists in the picker. |
+| Alt+Up or `K` | Move an open task before its neighbor with the same planned date, or move an ordinary list up in the picker. |
+| Alt+Down or `J` | Move an open task after that neighbor, or move an ordinary list down in the picker. |
 | F2 | Toggle mouse capture. |
 | F3 | Choose English or Dansk and save the interface language. |
 | F4 | Open plain task text for copying. |
 | F5 | Refresh database contents. |
-| `?` | Open help. Esc closes help. |
-| `q` | Quit. |
+| `?` | Open Help. Esc or `?` closes it. |
+| `q` or Ctrl+C | Quit from a task view, History, or the list picker. |
 
 Wrapping and first/last jumps work in task views, including History and
-Trash, and in both list pickers and the language picker. With a filter
+Trash, and in the list pickers and the language picker. PageUp and PageDown
+work in the same places except the language picker. With a filter
 applied, the keys move only through matching tasks. Group headings are
 skipped, and the selected item scrolls into view. An empty result stays empty.
 A result with one item keeps that item selected.
@@ -529,16 +655,18 @@ For example, press End to select the last task, then Down to return to the
 first. In the language picker, Home selects English and End selects Dansk.
 Press Enter to apply the selected language; moving selection alone does not save it.
 
-Mouse-wheel movement stops at each end. Alt+Up and Alt+Down reordering also
-stops at the allowed boundary. Text editing and Help or F4 copy-view scrolling
-keep their existing boundaries. In text fields, Left/Right and Home/End
-move the cursor, and `g`/`G` enter text. In the F4 copy view, Left/Right
-continue to scroll horizontally. Help keeps its existing controls.
+Mouse-wheel movement stops at each end. Reordering with Alt+Up, Alt+Down,
+`K`, or `J` also stops at the allowed boundary. In text fields, Left/Right
+and Home/End move the cursor, and `g`/`G` enter text. In the F4 copy view,
+Left/Right scroll horizontally and PageUp/PageDown scroll by one screen.
 
-In the task editor, Ctrl+Enter or Ctrl+S saves. Esc or Ctrl+G asks before
-discarding changed fields. An unchanged editor closes immediately.
+In the task editor, Ctrl+S or Ctrl+Enter saves from any field, and Enter
+saves from Title or Planned date. Esc or Ctrl+G asks before discarding
+changed fields. An unchanged editor closes immediately.
 F4 opens the copy view without discarding the draft. In the filter and list-name
 forms, Enter applies the input and Esc cancels it.
+In the discard prompt and the list-deletion confirmation, `y` chooses Yes
+and `n` chooses No without pressing Enter.
 Backspace edits text in an input field. It does not delete a task.
 
 ## Set the language and shortcuts
@@ -573,13 +701,44 @@ language = "da"
 quit = ["ctrl+q"]
 ```
 
-Restart Husker to load the file. Ctrl+Q now quits, and `q` no longer quits.
-Use `language = "en"` for English. Your task text and list names are never
-translated. Filter operators and CLI commands stay in English.
+Restart Husker to load the file. Ctrl+Q now quits, and neither `q` nor
+Ctrl+C quits. Use `language = "en"` for English. Your task text and list
+names are never translated. Filter operators and CLI commands stay in English.
 
 Each shortcut array replaces all default keys for that action. For example,
 `trash = ["delete"]` keeps Delete and removes `d`. Use `trash = []` to disable
 both shortcuts. Actions omitted from `[keys]` keep their defaults.
+Footers and Help print the keys you configure in display form, so
+`ctrl+s` appears as Ctrl+S and `pageup` as PageUp.
+
+These actions are new in 0.12.0 or gained a default key in that version:
+
+| Action | Default keys | Where it works |
+| --- | --- | --- |
+| `page_up`, `page_down` | PageUp, PageDown | Task views, History, the list pickers, Help, and the F4 copy view. |
+| `move_task` | `m` | Task views and History, not Trash. |
+| `undo` | `u` | Task views and History. |
+| `new_list` | `n`, `N` | The list picker. |
+| `rename_list` | `r`, `R` | The list picker. |
+| `move_up`, `move_down` | Alt+Up and `K`, Alt+Down and `J` | Task views and the list picker. |
+| `quit` | `q`, Ctrl+C | Task views, History, and the list picker. |
+
+For example, `new_list = ["N"]` keeps only the capital letter for creating
+a list, and `undo = ["ctrl+z"]` undoes a task action with Ctrl+Z in task
+views. Ctrl+Z still undoes typing in text fields, because those are
+different modes.
+
+Esc is the default key of three actions, one per kind of screen:
+
+| Action | Default keys | Screens |
+| --- | --- | --- |
+| `back` | Esc | Task views, History, the list and language pickers, the filter and list-name forms, and the list-deletion confirmation. |
+| `discard` | Esc, Ctrl+G | The task editor and its discard prompt. |
+| `close` | Esc, `?` | Help and the F4 copy view. |
+
+Overriding one of them changes only that action. For example,
+`discard = ["ctrl+g"]` removes Esc from the task editor only. Esc still
+leaves a list, clears a filter, and closes Help.
 An action override takes precedence over a built-in text-editing shortcut.
 For example, `save = ["ctrl+a"]` makes Ctrl+A save instead of select all in
 the task editor.
@@ -615,6 +774,14 @@ the new defaults can cause a shortcut conflict. For example,
 for an existing action that conflicts with Last.
 To keep a custom Left shortcut and retain the earlier First keys, set
 `first = ["home", "g"]`. For a custom Right shortcut, use `last = ["end", "G"]`.
+
+The same applies to the defaults added in 0.12.0. If a custom action already
+uses `m`, `u`, `K`, `J`, Ctrl+C, PageUp, or PageDown in a task view, or `n`
+or `r` in the list picker, Husker reports the conflict at startup. For
+example, `history = ["m"]` conflicts with Move task. Keep that History
+shortcut by adding `move_task = []` under `[keys]`, or rebind `move_task`
+to another key. Use `page_up = []` or `page_down = []` for an action that
+uses PageUp or PageDown, and `quit = ["q"]` for an action that uses Ctrl+C.
 
 Husker rejects an unknown setting, action, key, or conflicting shortcut.
 For example, `quit = ["n"]` conflicts with task creation.
@@ -694,7 +861,7 @@ Every command accepts `--profile DIRECTORY` to select its task collection.
 
 ## Update an existing profile
 
-Back up your profile before updating to 0.11.1.
+Back up your profile before updating to 0.12.0.
 Follow [Back up your tasks](#back-up-your-tasks), then keep every old Husker
 process closed, including MCP clients, until the upgrade is complete.
 
@@ -704,10 +871,22 @@ Install the current version from the repository:
 cargo install --path . --locked
 ```
 
-Version 0.11.1 uses schema version 4, the same database format as 0.9.0,
-0.10.0, and 0.11.0. Updating from these versions requires no database migration.
-Planned date and Earlier are new interface labels. Existing `--due`, `due:`
-filters, JSON fields, and `due_*` shortcut settings keep their names.
+Version 0.12.0 uses schema version 4, the same database format as 0.9.0
+through 0.11.1. Updating from these versions requires no database migration.
+CLI commands, JSON fields, MCP tools, and filter syntax are unchanged.
+
+Version 0.12.0 adds default shortcuts: `n` and `r` in the list picker, `K`
+and `J` for reordering, `m` for moving a task, `u` for undo, Ctrl+C for
+quitting, and PageUp and PageDown for paging. If your `config.toml` already
+uses one of these keys for another action on the same screen, Husker reports
+the conflict at startup instead of opening. Rebind your action, or disable
+the new default with an empty array such as `move_task = []` or
+`page_up = []` under `[keys]`. See [Set the language and shortcuts](#set-the-language-and-shortcuts).
+Footers and Help now print keys as Ctrl+S, Esc, or PageUp. A script that
+matches the old `ctrl+s` text in the interface must expect `Ctrl+S`.
+
+Planned date and Earlier are the current interface labels. Existing `--due`,
+`due:` filters, JSON fields, and `due_*` shortcut settings keep their names.
 Check any custom `g`, `G`, Home, End, Left, or Right bindings against the
 First and Last defaults. Rebind them or set `first = []` or `last = []` under `[keys]`.
 
@@ -739,8 +918,8 @@ Old save and discard overrides can conflict until you update them together.
 
 For a profile created before 0.4.0, the same upgrade also adds saved list positions.
 The default list moves to the top. Other existing lists start in
-case-insensitive alphabetical order. Use Alt+Up and Alt+Down in the
-list picker to arrange them after the upgrade.
+case-insensitive alphabetical order. Use Alt+Up and Alt+Down, or `K` and
+`J`, in the list picker to arrange them after the upgrade.
 For a profile from version 0.3.0, every existing task field and task version stays unchanged.
 
 For profiles from version 0.1 or 0.2, the upgrade also simplifies task fields.

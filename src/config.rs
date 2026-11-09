@@ -30,6 +30,8 @@ pub enum Action {
     Down,
     First,
     Last,
+    PageUp,
+    PageDown,
     Open,
     NewTask,
     NewList,
@@ -51,6 +53,8 @@ pub enum Action {
     Restore,
     MoveUp,
     MoveDown,
+    MoveTask,
+    Undo,
     Help,
     Quit,
     Back,
@@ -69,11 +73,13 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Self; 40] = [
+    pub const ALL: [Self; 44] = [
         Self::Up,
         Self::Down,
         Self::First,
         Self::Last,
+        Self::PageUp,
+        Self::PageDown,
         Self::Open,
         Self::NewTask,
         Self::NewList,
@@ -95,6 +101,8 @@ impl Action {
         Self::Restore,
         Self::MoveUp,
         Self::MoveDown,
+        Self::MoveTask,
+        Self::Undo,
         Self::Help,
         Self::Quit,
         Self::Back,
@@ -118,6 +126,8 @@ impl Action {
             Self::Down => "down",
             Self::First => "first",
             Self::Last => "last",
+            Self::PageUp => "page_up",
+            Self::PageDown => "page_down",
             Self::Open => "open",
             Self::NewTask => "new_task",
             Self::NewList => "new_list",
@@ -139,6 +149,8 @@ impl Action {
             Self::Restore => "restore",
             Self::MoveUp => "move_up",
             Self::MoveDown => "move_down",
+            Self::MoveTask => "move_task",
+            Self::Undo => "undo",
             Self::Help => "help",
             Self::Quit => "quit",
             Self::Back => "back",
@@ -169,6 +181,8 @@ impl Action {
                     | Self::Down
                     | Self::First
                     | Self::Last
+                    | Self::PageUp
+                    | Self::PageDown
                     | Self::Open
                     | Self::Lists
                     | Self::Back
@@ -188,9 +202,16 @@ impl Action {
             Self::First | Self::Last => {
                 matches!(
                     mode,
-                    Mode::Tasks | Mode::History | Mode::Lists | Mode::Language
+                    Mode::Tasks | Mode::History | Mode::Lists | Mode::Language | Mode::Help
                 )
             }
+            Self::PageUp | Self::PageDown => {
+                matches!(
+                    mode,
+                    Mode::Tasks | Mode::History | Mode::Lists | Mode::Help | Mode::CopyText
+                )
+            }
+            Self::MoveTask | Self::Undo => matches!(mode, Mode::Tasks | Mode::History),
             Self::DueToday | Self::DueTomorrow | Self::DueNextWeek | Self::ClearDue => {
                 matches!(mode, Mode::Tasks | Mode::History)
             }
@@ -254,10 +275,12 @@ impl Action {
             Self::Down => &["down", "j"],
             Self::First => &["home", "g", "left"],
             Self::Last => &["end", "G", "right"],
+            Self::PageUp => &["pageup"],
+            Self::PageDown => &["pagedown"],
             Self::Open => &["enter"],
             Self::NewTask => &["n"],
-            Self::NewList => &["N"],
-            Self::RenameList => &["R"],
+            Self::NewList => &["n", "N"],
+            Self::RenameList => &["r", "R"],
             Self::DeleteList => &["d", "delete"],
             Self::Language => &["f3"],
             Self::Lists => &["l"],
@@ -273,12 +296,14 @@ impl Action {
             Self::ToggleCancelled => &["c"],
             Self::Trash => &["d", "delete"],
             Self::Restore => &["r"],
-            Self::MoveUp => &["alt+up"],
-            Self::MoveDown => &["alt+down"],
+            Self::MoveUp => &["alt+up", "K"],
+            Self::MoveDown => &["alt+down", "J"],
+            Self::MoveTask => &["m"],
+            Self::Undo => &["u"],
             Self::Help => &["?"],
-            Self::Quit => &["q"],
+            Self::Quit => &["q", "ctrl+c"],
             Self::Back => &["esc"],
-            Self::Save => &["ctrl+enter", "ctrl+s"],
+            Self::Save => &["ctrl+s", "ctrl+enter"],
             Self::Discard => &["esc", "ctrl+g"],
             Self::NextField => &["tab"],
             Self::PreviousField => &["shift+tab"],
@@ -305,6 +330,50 @@ struct Binding {
     name: String,
     code: KeyCode,
     modifiers: KeyModifiers,
+}
+
+impl Binding {
+    fn display(&self, language: Language) -> String {
+        let mut parts = Vec::new();
+        if self.modifiers.contains(KeyModifiers::CONTROL) {
+            parts.push("Ctrl".to_owned());
+        }
+        if self.modifiers.contains(KeyModifiers::ALT) {
+            parts.push("Alt".to_owned());
+        }
+        let shift = self.modifiers.contains(KeyModifiers::SHIFT);
+        let letter = matches!(self.code, KeyCode::Char(character) if character.is_alphabetic());
+        // A bare uppercase letter already shows Shift. Other keys name it explicitly.
+        if shift && !(letter && parts.is_empty()) {
+            parts.push("Shift".to_owned());
+        }
+        let key = match self.code {
+            KeyCode::Char(' ') => "Space".to_owned(),
+            KeyCode::Char(character) if letter && (shift || !parts.is_empty()) => {
+                character.to_uppercase().collect()
+            }
+            KeyCode::Char(character) => character.to_string(),
+            KeyCode::Enter => "Enter".to_owned(),
+            KeyCode::Esc => "Esc".to_owned(),
+            KeyCode::Tab => "Tab".to_owned(),
+            KeyCode::BackTab => "Tab".to_owned(),
+            KeyCode::Backspace => "Backspace".to_owned(),
+            KeyCode::Delete => "Delete".to_owned(),
+            KeyCode::Insert => "Insert".to_owned(),
+            KeyCode::Home => "Home".to_owned(),
+            KeyCode::End => "End".to_owned(),
+            KeyCode::PageUp => "PageUp".to_owned(),
+            KeyCode::PageDown => "PageDown".to_owned(),
+            KeyCode::Up => tr(language, "key_up").to_owned(),
+            KeyCode::Down => tr(language, "key_down").to_owned(),
+            KeyCode::Left => tr(language, "key_left").to_owned(),
+            KeyCode::Right => tr(language, "key_right").to_owned(),
+            KeyCode::F(number) => format!("F{number}"),
+            _ => self.name.clone(),
+        };
+        parts.push(key);
+        parts.join("+")
+    }
 }
 
 #[derive(Default, Deserialize)]
@@ -396,19 +465,39 @@ impl Config {
         })
     }
 
+    /// Every configured key of an action in display form, such as `Ctrl+S / F6`.
     pub fn keys_for(&self, action: Action) -> String {
-        let keys: Vec<&str> = self
+        let keys: Vec<String> = self
             .keys
             .get(&action)
             .into_iter()
             .flatten()
-            .map(|binding| binding.name.as_str())
+            .map(|binding| binding.display(self.language))
             .collect();
         if keys.is_empty() {
             tr(self.language, "unbound").into()
         } else {
             keys.join(" / ")
         }
+    }
+
+    /// The first configured key of an action in display form, for footer hints.
+    pub fn primary_key(&self, action: Action) -> String {
+        self.keys
+            .get(&action)
+            .and_then(|bindings| bindings.first())
+            .map_or_else(
+                || tr(self.language, "unbound").into(),
+                |binding| binding.display(self.language),
+            )
+    }
+
+    /// A key string such as `ctrl+left` in display form, for built-in keys shown in Help.
+    pub fn display_key(&self, name: &str) -> String {
+        parse_binding(name).map_or_else(
+            |_| name.to_owned(),
+            |binding| binding.display(self.language),
+        )
     }
 
     pub fn example() -> String {
@@ -651,6 +740,7 @@ mod tests {
                 Mode::Lists,
                 Mode::EditorListPicker,
                 Mode::Language,
+                Mode::Help,
             ] {
                 assert_eq!(config.action(event, mode), Some(action), "{mode:?}");
             }
@@ -662,7 +752,6 @@ mod tests {
                 Mode::ListName,
                 Mode::ConfirmDiscard,
                 Mode::DeleteListConfirm,
-                Mode::Help,
             ] {
                 assert_eq!(config.action(event, mode), None, "{mode:?}");
             }
@@ -924,10 +1013,10 @@ mod tests {
             );
             let loaded = Config::load(&path, true).unwrap();
             assert_eq!(loaded.language, Language::Da);
-            assert_eq!(loaded.keys_for(Action::Quit), "ctrl+x");
-            assert_eq!(loaded.keys_for(Action::Language), "f6");
+            assert_eq!(loaded.keys_for(Action::Quit), "Ctrl+X");
+            assert_eq!(loaded.keys_for(Action::Language), "F6");
             assert_eq!(config.language, Language::En);
-            assert_eq!(config.keys_for(Action::Quit), "ctrl+q");
+            assert_eq!(config.keys_for(Action::Quit), "Ctrl+Q");
         }
     }
 
@@ -1085,10 +1174,10 @@ mod tests {
         for mode in [Mode::Editor, Mode::Filter, Mode::ListName] {
             assert_eq!(config.action(copy, mode), Some(Action::CopySelection));
         }
+        for mode in [Mode::Tasks, Mode::History, Mode::Lists] {
+            assert_eq!(config.action(copy, mode), Some(Action::Quit));
+        }
         for mode in [
-            Mode::Tasks,
-            Mode::History,
-            Mode::Lists,
             Mode::ConfirmDiscard,
             Mode::DeleteListConfirm,
             Mode::Help,
@@ -1185,7 +1274,172 @@ mod tests {
             Some(Action::Quit)
         );
         assert_eq!(config.action(key(KeyCode::Delete), Mode::Tasks), None);
-        assert_eq!(config.keys_for(Action::Quit), "ctrl+q");
+        assert_eq!(config.keys_for(Action::Quit), "Ctrl+Q");
+        assert_eq!(config.action(copy_key(), Mode::Tasks), None);
+    }
+
+    fn copy_key() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn new_actions_have_defaults_in_their_modes_and_display_names() {
+        let config = Config::default();
+        for (code, modifiers, action, modes) in [
+            (
+                KeyCode::PageUp,
+                KeyModifiers::NONE,
+                Action::PageUp,
+                vec![
+                    Mode::Tasks,
+                    Mode::History,
+                    Mode::Lists,
+                    Mode::EditorListPicker,
+                    Mode::Help,
+                    Mode::CopyText,
+                ],
+            ),
+            (
+                KeyCode::PageDown,
+                KeyModifiers::NONE,
+                Action::PageDown,
+                vec![
+                    Mode::Tasks,
+                    Mode::History,
+                    Mode::Lists,
+                    Mode::EditorListPicker,
+                    Mode::Help,
+                    Mode::CopyText,
+                ],
+            ),
+            (
+                KeyCode::Char('m'),
+                KeyModifiers::NONE,
+                Action::MoveTask,
+                vec![Mode::Tasks, Mode::History],
+            ),
+            (
+                KeyCode::Char('u'),
+                KeyModifiers::NONE,
+                Action::Undo,
+                vec![Mode::Tasks, Mode::History],
+            ),
+            (
+                KeyCode::Char('K'),
+                KeyModifiers::SHIFT,
+                Action::MoveUp,
+                vec![Mode::Tasks, Mode::Lists],
+            ),
+            (
+                KeyCode::Char('J'),
+                KeyModifiers::SHIFT,
+                Action::MoveDown,
+                vec![Mode::Tasks, Mode::Lists],
+            ),
+            (
+                KeyCode::Char('n'),
+                KeyModifiers::NONE,
+                Action::NewList,
+                vec![Mode::Lists],
+            ),
+            (
+                KeyCode::Char('r'),
+                KeyModifiers::NONE,
+                Action::RenameList,
+                vec![Mode::Lists],
+            ),
+        ] {
+            let event = KeyEvent::new(code, modifiers);
+            for mode in [
+                Mode::Tasks,
+                Mode::History,
+                Mode::Lists,
+                Mode::Editor,
+                Mode::DueField,
+                Mode::ListField,
+                Mode::EditorListPicker,
+                Mode::ConfirmDiscard,
+                Mode::DeleteListConfirm,
+                Mode::Filter,
+                Mode::ListName,
+                Mode::Language,
+                Mode::Help,
+                Mode::CopyText,
+            ] {
+                let expected = modes.contains(&mode).then_some(action);
+                let actual = config.action(event, mode);
+                if mode == Mode::Tasks && code == KeyCode::Char('n') {
+                    assert_eq!(actual, Some(Action::NewTask));
+                } else if mode == Mode::Tasks && code == KeyCode::Char('r') {
+                    assert_eq!(actual, Some(Action::Restore));
+                } else if mode == Mode::History && code == KeyCode::Char('r') {
+                    assert_eq!(actual, Some(Action::Reopen));
+                } else {
+                    assert_eq!(actual, expected, "{} in {mode:?}", action.name());
+                }
+            }
+        }
+        assert_eq!(config.keys_for(Action::Quit), "q / Ctrl+C");
+        assert_eq!(config.primary_key(Action::Quit), "q");
+        assert_eq!(config.keys_for(Action::Save), "Ctrl+S / Ctrl+Enter");
+        assert_eq!(config.keys_for(Action::MoveUp), "Alt+Up / K");
+        assert_eq!(config.keys_for(Action::NewList), "n / N");
+        assert_eq!(config.keys_for(Action::ToggleDone), "Space");
+        assert_eq!(config.keys_for(Action::First), "Home / g / Left");
+        assert_eq!(config.keys_for(Action::PreviousField), "Shift+Tab");
+        assert_eq!(config.keys_for(Action::AllTasks), "unbound");
+        assert_eq!(config.display_key("ctrl+shift+z"), "Ctrl+Shift+Z");
+        assert_eq!(config.display_key("alt+shift+up"), "Alt+Shift+Up");
+        assert_eq!(config.display_key("f12"), "F12");
+        assert_eq!(config.display_key("plus"), "+");
+        let danish = Config::from_toml("language = 'da'").unwrap();
+        assert_eq!(danish.keys_for(Action::Up), "Op / k");
+        assert_eq!(danish.keys_for(Action::Last), "End / G / Højre");
+        assert_eq!(danish.keys_for(Action::AllTasks), "ingen genvej");
+        assert_eq!(danish.display_key("ctrl+left"), "Ctrl+Venstre");
+        let example = Config::example();
+        for line in [
+            "page_up = [\"pageup\"]",
+            "page_down = [\"pagedown\"]",
+            "move_task = [\"m\"]",
+            "undo = [\"u\"]",
+            "new_list = [\"n\", \"N\"]",
+            "rename_list = [\"r\", \"R\"]",
+            "move_up = [\"alt+up\", \"K\"]",
+            "quit = [\"q\", \"ctrl+c\"]",
+        ] {
+            assert!(example.contains(line), "{line}");
+        }
+        for conflict in [
+            "history = ['m']",
+            "filter = ['pageup']",
+            "trash = ['u']",
+            "quit = ['J']",
+            "delete_list = ['r']",
+            "lists = ['n']",
+        ] {
+            assert!(
+                Config::from_toml(&format!("[keys]\n{conflict}")).is_err(),
+                "{conflict}"
+            );
+        }
+        let relieved = Config::from_toml("[keys]\nmove_task = []\nhistory = ['m']").unwrap();
+        assert_eq!(
+            relieved.action(key(KeyCode::Char('m')), Mode::Tasks),
+            Some(Action::History)
+        );
+        let uppercase_only = Config::from_toml("[keys]\nnew_list = ['N']").unwrap();
+        assert_eq!(
+            uppercase_only.action(key(KeyCode::Char('n')), Mode::Lists),
+            None
+        );
+        assert_eq!(
+            uppercase_only.action(key(KeyCode::Char('N')), Mode::Lists),
+            Some(Action::NewList)
+        );
+        let custom = Config::from_toml("[keys]\nsave = ['ctrl+s', 'f6']").unwrap();
+        assert_eq!(custom.keys_for(Action::Save), "Ctrl+S / F6");
+        assert_eq!(custom.primary_key(Action::Save), "Ctrl+S");
     }
 
     #[test]
