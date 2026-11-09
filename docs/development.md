@@ -35,13 +35,29 @@ The installed copy does not lock the repository's build executable.
 Close installed Husker processes and disconnect MCP clients before replacing
 the installed copy with `cargo install --path . --locked`.
 
-Use only temporary profiles for migration tests. Versions 0.9.0, 0.10.0, and
-0.11.0 use schema version 4. Updating between them requires no migration.
+Use only temporary profiles for migration tests. Versions 0.9.0, 0.10.0,
+0.11.0, and 0.11.1 use schema version 4. Updating between them requires no migration.
 Starting the current version against a schema version 1, 2, or 3 profile
 migrates it to version 4 on writable
 access. Versions 0.4.0 through 0.8.0 use schema version 3 and cannot open an
 upgraded profile. Read-only connections require the writable upgrade first.
 Follow the [upgrade instructions](usage.md#update-an-existing-profile) for a real profile.
+
+## Checks for version 0.11.1
+
+The Left/Right alias update passed all 213 tests on November 9, 2026:
+196 unit tests, 9 CLI tests, and 8 MCP tests. Formatting, all-target Clippy
+with warnings denied, and all six strict OpenSpec validations passed.
+The debug executable reported 0.11.1. Isolated CLI checks confirmed the
+new defaults, Left/Right conflicts, and the documented override remedies.
+All 15 local documentation links and 5 JSON/TOML examples passed validation.
+
+An 80 by 24 Windows pseudo-terminal check confirmed that Right selected the
+last task and Left selected the first. In Description, Left and Right still
+moved the text cursor. Typing `ABC`, Left, `X`, Right, and `Y` produced
+`ABXCY`. Ctrl+S saved that text, and a separate CLI read confirmed version 2.
+Quitting restored the terminal. These checks used isolated profiles.
+Linux and macOS were not tested in this session.
 
 ## Checks for version 0.11.0
 

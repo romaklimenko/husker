@@ -126,7 +126,7 @@ Help and Planned date hints use the configured bindings and selected language.
 
 The List selector and editor list picker reuse the existing `open`, `lists`, `back`, navigation, Help, Language, Refresh, and Toggle mouse actions.
 
-The `first` action defaults to Home and `g`. The `last` action defaults to End and `G`.
+The `first` action defaults to Home, `g`, and Left. The `last` action defaults to End, `G`, and Right.
 Both actions are available only in task navigation, History, the navigation list picker, editor list picker, and language picker.
 Their overrides replace defaults, and empty arrays disable their shortcuts. Visible hints use the configured bindings and selected language.
 A custom action that conflicts with these new defaults remains a configuration error.
@@ -185,8 +185,8 @@ The `due_*` and `clear_due` action names remain unchanged when visible labels us
 #### Scenario: Rebind or disable boundary selection
 
 - **WHEN** `[keys]` contains `first = ["ctrl+home"]` and `last = []`
-- **THEN** Ctrl+Home selects the first item in supported selection modes and Home or `g` no longer invokes First
-- **AND** no shortcut invokes Last while existing text-editing Home and End behavior remains available
+- **THEN** Ctrl+Home selects the first item in supported selection modes and Home, `g`, or Left no longer invokes First
+- **AND** no shortcut invokes Last while existing text-editing Home, End, Left, and Right behavior remains available
 
 ### Requirement: Key conflict validation
 
@@ -295,10 +295,16 @@ Existing configuration files must remove those overrides before loading.
 - **WHEN** a task-navigation action uses `g` and First retains its default `g`
 - **THEN** configuration loading reports a conflict before opening the terminal interface
 
+#### Scenario: Keep an existing Left or Right action
+
+- **WHEN** History uses Left or Right while First or Last retains the corresponding default
+- **THEN** configuration loading reports the conflicting actions before opening the terminal interface
+- **AND** replacing First with `["home", "g"]` or Last with `["end", "G"]` removes that alias conflict
+
 #### Scenario: Preserve text-input boundaries
 
 - **WHEN** a text field is focused with default bindings
-- **THEN** Home and End move the text cursor, and `g` or `G` inserts text without invoking First or Last
+- **THEN** Home, End, Left, and Right move the text cursor, and `g` or `G` inserts text without invoking First or Last
 
 ### Requirement: Persist an interface-language choice without replacing configuration
 

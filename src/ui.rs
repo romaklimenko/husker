@@ -6281,6 +6281,8 @@ mod tests {
                 (KeyCode::Char('g'), 0),
                 (KeyCode::Char('G'), ids.len() - 1),
                 (KeyCode::Home, 0),
+                (KeyCode::Right, ids.len() - 1),
+                (KeyCode::Left, 0),
             ] {
                 app.handle_key(key(code), &mut readonly, &config);
                 assert_eq!(
@@ -6381,6 +6383,8 @@ mod tests {
             (KeyCode::Home, RowIdentity::AllTasks),
             (KeyCode::Char('G'), RowIdentity::Trash),
             (KeyCode::Char('g'), RowIdentity::AllTasks),
+            (KeyCode::Right, RowIdentity::Trash),
+            (KeyCode::Left, RowIdentity::AllTasks),
         ] {
             app.handle_key(key(code), &mut store, &config);
             assert_eq!(app.picker_identity(app.picker.selection), Some(identity));
@@ -6448,6 +6452,8 @@ mod tests {
             (KeyCode::Char('g'), 0),
             (KeyCode::End, last),
             (KeyCode::Home, 0),
+            (KeyCode::Right, last),
+            (KeyCode::Left, 0),
         ] {
             app.handle_key(key(code), &mut store, &config);
             assert_eq!(app.screen.editor_picker().unwrap().selection, expected);
@@ -6513,6 +6519,8 @@ mod tests {
             (KeyCode::Home, Language::En),
             (KeyCode::Char('G'), Language::Da),
             (KeyCode::Char('g'), Language::En),
+            (KeyCode::Right, Language::Da),
+            (KeyCode::Left, Language::En),
         ] {
             app.handle_key(key(code), &mut store, &config);
             assert!(

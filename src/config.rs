@@ -252,8 +252,8 @@ impl Action {
         match self {
             Self::Up => &["up", "k"],
             Self::Down => &["down", "j"],
-            Self::First => &["home", "g"],
-            Self::Last => &["end", "G"],
+            Self::First => &["home", "g", "left"],
+            Self::Last => &["end", "G", "right"],
             Self::Open => &["enter"],
             Self::NewTask => &["n"],
             Self::NewList => &["N"],
@@ -629,6 +629,8 @@ mod tests {
     fn boundary_keys_select_only_in_navigation_modes() {
         let config = Config::default();
         let bindings = [
+            (key(KeyCode::Left), Action::First),
+            (key(KeyCode::Right), Action::Last),
             (key(KeyCode::Home), Action::First),
             (key(KeyCode::Char('g')), Action::First),
             (key(KeyCode::End), Action::Last),
@@ -661,10 +663,15 @@ mod tests {
                 Mode::ConfirmDiscard,
                 Mode::DeleteListConfirm,
                 Mode::Help,
-                Mode::CopyText,
             ] {
                 assert_eq!(config.action(event, mode), None, "{mode:?}");
             }
+            let copy_action = match event.code {
+                KeyCode::Left => Some(Action::ScrollLeft),
+                KeyCode::Right => Some(Action::ScrollRight),
+                _ => None,
+            };
+            assert_eq!(config.action(event, Mode::CopyText), copy_action);
         }
         assert_eq!(
             config.action(key(KeyCode::Char('h')), Mode::Tasks),
@@ -696,6 +703,8 @@ mod tests {
             assert_eq!(config.action(key(KeyCode::F(6)), mode), Some(Action::First));
             assert_eq!(config.action(key(KeyCode::F(7)), mode), Some(Action::Last));
             for code in [
+                KeyCode::Left,
+                KeyCode::Right,
                 KeyCode::Home,
                 KeyCode::End,
                 KeyCode::Char('g'),
@@ -717,7 +726,11 @@ mod tests {
         );
         assert_eq!(disabled.action(key(KeyCode::Home), Mode::Tasks), None);
         assert_eq!(disabled.action(key(KeyCode::End), Mode::Tasks), None);
+        assert_eq!(disabled.action(key(KeyCode::Left), Mode::Tasks), None);
+        assert_eq!(disabled.action(key(KeyCode::Right), Mode::Tasks), None);
         for binding in [
+            "history = ['left']",
+            "lists = ['right']",
             "history = ['g']",
             "lists = ['G']",
             "first = ['end']",
@@ -730,8 +743,8 @@ mod tests {
             );
         }
         let example = Config::example();
-        assert!(example.contains("first = [\"home\", \"g\"]"));
-        assert!(example.contains("last = [\"end\", \"G\"]"));
+        assert!(example.contains("first = [\"home\", \"g\", \"left\"]"));
+        assert!(example.contains("last = [\"end\", \"G\", \"right\"]"));
     }
 
     #[test]

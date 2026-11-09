@@ -496,8 +496,8 @@ when all actions do not fit on screen.
 | --- | --- |
 | Up or `k` | Select the previous item, wrapping from first to last. |
 | Down or `j` | Select the next item, wrapping from last to first. |
-| Home or `g` | Select the first item. |
-| End or `G` | Select the last item. |
+| Left, Home, or `g` | Select the first item. |
+| Right, End, or `G` | Select the last item. |
 | Enter | Choose a picker entry or edit a task. |
 | `n` | Create a task outside History and Trash. |
 | `N` | Create a list from the picker. |
@@ -531,8 +531,9 @@ Press Enter to apply the selected language; moving selection alone does not save
 
 Mouse-wheel movement stops at each end. Alt+Up and Alt+Down reordering also
 stops at the allowed boundary. Text editing and Help or F4 copy-view scrolling
-keep their existing boundaries. In text fields, Home/End move the cursor
-and `g`/`G` enter text.
+keep their existing boundaries. In text fields, Left/Right and Home/End
+move the cursor, and `g`/`G` enter text. In the F4 copy view, Left/Right
+continue to scroll horizontally. Help keeps its existing controls.
 
 In the task editor, Ctrl+Enter or Ctrl+S saves. Esc or Ctrl+G asks before
 discarding changed fields. An unchanged editor closes immediately.
@@ -604,14 +605,16 @@ husker config --example
 ```
 
 Use `first` and `last` to customize boundary selection. For example,
-`first = ["ctrl+home"]` replaces both Home and `g`. Use `last = []` to disable
-both End and `G` for selecting the last item.
+`first = ["ctrl+home"]` replaces Home, `g`, and Left. Use `last = []` to
+disable End, `G`, and Right for selecting the last item.
 
-If a custom action already uses `g`, `G`, Home, or End in a selection screen,
+If a custom action already uses `g`, `G`, Home, End, Left, or Right in a selection screen,
 the new defaults can cause a shortcut conflict. For example,
 `history = ["g"]` conflicts with First. Keep that History shortcut by adding
 `first = []` under `[keys]`, or rebind First to another key. Use `last = []`
 for an existing action that conflicts with Last.
+To keep a custom Left shortcut and retain the earlier First keys, set
+`first = ["home", "g"]`. For a custom Right shortcut, use `last = ["end", "G"]`.
 
 Husker rejects an unknown setting, action, key, or conflicting shortcut.
 For example, `quit = ["n"]` conflicts with task creation.
@@ -691,7 +694,7 @@ Every command accepts `--profile DIRECTORY` to select its task collection.
 
 ## Update an existing profile
 
-Back up your profile before updating to 0.11.0.
+Back up your profile before updating to 0.11.1.
 Follow [Back up your tasks](#back-up-your-tasks), then keep every old Husker
 process closed, including MCP clients, until the upgrade is complete.
 
@@ -701,12 +704,12 @@ Install the current version from the repository:
 cargo install --path . --locked
 ```
 
-Version 0.11.0 uses schema version 4, the same database format as 0.9.0
-and 0.10.0. Updating from either version requires no database migration.
+Version 0.11.1 uses schema version 4, the same database format as 0.9.0,
+0.10.0, and 0.11.0. Updating from these versions requires no database migration.
 Planned date and Earlier are new interface labels. Existing `--due`, `due:`
 filters, JSON fields, and `due_*` shortcut settings keep their names.
-Check any custom `g`, `G`, Home, or End bindings against the new First and
-Last defaults. Rebind them or set `first = []` or `last = []` under `[keys]`.
+Check any custom `g`, `G`, Home, End, Left, or Right bindings against the
+First and Last defaults. Rebind them or set `first = []` or `last = []` under `[keys]`.
 
 If you are updating from 0.8.0 or earlier, run `husker lists` once to upgrade
 the database before reconnecting a read-only MCP client. For a custom profile,

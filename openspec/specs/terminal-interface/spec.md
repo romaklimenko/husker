@@ -13,8 +13,8 @@ Husker SHALL provide the following default shortcuts in task navigation and the 
 | --- | --- |
 | Up or `k` | Select the previous task or picker entry |
 | Down or `j` | Select the next task or picker entry |
-| Home or `g` | Select the first visible task or picker entry |
-| End or `G` | Select the last visible task or picker entry |
+| Left, Home, or `g` | Select the first visible task or picker entry |
+| Right, End, or `G` | Select the last visible task or picker entry |
 | `l` | Open or cancel the list picker |
 | `h` | Open History from ordinary task navigation, or return from History |
 | `t` | Set the selected task due today |
@@ -1237,7 +1237,8 @@ Husker SHALL wrap configured Up and Down selection and support configured First 
 
 Up on the first item selects the last item. Down on the last item selects the first item.
 First selects the first item and Last selects the last item without changing result order or applying a picker choice.
-Default keys are Up or `k`, Down or `j`, Home or `g` for First, and End or `G` for Last.
+Default keys are Up or `k` and Down or `j`.
+First defaults to Home, `g`, and Left. Last defaults to End, `G`, and Right.
 An empty result has no selection and each movement action is a no-op. One item stays selected after every movement action.
 Group headings remain unselectable and do not count as items.
 Selection uses the filtered visible results. After wrapping or jumping, the selected target is visible within the existing scrollable layout.
@@ -1245,6 +1246,7 @@ Selection does not save tasks, choose a list, change the interface language, or 
 Refresh retains its existing identity-preservation and missing-selection clamping rules. It does not wrap a removed selection.
 Mouse wheels remain bounded. Text cursor movement, Help and Copy text scrolling, and Alt+Up/Alt+Down reordering retain their bounded behavior.
 First and Last have no selection action in text fields, the closed List selector, Help, Copy text, or confirmation screens.
+Left and Right retain text-cursor movement in text inputs and horizontal scrolling in Copy text. Help controls remain unchanged.
 
 #### Scenario: Wrap a filtered task list without selecting headings
 

@@ -103,8 +103,10 @@ select text, Ctrl+C to copy the selection, and Ctrl+Z to undo.
 The editor heading shows an existing task's ID.
 
 Use Up/Down or `k`/`j` to move through tasks and picker entries. Selection
-wraps at either end. Home or `g` selects the first item; End or `G` selects
-the last. These keys also work in History, Trash, and the language picker.
+wraps at either end. Left, Home, or `g` selects the first item. Right, End,
+or `G` selects the last. These keys also work in History, Trash, and the
+language picker. Left and Right keep their cursor and scrolling controls
+in text fields and the F4 copy view.
 
 Press `l` to open the list picker over your tasks. Choose a list to show a
 view such as `All tasks > Work`. Esc returns to All tasks with your previous
