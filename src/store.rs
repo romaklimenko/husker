@@ -30,6 +30,26 @@ pub enum ListDeletionOutcome {
     Missing,
 }
 
+/// The tasks in Trash when a user was asked to confirm emptying it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrashPreview {
+    pub count: usize,
+    task_versions: Vec<(i64, i64)>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EmptyTrashOutcome {
+    Emptied(usize),
+    Changed(TrashPreview),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TaskPurgeOutcome {
+    Deleted,
+    Changed(Task),
+    NotInTrash,
+}
+
 pub struct Store {
     connection: Connection,
     list_scope: Option<i64>,
@@ -178,6 +198,15 @@ impl Store {
         ensure!(
             self.list_scope.is_none(),
             "A list-scoped store cannot create, rename, reorder, or delete lists."
+        );
+        Ok(())
+    }
+
+    fn require_permanent_deletion(&self) -> Result<()> {
+        self.require_writable()?;
+        ensure!(
+            self.list_scope.is_none(),
+            "A list-scoped store cannot delete tasks permanently."
         );
         Ok(())
     }
@@ -540,6 +569,43 @@ impl Store {
         Ok(task)
     }
 
+    /// Removes one task in Trash if it still has the version the caller confirmed.
+    pub fn purge_task(&mut self, id: i64, version: i64) -> Result<TaskPurgeOutcome> {
+        self.require_permanent_deletion()?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let Some(task) = try_find_task(&transaction, id, None)?.filter(|task| task.deleted) else {
+            return Ok(TaskPurgeOutcome::NotInTrash);
+        };
+        if task.version != version {
+            return Ok(TaskPurgeOutcome::Changed(task));
+        }
+        transaction.execute("DELETE FROM tasks WHERE id = ?1", [id])?;
+        transaction.commit()?;
+        Ok(TaskPurgeOutcome::Deleted)
+    }
+
+    pub fn preview_empty_trash(&self) -> Result<TrashPreview> {
+        self.require_permanent_deletion()?;
+        trash_preview(&self.connection)
+    }
+
+    /// Removes every task in Trash if Trash still matches the confirmed preview.
+    pub fn empty_trash(&mut self, preview: &TrashPreview) -> Result<EmptyTrashOutcome> {
+        self.require_permanent_deletion()?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current = trash_preview(&transaction)?;
+        if &current != preview {
+            return Ok(EmptyTrashOutcome::Changed(current));
+        }
+        let deleted = transaction.execute("DELETE FROM tasks WHERE deleted = 1", [])?;
+        transaction.commit()?;
+        Ok(EmptyTrashOutcome::Emptied(deleted))
+    }
+
     pub fn swap_positions(&mut self, first: &Task, second: &Task) -> Result<()> {
         self.require_writable()?;
         ensure!(
@@ -622,6 +688,18 @@ fn list_deletion_preview(connection: &Connection, id: i64) -> Result<Option<List
         }
     }
     Ok(Some(preview))
+}
+
+fn trash_preview(connection: &Connection) -> Result<TrashPreview> {
+    let mut statement =
+        connection.prepare("SELECT id, version FROM tasks WHERE deleted = 1 ORDER BY id")?;
+    let task_versions = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<Vec<(i64, i64)>>>()?;
+    Ok(TrashPreview {
+        count: task_versions.len(),
+        task_versions,
+    })
 }
 
 fn require_current_schema(version: i64) -> Result<()> {
@@ -774,8 +852,12 @@ fn require_version(task: &Task, expected: i64) -> Result<()> {
     Ok(())
 }
 
-fn find_task(connection: &Connection, id: i64, list_scope: Option<i64>) -> Result<Task> {
-    connection
+fn try_find_task(
+    connection: &Connection,
+    id: i64,
+    list_scope: Option<i64>,
+) -> Result<Option<Task>> {
+    Ok(connection
         .query_row(
             &format!(
                 "SELECT {TASK_COLUMNS} FROM tasks
@@ -784,11 +866,14 @@ fn find_task(connection: &Connection, id: i64, list_scope: Option<i64>) -> Resul
             params![id, list_scope],
             read_task,
         )
-        .optional()?
-        .with_context(|| match list_scope {
-            Some(_) => "Task not found.".to_owned(),
-            None => format!("Task {id} does not exist."),
-        })
+        .optional()?)
+}
+
+fn find_task(connection: &Connection, id: i64, list_scope: Option<i64>) -> Result<Task> {
+    try_find_task(connection, id, list_scope)?.with_context(|| match list_scope {
+        Some(_) => "Task not found.".to_owned(),
+        None => format!("Task {id} does not exist."),
+    })
 }
 
 fn read_task(row: &Row<'_>) -> rusqlite::Result<Task> {
@@ -1922,6 +2007,154 @@ mod tests {
     }
 
     #[test]
+    fn purge_removes_only_a_current_trash_task_and_never_reuses_its_id() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.db");
+        let mut store = Store::open(&path).unwrap();
+        let mut other = Store::open(&path).unwrap();
+        let kept = store.create_task(&input("Kept")).unwrap();
+        let open = store.create_task(&input("Open")).unwrap();
+        let trashed = store.create_task(&input("Trashed")).unwrap();
+        let trashed = store
+            .set_deleted(trashed.id, trashed.version, true)
+            .unwrap();
+        let before = store.tasks().unwrap();
+
+        assert_eq!(
+            store.purge_task(open.id, open.version).unwrap(),
+            TaskPurgeOutcome::NotInTrash
+        );
+        assert_eq!(
+            store.purge_task(999, 1).unwrap(),
+            TaskPurgeOutcome::NotInTrash
+        );
+        let mut edited_input = TaskInput::from(&trashed);
+        edited_input.title = "Edited elsewhere".into();
+        let edited = other
+            .update_task(trashed.id, trashed.version, &edited_input)
+            .unwrap();
+        assert_eq!(
+            store.purge_task(trashed.id, trashed.version).unwrap(),
+            TaskPurgeOutcome::Changed(edited.clone())
+        );
+        assert_eq!(store.task(trashed.id).unwrap(), edited);
+        assert_eq!(store.tasks().unwrap()[..2], before[..2]);
+
+        assert_eq!(
+            store.purge_task(trashed.id, edited.version).unwrap(),
+            TaskPurgeOutcome::Deleted
+        );
+        assert_eq!(
+            store.task(trashed.id).unwrap_err().to_string(),
+            format!("Task {} does not exist.", trashed.id)
+        );
+        assert_eq!(store.tasks().unwrap(), before[..2]);
+        assert_eq!(store.task(kept.id).unwrap(), kept);
+        let created = store.create_task(&input("After purge")).unwrap();
+        assert_eq!(created.id, trashed.id + 1);
+    }
+
+    #[test]
+    fn purge_refuses_a_task_restored_elsewhere() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.db");
+        let mut store = Store::open(&path).unwrap();
+        let mut other = Store::open(&path).unwrap();
+        let task = store.create_task(&input("Restored")).unwrap();
+        let task = store.set_deleted(task.id, task.version, true).unwrap();
+        let restored = other.set_deleted(task.id, task.version, false).unwrap();
+        assert_eq!(
+            store.purge_task(task.id, restored.version).unwrap(),
+            TaskPurgeOutcome::NotInTrash
+        );
+        assert_eq!(store.task(task.id).unwrap(), restored);
+    }
+
+    #[test]
+    fn empty_trash_revalidates_the_confirmed_snapshot() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.db");
+        let mut store = Store::open(&path).unwrap();
+        let mut other = Store::open(&path).unwrap();
+        let work = store.create_list("Work").unwrap();
+        let mut work_input = input("Work task");
+        work_input.list_id = work.id;
+        let kept = store.create_task(&input("Kept")).unwrap();
+        let first = store.create_task(&work_input).unwrap();
+        let first = store.set_deleted(first.id, first.version, true).unwrap();
+        let second = store.create_task(&input("Done")).unwrap();
+        let second = store
+            .set_status(second.id, second.version, Status::Done)
+            .unwrap();
+        let second = store.set_deleted(second.id, second.version, true).unwrap();
+        let replacement = store.create_task(&input("Replacement")).unwrap();
+
+        let preview = store.preview_empty_trash().unwrap();
+        assert_eq!(preview.count, 2);
+        // Swapping one task for another keeps the count but changes the snapshot.
+        other.set_deleted(first.id, first.version, false).unwrap();
+        let replacement = other
+            .set_deleted(replacement.id, replacement.version, true)
+            .unwrap();
+        let before = store.tasks().unwrap();
+        let EmptyTrashOutcome::Changed(fresh) = store.empty_trash(&preview).unwrap() else {
+            panic!("A changed Trash must not be emptied");
+        };
+        assert_eq!(fresh.count, 2);
+        assert_eq!(
+            fresh.task_versions,
+            [
+                (second.id, second.version),
+                (replacement.id, replacement.version)
+            ]
+        );
+        assert_eq!(store.tasks().unwrap(), before);
+
+        assert_eq!(
+            store.empty_trash(&fresh).unwrap(),
+            EmptyTrashOutcome::Emptied(2)
+        );
+        let remaining = store.tasks().unwrap();
+        assert!(remaining.iter().all(|task| !task.deleted));
+        assert_eq!(
+            remaining.iter().map(|task| task.id).collect::<Vec<_>>(),
+            [kept.id, first.id]
+        );
+        assert_eq!(store.task(kept.id).unwrap(), kept);
+        assert_eq!(store.lists().unwrap().len(), 2);
+        assert_eq!(store.preview_empty_trash().unwrap().count, 0);
+        assert_eq!(
+            store
+                .empty_trash(&store.preview_empty_trash().unwrap())
+                .unwrap(),
+            EmptyTrashOutcome::Emptied(0)
+        );
+    }
+
+    #[test]
+    fn scoped_stores_cannot_delete_permanently() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.db");
+        let mut store = Store::open(&path).unwrap();
+        let task = store.create_task(&input("Trashed")).unwrap();
+        let task = store.set_deleted(task.id, task.version, true).unwrap();
+        let preview = store.preview_empty_trash().unwrap();
+        let mut scoped = Store::open_for_mcp(&path, Some("Inbox"), false).unwrap();
+        let errors = [
+            scoped.purge_task(task.id, task.version).unwrap_err(),
+            scoped.preview_empty_trash().unwrap_err(),
+            scoped.empty_trash(&preview).unwrap_err(),
+        ];
+        for error in errors {
+            assert_eq!(
+                error.to_string(),
+                "A list-scoped store cannot delete tasks permanently."
+            );
+        }
+        assert_eq!(store.task(task.id).unwrap(), task);
+    }
+
+    #[test]
     fn stale_mutations_preserve_the_first_saved_version() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("tasks.db");
@@ -2587,12 +2820,17 @@ mod tests {
         other.create_task(&fields).unwrap();
         let first = other.create_task(&input("First")).unwrap();
         let second = other.create_task(&input("Second")).unwrap();
+        let trashed = other.create_task(&input("Trashed")).unwrap();
+        let trashed = other
+            .set_deleted(trashed.id, trashed.version, true)
+            .unwrap();
+        let trash_preview = other.preview_empty_trash().unwrap();
         let baseline = other.tasks().unwrap();
         let mut readonly = Store::open_for_mcp(&path, Some("Inbox"), true).unwrap();
         assert!(readonly.is_read_only());
         assert_eq!(readonly.list_scope(), Some(1));
         assert_eq!(readonly.lists().unwrap().len(), 1);
-        assert_eq!(readonly.tasks().unwrap().len(), 2);
+        assert_eq!(readonly.tasks().unwrap().len(), 3);
         assert_eq!(readonly.task(first.id).unwrap(), first);
         let errors = [
             readonly.create_list("New").unwrap_err(),
@@ -2617,6 +2855,11 @@ mod tests {
                 .set_deleted(first.id, first.version, false)
                 .unwrap_err(),
             readonly.swap_positions(&first, &second).unwrap_err(),
+            readonly
+                .purge_task(trashed.id, trashed.version)
+                .unwrap_err(),
+            readonly.preview_empty_trash().unwrap_err(),
+            readonly.empty_trash(&trash_preview).unwrap_err(),
         ];
         for error in errors {
             assert_eq!(error.to_string(), "This store is read-only.");

@@ -6,7 +6,7 @@ The client starts Husker as a local process and communicates over standard input
 
 ## Install or update Husker
 
-This guide describes Husker 0.12.1 and its task tools.
+This guide describes Husker 0.13.0 and its task tools.
 Close running Husker instances before updating the executable.
 Disconnect MCP clients that already use Husker, then run this command from the source directory:
 
@@ -34,7 +34,7 @@ husker list-add Private
 Pass `mcp --list Private` when registering the server with your client.
 Husker then restricts every tool to that list.
 The agent cannot read other lists, see their task counts, or change their tasks.
-Trash searches and counts include only deleted tasks from `Private`.
+Trash searches and counts include only the tasks from `Private` that are in Trash.
 An unknown list name prevents the server from starting.
 
 Quote a name containing spaces, for example `mcp --list "Home admin"`.
@@ -253,6 +253,16 @@ then newest recorded times within the same date. Unknown times follow known
 times on that date. Task IDs break remaining ties.
 
 A writable connection can add and edit tasks, change their status, and move them to or from Trash.
+No MCP tool deletes a task forever, even on a connection without `--list`.
+
+You can delete tasks forever in the terminal, one at a time or by emptying
+Trash. A task an agent moved to Trash can therefore disappear later.
+After that, the agent can no longer read or restore it. On a connection
+restricted with `--list`, `get_task` then fails with `Task not found.`
+Restore a task before you empty Trash if the agent still needs it.
+See [Delete a task forever](usage.md#delete-a-task-forever) and
+[Empty Trash](usage.md#empty-trash).
+
 A connection restricted with `--list` cannot create or rename lists.
 An unrestricted writable connection can also create and rename lists.
 Ordinary list results follow the order saved in the terminal, with the default list first.
@@ -275,7 +285,7 @@ format. For example, `2026-11-08T15:30:00Z` records the time in UTC.
 Reopening clears both fields. Changing between done and cancelled records
 a new date and time. Repeating the current status preserves both.
 Older tasks without a recorded time return null for `status_changed_at`.
-Task records remain stored, but Husker does not keep past status transitions
+Husker keeps each task's current record, but not past status transitions
 or previous task text. The terminal's History view reads these current closed
 records. MCP clients can retrieve the same records through status-filtered searches.
 

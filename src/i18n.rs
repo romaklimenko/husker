@@ -78,6 +78,29 @@ pub fn tr(language: Language, key: &str) -> &'static str {
             "The default list cannot be deleted.",
             "Standardlisten kan ikke slettes.",
         ),
+        "delete_forever_confirm" => ("Delete this task forever?", "Slet denne opgave permanent?"),
+        "empty_trash_confirm" => ("Empty Trash?", "Tøm papirkurven?"),
+        "cannot_undo" => ("This cannot be undone.", "Det kan ikke fortrydes."),
+        "empty_trash_hint" => (
+            "Every task in Trash is deleted, including tasks the filter hides.",
+            "Alle opgaver i papirkurven slettes, også dem, som filteret skjuler.",
+        ),
+        "task_purge_changed" => (
+            "The task changed. Review it and confirm again.",
+            "Opgaven er ændret. Kontrollér den, og bekræft igen.",
+        ),
+        "trash_changed" => (
+            "Trash changed. Review the count and confirm again.",
+            "Papirkurven er ændret. Kontrollér antallet, og bekræft igen.",
+        ),
+        "task_left_trash" => (
+            "This task is no longer in Trash.",
+            "Opgaven er ikke længere i papirkurven.",
+        ),
+        "deleted_forever" => ("Deleted forever", "Slettet permanent"),
+        "trash_emptied" => ("Trash emptied", "Papirkurven er tømt"),
+        "trash_empty" => ("Trash is empty", "Papirkurven er tom"),
+        "delete_forever_short" => ("Delete forever", "Slet permanent"),
         "trash" => ("Trash", "Papirkurv"),
         "no_tasks" => ("No tasks", "Ingen opgaver"),
         "no_lists" => ("No lists", "Ingen lister"),
@@ -215,6 +238,11 @@ pub fn tr(language: Language, key: &str) -> &'static str {
         "help_confirm_choice" => ("Confirm the choice", "Bekræft valget"),
         "help_yes_no" => ("Yes or No", "Ja eller Nej"),
         "help_cancel" => ("Cancel", "Annullér"),
+        "help_delete_forever" => ("Delete forever in Trash", "Slet permanent i papirkurven"),
+        "help_empty_trash_entry" => (
+            "Empty Trash from the Trash entry",
+            "Tøm papirkurven fra punktet Papirkurv",
+        ),
         "action_up" => ("Move up", "Gå op"),
         "action_down" => ("Move down", "Gå ned"),
         "action_first" => ("Select first item", "Vælg første punkt"),
@@ -241,6 +269,7 @@ pub fn tr(language: Language, key: &str) -> &'static str {
         "action_toggle_cancelled" => ("Toggle cancelled", "Skift annulleret"),
         "action_trash" => ("Move to Trash", "Flyt til papirkurv"),
         "action_restore" => ("Restore", "Gendan"),
+        "action_empty_trash" => ("Empty Trash", "Tøm papirkurven"),
         "action_move_up" => ("Reorder up", "Flyt op i rækkefølgen"),
         "action_move_down" => ("Reorder down", "Flyt ned i rækkefølgen"),
         "action_move_task" => ("Move to another list", "Flyt til en anden liste"),
@@ -296,6 +325,9 @@ fn danish_error(message: &str) -> String {
         }
         "A list-scoped store cannot create, rename, reorder, or delete lists." => {
             "Et lager begrænset til én liste kan ikke oprette, omdøbe, flytte eller slette lister."
+        }
+        "A list-scoped store cannot delete tasks permanently." => {
+            "Et lager begrænset til én liste kan ikke slette opgaver permanent."
         }
         "A task title cannot be empty." => "En opgavetitel må ikke være tom.",
         "Selected text contains a null character." => "Den markerede tekst indeholder et nultegn.",

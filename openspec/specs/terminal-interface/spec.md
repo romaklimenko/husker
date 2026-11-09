@@ -33,7 +33,8 @@ Husker SHALL provide the following default shortcuts in task navigation and the 
 | `R` | Rename the selected ordinary list from the picker |
 | Space | Toggle the selected task between open and done |
 | `c` | Toggle the selected task between open and cancelled |
-| `d` or Delete | Move a task to Trash, or start deleting the selected list in the picker |
+| `d` or Delete | Move a task to Trash. In Trash, start deleting the selected task forever. In the picker, start deleting the selected list, or start emptying Trash when the Trash entry is selected |
+| `D` | Start emptying Trash while Trash is open |
 | Alt+Up or `K` | Move an open task before its eligible neighbor, or move the selected list up |
 | Alt+Down or `J` | Move an open task after its eligible neighbor, or move the selected list down |
 | F2 | Toggle mouse capture |
@@ -48,7 +49,9 @@ Ctrl+C quits only in task navigation, History, and the list picker. Text inputs 
 Actions that require a selected task do nothing when no task is selected.
 Creating, renaming, moving, or deleting a list requires the picker. All tasks and Trash cannot be renamed, moved, or deleted.
 The default ordinary list cannot move or be deleted. Other list moves follow the pinned boundaries defined by task storage.
-Task creation, editing, completion, cancellation, deletion, task reordering, moving to another list, and undo are unavailable in Trash. Restore is available only in Trash.
+Task creation, editing, completion, cancellation, moving to Trash, task reordering, moving to another list, and undo are unavailable in Trash.
+Restore and Delete forever are available only in Trash. Empty Trash is available in Trash and from the Trash entry of the list picker.
+The requirements Delete a Trash task forever and Empty Trash after confirmation define both confirmations.
 Task actions do not affect background tasks while the picker is open.
 Due-date presets are unavailable in Trash and use the navigation and editor contracts below.
 The `profiles-localization` spec owns configuration syntax and binding validation. The optional `all_tasks` action and legacy `planned` alias follow that spec's compatibility rules.
@@ -179,7 +182,8 @@ If no open task remains, selection follows the changed task when visible, or cla
 Other actions that remove a task from the results clamp the prior selection index.
 An empty result has no selected task.
 A task closed from an ordinary task view keeps its row according to the hold requirement.
-Each successful action records an undo entry and shows a localized result: Marked done, Marked cancelled, Reopened, Moved to Trash, Restored, or Updated for a reorder.
+Each successful action in this requirement records an undo entry and shows a localized result: Marked done, Marked cancelled, Reopened, Moved to Trash, Restored, or Updated for a reorder.
+Delete forever and Empty Trash follow their own requirements below. They record no undo entry.
 
 #### Scenario: Complete a planned task
 
@@ -275,7 +279,10 @@ Enter opens the task editor at Description. F4 opens plain task text for copying
 A small terminal receives a readable size message instead of causing a panic.
 
 The footer lists hint entries in priority order and packs them into at most two lines at the current width, dropping entries that do not fit. Each entry shows the first configured key and a short label.
-Task views list Open, Toggle done, Toggle cancelled, Trash, the four presets as one entry, Undo, Move task, Filter, Lists, New task, History, Back outside All tasks, Help, and Quit. Trash lists Restore and Copy text instead of the task edits. History lists Reopen beside the task edits.
+Task views list Open, Toggle done, Toggle cancelled, Trash, the four presets as one entry, Undo, Move task, Filter, Lists, New task, History, Back outside All tasks, Help, and Quit.
+Trash lists Restore, Delete forever, Empty Trash, and Copy text instead of the task edits. History lists Reopen beside the task edits.
+In the task-view section, Help also lists Delete forever with the `trash` keys and Empty Trash with the `empty_trash` keys.
+In the list-picker section, Help also lists Empty Trash with the `delete_list` keys.
 Help shows the available actions and effective shortcuts for the current configuration in sections: task views, list picker, task editor, text editing, filter and list-name forms, confirmations, and everywhere.
 The section for the screen that opened Help appears first. Built-in text-editing keys appear with fixed labels.
 Help shows every configured key of an action. Esc closes help without changing stored data.
@@ -300,6 +307,12 @@ The configured Up, Down, PageUp, PageDown, First, and Last actions and the mouse
 
 - **WHEN** All tasks is open in an 80-column English terminal with default bindings
 - **THEN** the footer shows `Enter`, `Space`, `c`, `d`, `t/T/w/x`, `u`, `/`, `l`, `n`, `m`, `h`, `?`, and `q` with their labels on two lines
+
+#### Scenario: Show Trash keys
+
+- **WHEN** Trash is open in an 80-column English terminal with default bindings
+- **THEN** the footer shows `r Restore`, `d Delete forever`, `D Empty Trash`, and `F4 Copy`
+- **AND** the footer does not show `Space Done` or `m Move`
 
 #### Scenario: Open help from the picker
 
@@ -738,6 +751,7 @@ The picker contains All tasks first, ordinary lists in their persistent display 
 All tasks is a virtual entry without a count. Ordinary lists show open-task counts, and Trash shows its deleted-task count.
 The lowest-ID default list has a localized default marker, even after renaming.
 Picker hints and help make New list, Rename list, and Delete list discoverable with their configured shortcuts.
+While the Trash entry is selected, the Delete list hint reads Empty Trash.
 Ordinary task navigation shows the configured History shortcut.
 Virtual entries have identities separate from ordinary list IDs. An ordinary list named All tasks remains a separate, valid list with its own count.
 Opening the picker does not modify task data or the underlying task view's filter, selection, or scroll position.
@@ -922,7 +936,8 @@ Its empty state explains that no completed or cancelled tasks match and identifi
 
 Husker SHALL confirm deletion of an ordinary nondefault list before moving its tasks to the default list and deleting only its list metadata.
 The picker uses the configurable `delete_list` action, with `d` and Delete as defaults.
-All tasks, Trash, and the lowest-ID default list are protected and never open a deletion confirmation.
+All tasks and the lowest-ID default list are protected and never open a deletion confirmation.
+The `delete_list` action on the Trash entry opens the Empty Trash confirmation, which the requirement Empty Trash after confirmation defines. The action never deletes Trash as a list.
 The confirmation shows the source name, destination name, and separate counts of open, done, cancelled, and Trash tasks from a consistent store preview.
 The confirmation explicitly warns when unfinished tasks exist and states that every task moves to the destination.
 No is selected by default. Arrow keys, Tab, and Shift+Tab change the choice. Enter accepts the selected choice.
@@ -955,9 +970,9 @@ This terminal action adds no CLI command or MCP tool.
 - **THEN** attempting confirmation makes no deletion, displays a fresh preview, and selects No
 - **AND** only a new explicit Yes for that preview can complete deletion
 
-#### Scenario: Protect default and virtual entries
+#### Scenario: Protect the default list and All tasks
 
-- **WHEN** the user invokes Delete on All tasks, Trash, or the default list
+- **WHEN** the user invokes Delete on All tasks or the default list
 - **THEN** no confirmation opens and no stored data changes
 
 #### Scenario: Confirm with a letter
@@ -970,7 +985,7 @@ This terminal action adds no CLI command or MCP tool.
 
 Husker SHALL provide a modal language picker through the configured `language` action, which defaults to F3.
 The picker is available from task navigation, History, the navigation list picker, the editor list picker, task editors, filter editors, list-name editors, and Help.
-It is unavailable from task-discard confirmation, list-deletion confirmation, and Copy text.
+It is unavailable from task-discard confirmation, list-deletion confirmation, Delete forever confirmation, Empty Trash confirmation, and Copy text.
 The choices are English and Dansk. The current language is selected when the picker opens.
 Configured Up and Down wrap between English and Dansk. First selects English and Last selects Dansk. Apply saves the choice, and Back cancels without saving.
 Background task actions and text editing are inactive while the picker is open. Mouse events do not change the underlying screen.
@@ -1471,7 +1486,8 @@ A different version shows the error `Task {id} changed since the last action. No
 A status undo restores the previous status with its previous status-change date and timestamp through the status-restore mutation. A due undo restores the previous date. A Trash or restore undo restores the previous Trash state. A move undo restores the previous list. A reorder undo swaps the two tasks again and requires both of their versions to be current.
 An editor-save undo restores the previous title, description, planned date, and list of an existing task. Undoing the creation of a task moves the new task to Trash.
 After a successful undo the task remains selected if visible, the message shows Undone, and any hold on that task ends. Without an entry the message shows Nothing to undo.
-A successful list deletion discards the entry. List creation, renaming, reordering, language changes, and filter changes are not recorded and leave the entry in place.
+A successful list deletion, Delete forever, or Empty Trash discards the entry. Permanent deletion is not recorded, because a deleted task cannot be restored.
+List creation, renaming, reordering, language changes, and filter changes are not recorded and leave the entry in place.
 
 #### Scenario: Undo a cleared date
 
@@ -1499,6 +1515,11 @@ A successful list deletion discards the entry. List creation, renaming, reorderi
 - **THEN** the stored title is `Buy milk` again with the other fields unchanged
 - **AND** creating a task with `n` and pressing `u` moves that new task to Trash
 
+#### Scenario: Nothing to undo after a permanent deletion
+
+- **WHEN** the user moves task 4 to Trash, opens Trash, deletes task 9 forever, returns to All tasks, and presses `u`
+- **THEN** task 4 stays in Trash and the message shows Nothing to undo
+
 ### Requirement: Omit planned-date suffixes under dated headings
 
 Husker SHALL append the planned-date label to a task row only where the row's heading does not already state that date.
@@ -1515,4 +1536,99 @@ A held row follows the heading it keeps. The stored due date, filters, editor fi
 
 - **WHEN** an open task planned for `2026-11-01` appears under Earlier, and a task planned for `2026-11-10` is completed today
 - **THEN** both rows end with their planned-date labels
+
+### Requirement: Delete a Trash task forever
+
+While Trash is open, Husker SHALL open a Delete forever confirmation when the user invokes the `trash` action on the selected task.
+The `trash` action defaults to `d` and Delete. If no task is selected, the `trash` action does nothing.
+The confirmation shows the task title with line breaks replaced by spaces, followed by the task ID, such as `Buy milk #7`. A title wraps inside the dialog. A title that needs more than three lines is shortened with `…` before the ID, so the ID, warning, and choices stay visible.
+The confirmation also shows the warning `This cannot be undone.`
+No is selected by default. Arrow keys, Tab, and Shift+Tab change the choice. Enter accepts the selected choice.
+`y` confirms immediately and `n` cancels immediately, in both languages. Configured Back cancels.
+Other typing, paste, save, and task-action keys do not confirm or change task data. Configured Refresh is available.
+Cancelling returns to Trash with the same filter and selection.
+Yes deletes the task through the task-storage requirement Delete one Trash task permanently. The request uses the task version that the confirmation shows.
+
+| Outcome | Interface result |
+| --- | --- |
+| `Deleted` | Returns to Trash, clamps the prior selection index, and shows `Deleted forever`. |
+| `Changed` | Keeps the confirmation open with the current task, selects No, and shows `The task changed. Review it and confirm again.` |
+| `NotInTrash` | Returns to Trash and shows the error `This task is no longer in Trash.` |
+
+A refresh while the confirmation is open deletes no data. If the task is still in Trash with another version, the refresh applies the `Changed` row.
+If the task is outside Trash or no longer exists, the refresh applies the `NotInTrash` row.
+A failed write preserves data and shows an error without reporting deletion.
+
+#### Scenario: Keep a task by default
+
+- **WHEN** a user selects task 7 in Trash, presses `d`, and presses Enter
+- **THEN** the confirmation closes and task 7 remains in Trash
+
+#### Scenario: Delete a task forever
+
+- **WHEN** a user selects task 7 in Trash, presses `d`, and presses `y`
+- **THEN** task 7 no longer exists, Trash no longer lists task 7, and the message shows `Deleted forever`
+
+#### Scenario: Reconfirm after an external edit
+
+- **WHEN** the confirmation for task 7 is open and another connection changes task 7's title in Trash
+- **THEN** after the next refresh the confirmation shows the new title with No selected
+- **AND** only a new explicit Yes deletes task 7
+
+#### Scenario: Close after an external restore
+
+- **WHEN** the confirmation for task 7 is open and another connection restores task 7
+- **THEN** after the next refresh the confirmation closes, task 7 keeps every field, and the message shows `This task is no longer in Trash.`
+
+### Requirement: Empty Trash after confirmation
+
+Husker SHALL provide a configurable `empty_trash` action, bound to `D` by default, that opens an Empty Trash confirmation while Trash is open.
+The `delete_list` action on the Trash entry of the list picker opens the same confirmation.
+The `empty_trash` action does nothing in other task views.
+If Trash is empty, `empty_trash` in Trash and `delete_list` on the Trash entry show `Trash is empty` and open no confirmation.
+The Empty Trash confirmation shows the number of tasks in Trash from a Trash preview, as defined by the task-storage requirement Empty Trash from a confirmed preview.
+The confirmation states that every task in Trash is deleted, including tasks that the current filter hides. It also shows the warning `This cannot be undone.`
+Choice keys, Back, Refresh, and ignored keys work as in the requirement Delete a Trash task forever.
+Cancelling returns to the screen that opened the confirmation: Trash with its filter and selection, or the picker with Trash selected.
+Yes empties Trash through the task-storage operation. The request uses the Trash preview that the confirmation shows.
+
+| Outcome | Interface result |
+| --- | --- |
+| `Emptied` | Returns to the screen that opened the confirmation and shows `Trash emptied`. The picker keeps Trash selected. |
+| `Changed` with tasks in Trash | Keeps the confirmation open with the new count, selects No, and shows `Trash changed. Review the count and confirm again.` |
+| `Changed` with an empty Trash | Returns to the screen that opened the confirmation and shows `Trash is empty` as an error, so the external update notice does not hide it. |
+
+A refresh while the confirmation is open deletes no data. If Trash no longer matches the Trash preview that the confirmation shows, the refresh applies the matching `Changed` row.
+A failed write preserves data and shows an error without reporting deletion.
+
+#### Scenario: Empty Trash from Trash
+
+- **WHEN** Trash is open and holds three tasks, and the user presses `D` and then `y`
+- **THEN** none of the three tasks exists, Trash shows no tasks, and the message shows `Trash emptied`
+
+#### Scenario: Empty Trash from the picker
+
+- **WHEN** the picker has Trash selected, Trash holds two tasks, and the user presses `d` and chooses Yes
+- **THEN** both tasks no longer exist and the picker stays open with Trash selected
+
+#### Scenario: Count tasks hidden by a filter
+
+- **WHEN** Trash holds five tasks, the filter `milk` shows two of them, and the user presses `D`
+- **THEN** the confirmation shows 5 tasks
+
+#### Scenario: Reconfirm a changed Trash
+
+- **WHEN** the Empty Trash confirmation shows 2 tasks and another connection moves a task to Trash
+- **THEN** after the next refresh the confirmation shows 3 tasks with No selected
+- **AND** no task is deleted until the user confirms again
+
+#### Scenario: Ignore Empty Trash outside Trash
+
+- **WHEN** a user presses `D` in All tasks
+- **THEN** no confirmation opens and no task changes
+
+#### Scenario: Report an empty Trash
+
+- **WHEN** Trash is empty and the user presses `D` in Trash or `d` on the Trash picker entry
+- **THEN** no confirmation opens and the message shows `Trash is empty`
 

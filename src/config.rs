@@ -16,7 +16,7 @@ pub enum Mode {
     ListField,
     EditorListPicker,
     ConfirmDiscard,
-    DeleteListConfirm,
+    DeleteConfirm,
     Filter,
     ListName,
     Language,
@@ -51,6 +51,7 @@ pub enum Action {
     ToggleCancelled,
     Trash,
     Restore,
+    EmptyTrash,
     MoveUp,
     MoveDown,
     MoveTask,
@@ -73,7 +74,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Self; 44] = [
+    pub const ALL: [Self; 45] = [
         Self::Up,
         Self::Down,
         Self::First,
@@ -99,6 +100,7 @@ impl Action {
         Self::ToggleCancelled,
         Self::Trash,
         Self::Restore,
+        Self::EmptyTrash,
         Self::MoveUp,
         Self::MoveDown,
         Self::MoveTask,
@@ -147,6 +149,7 @@ impl Action {
             Self::ToggleCancelled => "toggle_cancelled",
             Self::Trash => "trash",
             Self::Restore => "restore",
+            Self::EmptyTrash => "empty_trash",
             Self::MoveUp => "move_up",
             Self::MoveDown => "move_down",
             Self::MoveTask => "move_task",
@@ -241,7 +244,7 @@ impl Action {
                     | Mode::Help
             ),
             Self::Reopen => mode == Mode::History,
-            Self::NewTask | Self::Restore => mode == Mode::Tasks,
+            Self::NewTask | Self::Restore | Self::EmptyTrash => mode == Mode::Tasks,
             Self::Filter | Self::ToggleDone | Self::ToggleCancelled | Self::Trash => {
                 matches!(mode, Mode::Tasks | Mode::History)
             }
@@ -254,7 +257,7 @@ impl Action {
                     | Mode::Lists
                     | Mode::Filter
                     | Mode::ListName
-                    | Mode::DeleteListConfirm
+                    | Mode::DeleteConfirm
                     | Mode::Language
             ),
             Self::Save | Self::NextField | Self::PreviousField => mode == Mode::Editor,
@@ -296,6 +299,7 @@ impl Action {
             Self::ToggleCancelled => &["c"],
             Self::Trash => &["d", "delete"],
             Self::Restore => &["r"],
+            Self::EmptyTrash => &["D"],
             Self::MoveUp => &["alt+up", "K"],
             Self::MoveDown => &["alt+down", "J"],
             Self::MoveTask => &["m"],
@@ -525,7 +529,7 @@ impl Config {
             Mode::ListField,
             Mode::EditorListPicker,
             Mode::ConfirmDiscard,
-            Mode::DeleteListConfirm,
+            Mode::DeleteConfirm,
             Mode::Filter,
             Mode::ListName,
             Mode::Language,
@@ -751,7 +755,7 @@ mod tests {
                 Mode::Filter,
                 Mode::ListName,
                 Mode::ConfirmDiscard,
-                Mode::DeleteListConfirm,
+                Mode::DeleteConfirm,
             ] {
                 assert_eq!(config.action(event, mode), None, "{mode:?}");
             }
@@ -859,7 +863,7 @@ mod tests {
                 Mode::Help,
                 Mode::Language,
                 Mode::ConfirmDiscard,
-                Mode::DeleteListConfirm,
+                Mode::DeleteConfirm,
                 Mode::CopyText,
             ] {
                 assert_eq!(config.action(key(code), mode), None);
@@ -1095,7 +1099,7 @@ mod tests {
         for mode in [
             Mode::Language,
             Mode::ConfirmDiscard,
-            Mode::DeleteListConfirm,
+            Mode::DeleteConfirm,
             Mode::CopyText,
         ] {
             assert_eq!(config.action(key(KeyCode::F(3)), mode), None);
@@ -1179,7 +1183,7 @@ mod tests {
         }
         for mode in [
             Mode::ConfirmDiscard,
-            Mode::DeleteListConfirm,
+            Mode::DeleteConfirm,
             Mode::Help,
             Mode::CopyText,
         ] {
@@ -1248,16 +1252,36 @@ mod tests {
             None
         );
         assert_eq!(
-            config.action(key(KeyCode::Esc), Mode::DeleteListConfirm),
+            config.action(key(KeyCode::Esc), Mode::DeleteConfirm),
             Some(Action::Back)
         );
         assert_eq!(
-            config.action(key(KeyCode::Char('q')), Mode::DeleteListConfirm),
+            config.action(key(KeyCode::Char('q')), Mode::DeleteConfirm),
             None
         );
         assert!(Config::from_toml("[keys]\nhistory = ['a']\nall_tasks = ['a']").is_err());
         assert!(Config::from_toml("[keys]\nreopen = ['d']").is_err());
         assert!(Config::from_toml("[keys]\ndelete_list = ['R']").is_err());
+    }
+
+    #[test]
+    fn empty_trash_uses_shift_d_only_in_task_navigation() {
+        let config = Config::default();
+        let shift_d = KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT);
+        assert_eq!(
+            config.action(shift_d, Mode::Tasks),
+            Some(Action::EmptyTrash)
+        );
+        for mode in [Mode::History, Mode::Lists, Mode::DeleteConfirm] {
+            assert_eq!(config.action(shift_d, mode), None);
+        }
+        assert_eq!(config.keys_for(Action::EmptyTrash), "D");
+        assert!(Config::example().contains("empty_trash = [\"D\"]\n"));
+        let conflict = Config::from_toml("[keys]\nnew_task = ['D']").unwrap_err();
+        let message = format!("{conflict:#}");
+        assert!(message.contains("'new_task' and 'empty_trash' in Tasks mode"));
+        let disabled = Config::from_toml("[keys]\nnew_task = ['D']\nempty_trash = []").unwrap();
+        assert_eq!(disabled.action(shift_d, Mode::Tasks), Some(Action::NewTask));
     }
 
     #[test]
@@ -1359,7 +1383,7 @@ mod tests {
                 Mode::ListField,
                 Mode::EditorListPicker,
                 Mode::ConfirmDiscard,
-                Mode::DeleteListConfirm,
+                Mode::DeleteConfirm,
                 Mode::Filter,
                 Mode::ListName,
                 Mode::Language,

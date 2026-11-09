@@ -36,12 +36,58 @@ Close installed Husker processes and disconnect MCP clients before replacing
 the installed copy with `cargo install --path . --locked`.
 
 Use only temporary profiles for migration tests. Versions 0.9.0 through
-0.12.1 use schema version 4. Updating between them requires no migration.
+0.13.0 use schema version 4. Updating between them requires no migration.
 Starting the current version against a schema version 1, 2, or 3 profile
 migrates it to version 4 on writable
 access. Versions 0.4.0 through 0.8.0 use schema version 3 and cannot open an
 upgraded profile. Read-only connections require the writable upgrade first.
 Follow the [upgrade instructions](usage.md#update-an-existing-profile) for a real profile.
+
+## Delete tasks permanently in the store
+
+Three `Store` operations in `src/store.rs` remove task rows. Every other
+task write keeps the row. That includes `set_deleted`, which moves a task
+to or from Trash.
+
+| Operation | What it does |
+| --- | --- |
+| `purge_task(id, version)` | Deletes one task in Trash if its stored version still equals `version`. Returns `TaskPurgeOutcome::Deleted`, `Changed(task)` with the current task, or `NotInTrash` when the task is outside Trash or no longer exists. |
+| `preview_empty_trash()` | Returns a `TrashPreview` with the number of tasks in Trash and a snapshot of each task's ID and version. |
+| `empty_trash(&preview)` | Deletes every task in Trash if Trash still matches the preview. Returns `EmptyTrashOutcome::Emptied(count)`, or `Changed(preview)` with a fresh preview. |
+
+`purge_task` and `empty_trash` check and delete inside one immediate SQLite
+write transaction. Another writer therefore cannot change the task or Trash
+between the check and the delete. A `Changed` or `NotInTrash` result writes
+nothing. Show the fresh task or preview to the user and ask for
+confirmation again before you retry.
+
+All three operations reject read-only and list-scoped stores before they
+read Trash. A list-scoped store fails with
+`A list-scoped store cannot delete tasks permanently.` A read-only store
+fails with `This store is read-only.` Only the terminal interface calls
+these operations. No CLI command or MCP tool calls them.
+
+Task IDs come from an `AUTOINCREMENT` column, so a deleted ID is never
+reused. Permanent deletion needs no schema change. The schema stays at
+version 4.
+
+## Checks for version 0.13.0
+
+The permanent-deletion update completed these checks on November 9, 2026:
+
+| Check | Result |
+| --- | --- |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Unit tests | 225 passed. They cover deleting one Trash task, emptying Trash, stale and restored tasks, a changed Trash with an equal count, ID reuse, read-only and list-scoped stores, both confirmations with No as the default, refresh while a confirmation is open, the picker's Trash entry, undo after deletion, long titles, footer hints, Help, and the `D` key conflict. |
+| CLI integration tests | 9 passed against isolated profiles. |
+| MCP integration tests | 8 passed through child processes. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.13.0. |
+| Manual CLI check | A temporary profile showed `Trash (1)` after `trash`, `config --example` listed `empty_trash = ["D"]`, and `new_task = ["D"]` failed with the `D` conflict until `empty_trash = []` was added. |
+| Rendered screens | The Trash footer, both confirmations in English and Danish, the emptied Trash, and the picker on Trash were rendered at 80 by 24 cells and inspected. |
+| OpenSpec | The change validated strictly, and all six capability specs passed strict validation after archiving. |
+
+No live pseudo-terminal session was driven. Linux and macOS were not tested in this session.
 
 ## Checks for version 0.12.1
 

@@ -289,7 +289,9 @@ The removed list's name and its task grouping are not retained.
 
 The picker stays open with the default list selected after deletion.
 If you were viewing the removed list, the tasks behind the picker return
-to All tasks. The default list, All tasks, and Trash cannot be deleted.
+to All tasks. The default list and All tasks cannot be deleted. Delete or
+`d` on the Trash entry empties Trash instead of removing it. See
+[Empty Trash](#empty-trash).
 
 If another process changes the list or its tasks while you confirm,
 Husker updates the confirmation and selects No again. Review the new names
@@ -469,8 +471,8 @@ Choosing another list starts with an empty filter.
 
 History shows each task's current status. Reopening clears its recorded
 completion date and time. Husker does not keep a log of earlier status changes or
-previous versions of task text. To find deleted tasks, open Trash from
-the list picker instead.
+previous versions of task text. To find tasks you moved to Trash, open Trash
+from the list picker instead.
 
 ## Complete, cancel, and restore tasks
 
@@ -498,17 +500,109 @@ Apply `s:done` or `s:cancelled` to find older closed tasks, or `s:all` to
 review every status.
 
 Press `d` or Delete to move a task to Trash. The message shows
-`Moved to Trash`. Open `l` and select Trash, the last entry, to see deleted
-tasks. Press `r` to restore the selected task. The message shows `Restored`.
+`Moved to Trash`. Open `l` and select Trash, the last entry, to see the
+tasks in Trash. Press `r` to restore the selected task. The message shows `Restored`.
 The task returns to its original list with its original status.
 A restored done task stays done. It appears in the default view only if
 it was completed today. Restoring a task does not reset its completion date.
 
-Trash counts every deleted task, regardless of status. Tasks in Trash are
+The Trash count includes every task in Trash, whatever its status. Tasks in Trash are
 excluded from ordinary task views even when the query is `s:all`.
 Trash keeps the task's title, description, planned date, status date, and list membership.
 Trash uses the heading `All tasks > Trash` and has no date-group headings.
 Press Esc to return to your previous All tasks view.
+
+A task stays in Trash until you restore it or delete it forever.
+See [Delete a task forever](#delete-a-task-forever) and [Empty Trash](#empty-trash).
+
+## Delete a task forever
+
+Delete a task forever to remove it from your task database for good. Only
+a task in Trash can be deleted this way, so press `d` on the task first to
+move it there.
+
+1. Press `l`, select Trash, and press Enter.
+2. Select the task and press `d` or Delete.
+3. Read the confirmation and press `y`.
+
+The confirmation is titled `Delete this task forever?`. It shows the task's
+title and ID, such as `Buy milk #7`, and the warning `This cannot be undone.`
+After you press `y`, Husker removes the task from your task database and
+shows `Deleted forever`. Trash stays open, and the selection moves to a
+nearby task.
+
+No is selected when the confirmation opens. Press `n` or Esc to keep the
+task. Enter does the same while No is selected. Husker returns to Trash
+with the same filter and selected task. You can also use an arrow key, Tab,
+or Shift+Tab to select Yes and then press Enter to delete the task.
+
+A task deleted forever can't be restored, and `u` can't bring it back.
+Deleting a task forever clears the undo entry, so `u` afterward shows
+`Nothing to undo`. Husker never reuses a task ID. If task 7 is deleted
+forever, the next task you create still gets a higher ID, so an old
+reference to `#7` never points at a different task.
+
+If you might need the task again, leave it in Trash or
+[back up your tasks](#back-up-your-tasks) first. Permanent deletion is
+available only in the terminal interface. No `husker` command or MCP tool
+deletes a task forever, although agents can move tasks to Trash.
+
+## Empty Trash
+
+Empty Trash to delete every task in it forever at once.
+
+1. Press `l`, select Trash, and press Enter.
+2. Press `D` (Shift+D).
+3. Read the confirmation and press `y`.
+
+The confirmation is titled `Empty Trash?` and shows how many tasks Trash
+holds, such as `In Trash: 3`. It also shows
+`Every task in Trash is deleted, including tasks the filter hides.` and the
+warning `This cannot be undone.` After you press `y`, the message shows
+`Trash emptied`.
+
+The count covers all of Trash, including rows a filter hides. For example,
+if Trash holds five tasks and the filter `milk` shows two of them, the
+confirmation shows `In Trash: 5`, and `y` deletes all five. To delete only
+some tasks, use `d` on each one instead.
+
+You can also empty Trash from the list picker without opening it. Press
+`l`, select the Trash entry, and press `d` or Delete. While Trash is
+selected, the picker hint reads `d Empty Trash`. The same confirmation
+opens. After you confirm, the picker stays open with Trash selected.
+
+The confirmation keys are the same as for deleting one task. No is selected
+first. Press `y` to empty Trash. Press `n` or Esc to keep every task, or
+press Enter while No is selected. Husker then returns to Trash or the list
+picker, wherever you started.
+
+If Trash is already empty, `D` in Trash and Delete on the Trash entry show
+`Trash is empty`, and no confirmation opens. `D` does nothing outside Trash,
+for example in All tasks or History.
+
+Emptying Trash deletes tasks of every status from every list. Your lists
+and the tasks outside Trash stay unchanged. The Trash entry stays in the
+picker, because Trash is not a list. Like deleting one task, emptying Trash
+clears the undo entry and can't be undone.
+
+## Confirm again after another program changes Trash
+
+An agent, a script, or another Husker window can change Trash while a
+confirmation is open. Husker checks again before it deletes anything and
+deletes only what the confirmation shows. It also checks when you press F5
+and during its automatic check for changes once per second.
+
+| What changed | What Husker does |
+| --- | --- |
+| The task you're deleting was edited and is still in Trash. | Shows the confirmation again with the current title, selects No, and adds `The task changed. Review it and confirm again.` |
+| The task you're deleting was restored or no longer exists. | Closes the confirmation, returns to Trash, and shows `This task is no longer in Trash.` |
+| Tasks were moved to Trash, restored, deleted, or edited, and Trash still holds tasks. | Shows the Empty Trash confirmation again with the new count, selects No, and adds `Trash changed. Review the count and confirm again.` |
+| Trash is now empty. | Closes the confirmation, returns to Trash or the list picker, and shows `Trash is empty`. |
+
+Review the updated confirmation and press `y` again to continue. The Empty
+Trash notice can appear even when the count stays the same. For example, if
+an agent restores one task and moves another task to Trash, Trash still
+holds three tasks, but they're not the three tasks you reviewed.
 
 ## Undo the last task action
 
@@ -523,8 +617,11 @@ Alt+Up, Alt+Down, `K`, or `J`, a move to another list with `m`, and a save
 in the task editor. Undoing a save restores the title, description, planned
 date, and list the task had before. Undoing a task you just created moves
 that task to Trash. Creating or renaming lists, changing the language, and
-filtering are not recorded, so `u` cannot reverse them. Deleting a list
-forgets the entry. `u` does nothing while Trash is open.
+filtering are not recorded, so `u` cannot reverse them. Deleting a list,
+deleting a task forever, and emptying Trash forget the entry. For example,
+mark a task done with Space, open Trash, and delete another task forever.
+Back in All tasks, `u` shows `Nothing to undo`, and the first task stays done.
+`u` does nothing while Trash is open.
 
 Husker keeps one entry. Each new task action replaces it, and undoing uses
 it up. There is no redo and no second level. For example, after you trash
@@ -599,9 +696,13 @@ The footer of every screen shows its most useful keys with short labels,
 such as `Enter Edit`, `Space Done`, `t/T/w/x Date`, `u Undo`, and `m Move`.
 The footer uses up to two lines and leaves out entries that do not fit the
 terminal width, so widen the terminal to see more of them. Trash shows
-`r Restore` and `F4 Copy` instead of the task edits. History adds
-`r Reopen`. While a filter is applied, the Esc entry reads `Esc Clear filter`.
+`r Restore`, `d Delete forever`, `D Empty Trash`, and `F4 Copy` instead of
+the task edits. History adds `r Reopen`. In the list picker, the delete
+entry reads `d Empty Trash` while the Trash entry is selected.
+While a filter is applied, the Esc entry reads `Esc Clear filter`.
 An entry shows the first key of an action, so a rebound action shows your key.
+In Danish, Delete forever reads Slet permanent and Empty Trash reads
+Tøm papirkurven.
 
 Press `?` to open Help with every shortcut from your own configuration.
 Help is grouped by screen: Task views, List picker, Task editor, Text
@@ -609,6 +710,8 @@ editing, Filter and list name, Confirmations, and Everywhere. The section
 for the screen you opened Help from comes first. An action with several
 keys lists them separated by ` / `, such as `q / Ctrl+C`. Text editing
 lists the built-in keys from [Edit text with the keyboard](#edit-text-with-the-keyboard).
+The Task views section lists Delete forever in Trash and Empty Trash.
+The List picker section lists Empty Trash from the Trash entry.
 Scroll Help with Up and Down, `k` and `j`, PageUp and PageDown, Home and
 End, `g` and `G`, or the mouse wheel. Clicking in Help does nothing.
 Press Esc or `?` to close Help.
@@ -639,7 +742,8 @@ These are the default shortcuts:
 | Esc | Clear an applied filter, return from a list or History to the previous view, or cancel the picker. |
 | Space | Toggle done status. |
 | `c` | Toggle cancelled status. |
-| `d` or Delete | Move a task to Trash, or review deleting a list in the picker. |
+| `d` or Delete | Move a task to Trash, or review deleting a task forever while Trash is open. In the picker, review deleting a list, or review emptying Trash on the Trash entry. |
+| `D` (Shift+D) | Review emptying Trash while Trash is open. |
 | Alt+Up or `K` | Move an open task before its neighbor with the same planned date, or move an ordinary list up in the picker. |
 | Alt+Down or `J` | Move an open task after that neighbor, or move an ordinary list down in the picker. |
 | F2 | Toggle mouse capture. |
@@ -670,8 +774,9 @@ saves from Title or Planned date. Esc or Ctrl+G asks before discarding
 changed fields. An unchanged editor closes immediately.
 F4 opens the copy view without discarding the draft. In the filter and list-name
 forms, Enter applies the input and Esc cancels it.
-In the discard prompt and the list-deletion confirmation, `y` chooses Yes
-and `n` chooses No without pressing Enter.
+In the discard prompt and in the confirmations for deleting a list,
+deleting a task forever, and emptying Trash, `y` chooses Yes and `n`
+chooses No without pressing Enter.
 Backspace edits text in an input field. It does not delete a task.
 
 ## Set the language and shortcuts
@@ -712,7 +817,9 @@ names are never translated. Filter operators and CLI commands stay in English.
 
 Each shortcut array replaces all default keys for that action. For example,
 `trash = ["delete"]` keeps Delete and removes `d`. Use `trash = []` to disable
-both shortcuts. Actions omitted from `[keys]` keep their defaults.
+both shortcuts. The `trash` keys also delete a task forever while Trash is
+open, so this override changes both uses. Actions omitted from `[keys]`
+keep their defaults.
 Footers and Help print the keys you configure in display form, so
 `ctrl+s` appears as Ctrl+S and `pageup` as PageUp.
 
@@ -733,11 +840,18 @@ a list, and `undo = ["ctrl+z"]` undoes a task action with Ctrl+Z in task
 views. Ctrl+Z still undoes typing in text fields, because those are
 different modes.
 
+Version 0.13.0 adds the `empty_trash` action with the default key `D`.
+It belongs to task views and works only while Trash is open. For example,
+`empty_trash = ["ctrl+d"]` moves Empty Trash to Ctrl+D. Deleting one task
+forever has no action of its own. It uses the `trash` keys while Trash is
+open. Emptying Trash from the picker uses the `delete_list` keys on the
+Trash entry.
+
 Esc is the default key of three actions, one per kind of screen:
 
 | Action | Default keys | Screens |
 | --- | --- | --- |
-| `back` | Esc | Task views, History, the list and language pickers, the filter and list-name forms, and the list-deletion confirmation. |
+| `back` | Esc | Task views, History, the list and language pickers, the filter and list-name forms, and the deletion confirmations for a list, a task in Trash, and Empty Trash. |
 | `discard` | Esc, Ctrl+G | The task editor and its discard prompt. |
 | `close` | Esc, `?` | Help and the F4 copy view. |
 
@@ -757,7 +871,8 @@ override, such as `planned = ["p"]`. Use only one of those two names.
 The All tasks action has no default shortcut. Use Esc to leave a scoped list,
 or choose All tasks in the picker. Neither `a` nor `p` navigates by default.
 Use `history`, `reopen`, `delete_list`, and `language` for those actions.
-For example, `delete_list = []` disables removal shortcuts in the picker.
+For example, `delete_list = []` disables list removal and Empty Trash in
+the picker. `D` in Trash still empties Trash.
 Under `[keys]`, `language = ["f6"]` changes the language-picker shortcut to F6.
 
 Key strings accept characters such as `q` or `N`, named keys such as `enter`
@@ -787,6 +902,15 @@ example, `history = ["m"]` conflicts with Move task. Keep that History
 shortcut by adding `move_task = []` under `[keys]`, or rebind `move_task`
 to another key. Use `page_up = []` or `page_down = []` for an action that
 uses PageUp or PageDown, and `quit = ["q"]` for an action that uses Ctrl+C.
+
+The `D` default added in 0.13.0 works the same way. If a custom action
+already uses `D` in a task view, Husker reports the conflict at startup
+instead of opening. For example, `history = ["D"]` stops Husker with
+`Key 'D' conflicts between 'history' and 'empty_trash' in Tasks mode.`
+Keep that History shortcut by moving Empty Trash to another key, such as
+`empty_trash = ["ctrl+d"]`, or by adding `empty_trash = []` under `[keys]`.
+With `empty_trash = []`, you can still empty Trash with Delete on the Trash
+entry in the list picker.
 
 Husker rejects an unknown setting, action, key, or conflicting shortcut.
 For example, `quit = ["n"]` conflicts with task creation.
@@ -831,6 +955,10 @@ husker tasks --trash
 husker restore 1
 ```
 
+`husker trash` moves a task to Trash, where you can still restore it.
+No command deletes a task forever. To do that, use Trash in the terminal
+interface. See [Delete a task forever](#delete-a-task-forever).
+
 `edit` changes only supplied fields. Use `--clear-due` to remove the due date
 and place an open task in Sometime:
 
@@ -866,7 +994,7 @@ Every command accepts `--profile DIRECTORY` to select its task collection.
 
 ## Update an existing profile
 
-Back up your profile before updating to 0.12.1.
+Back up your profile before updating to 0.13.0.
 Follow [Back up your tasks](#back-up-your-tasks), then keep every old Husker
 process closed, including MCP clients, until the upgrade is complete.
 
@@ -876,10 +1004,20 @@ Install the current version from the repository:
 cargo install --path . --locked
 ```
 
-Version 0.12.1 uses schema version 4, the same database format as 0.9.0
-through 0.12.0. Updating from these versions requires no database migration.
-Version 0.12.1 adds a task count to every group heading in the terminal.
+Version 0.13.0 uses schema version 4, the same database format as 0.9.0
+through 0.12.1. Updating from these versions requires no database migration.
 CLI commands, JSON fields, MCP tools, and filter syntax are unchanged.
+
+Version 0.13.0 lets you delete tasks forever in Trash. In Trash, `d` or
+Delete now asks to delete the selected task forever, and `D` asks to empty
+Trash. Delete on the Trash entry in the list picker also asks to empty
+Trash. See [Delete a task forever](#delete-a-task-forever) and
+[Empty Trash](#empty-trash).
+If your `config.toml` already uses `D` for another action in task views,
+Husker reports a conflict at startup instead of opening. Add
+`empty_trash = []` under `[keys]`, or bind `empty_trash` to another key.
+
+Version 0.12.1 adds a task count to every group heading in the terminal.
 
 Version 0.12.0 adds default shortcuts: `n` and `r` in the list picker, `K`
 and `J` for reordering, `m` for moving a task, `u` for undo, Ctrl+C for
@@ -962,3 +1100,7 @@ husker --profile ./restored-tasks
 ```
 
 Keep the original profile until you have checked the restored tasks.
+
+A backup is the only way to get back a task you deleted forever or removed
+by emptying Trash. Open a backup made before the deletion as a separate
+profile, as shown above, and copy the task's text from there.

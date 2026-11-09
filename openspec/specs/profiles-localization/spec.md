@@ -130,6 +130,11 @@ Help and Planned date hints use the configured bindings and selected language.
 
 The `move_task` action defaults to `m` and the `undo` action defaults to `u`. Both are available in ordinary task navigation and History.
 
+The `empty_trash` action defaults to `D` and is available only in task navigation. The `empty_trash` action acts only while Trash is open.
+In Trash, the `trash` action opens the Delete forever confirmation for the selected task, and `restore` restores the selected task.
+In the list picker, the `delete_list` action opens the Empty Trash confirmation when the Trash entry is selected.
+The terminal-interface spec owns both confirmations.
+
 The List selector, editor list picker, and move-task picker reuse the existing `open`, `lists`, `back`, navigation, Help, Language, Refresh, and Toggle mouse actions.
 
 The `first` action defaults to Home, `g`, and Left. The `last` action defaults to End, `G`, and Right.
@@ -142,7 +147,7 @@ Users can rebind the action or set its array empty to retain their existing cust
 The existing `history` and `lists` defaults remain `h` and `l`.
 The `due_*` and `clear_due` action names remain unchanged when visible labels use Planned date.
 
-Esc is the default key of three actions: `back` in navigation, pickers, forms, and the list-deletion confirmation; `discard` in the task editor and its discard confirmation; and `close` in Help and Copy text.
+Esc is the default key of three actions: `back` in navigation, pickers, forms, and the deletion confirmation; `discard` in the task editor and its discard confirmation; and `close` in Help and Copy text.
 An override of one of these actions changes only that action. The example configuration and the guide name all three.
 
 Hints and Help print every key in display form.
@@ -231,7 +236,7 @@ Husker SHALL reject unknown action names, invalid key strings, and shortcuts ass
 | Task navigation | Select tasks and invoke task actions. |
 | List picker | Select a scope and create, rename, reorder, or delete ordinary lists in a modal popup. |
 | History | Filter, edit, copy, change status, trash, or reopen completed and cancelled tasks. |
-| List-deletion confirmation | Confirm moving a list's tasks to the default list before removing the list. |
+| Deletion confirmation | Confirm moving a list's tasks to the default list before removing the list, deleting a Trash task forever, or emptying Trash. |
 | Language picker | Choose English or Danish and save the interface language. |
 | Task editor | Enter Title or Description. |
 | List field | Select a draft list and open its picker. |
@@ -253,9 +258,10 @@ Editor list picker mode permits only Up, Down, First, Last, PageUp, PageDown, Op
 Neither List mode permits text input or task-navigation writes. Choice Undo and Redo remain built-in List field controls.
 The navigation list picker retains its existing management actions.
 Task navigation and History add `move_task`, `undo`, `page_up`, and `page_down`. Task navigation also accepts the `K` and `J` defaults for reordering beside Alt+Up and Alt+Down.
+Task navigation adds `empty_trash`.
 Configured actions take precedence over built-in text-editing shortcuts in their active mode.
 Discard confirmation uses fixed choice keys defined by the terminal-interface spec, including `y` and `n`, and retains configured Discard and Refresh actions.
-List-deletion confirmation uses the same fixed choice keys and retains configured Back and Refresh actions.
+Deletion confirmation uses the same fixed choice keys and retains configured Back and Refresh actions.
 History has a separate input mode so `reopen` and Trash's `restore` can both use `r`. The list picker reuses `r` for `rename_list` because History and Trash actions are unavailable there.
 The language picker uses the configured Up, Down, First, Last, Apply, and Back actions.
 First and Last are available in task navigation, History, both list pickers, the language picker, and Help.
@@ -347,6 +353,12 @@ Existing configuration files must remove those overrides before loading.
 - **WHEN** `[keys]` assigns `history = ["m"]` or `filter = ["pageup"]` while `move_task` or `page_up` keeps its default
 - **THEN** configuration loading reports the conflict in task navigation before opening the terminal interface
 - **AND** adding `move_task = []` or `page_up = []` removes that conflict
+
+#### Scenario: Reject an Empty Trash conflict
+
+- **WHEN** `[keys]` assigns `new_task = ["D"]` while `empty_trash` keeps its default
+- **THEN** configuration loading reports the conflict between `empty_trash` and `new_task` in task navigation
+- **AND** adding `empty_trash = []` or another `empty_trash` key removes that conflict
 
 #### Scenario: Keep Ctrl+C separate between modes
 

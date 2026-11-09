@@ -33,7 +33,10 @@ use crate::planning::{
     ordinary_group_label, planned_group,
 };
 use crate::query::{Query, visible_history, visible_tasks};
-use crate::store::{ListDeletionOutcome, ListDeletionPreview, Store};
+use crate::store::{
+    EmptyTrashOutcome, ListDeletionOutcome, ListDeletionPreview, Store, TaskPurgeOutcome,
+    TrashPreview,
+};
 use crate::text_buffer::TextBuffer;
 use crate::text_layout::TextLayout;
 
@@ -208,6 +211,48 @@ fn confirmation_letter(key: KeyEvent) -> Option<bool> {
         KeyCode::Char('y' | 'Y') => Some(true),
         KeyCode::Char('n' | 'N') => Some(false),
         _ => None,
+    }
+}
+
+/// What a key does in a No/Yes confirmation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConfirmKey {
+    Cancel,
+    Answer(bool),
+    Toggle,
+    Accept,
+    Ignore,
+}
+
+/// Maps a key in a No/Yes confirmation. `cancel` is the configured action that leaves it.
+fn confirm_key(key: KeyEvent, action: Option<Action>, cancel: Action) -> ConfirmKey {
+    if action == Some(cancel) {
+        return ConfirmKey::Cancel;
+    }
+    if let Some(choice) = confirmation_letter(key) {
+        return ConfirmKey::Answer(choice);
+    }
+    let tab = matches!(key.code, KeyCode::Tab | KeyCode::BackTab);
+    if key.modifiers.is_empty() {
+        match key.code {
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down => ConfirmKey::Toggle,
+            _ if tab => ConfirmKey::Toggle,
+            KeyCode::Enter => ConfirmKey::Accept,
+            _ => ConfirmKey::Ignore,
+        }
+    } else if tab && key.modifiers == KeyModifiers::SHIFT {
+        ConfirmKey::Toggle
+    } else {
+        ConfirmKey::Ignore
+    }
+}
+
+/// The screen an Empty Trash confirmation returns to.
+fn trash_confirmation_origin(from_picker: bool) -> Screen {
+    if from_picker {
+        Screen::ListPicker
+    } else {
+        Screen::Navigation
     }
 }
 
@@ -397,6 +442,19 @@ enum Screen {
         delete: bool,
         changed: bool,
     },
+    /// Delete forever confirmation for one task in Trash, opened from the Trash view.
+    PurgeTaskConfirm {
+        task: Box<Task>,
+        delete: bool,
+        changed: bool,
+    },
+    /// Empty Trash confirmation, opened from the Trash view or the list picker.
+    EmptyTrashConfirm {
+        preview: TrashPreview,
+        delete: bool,
+        changed: bool,
+        from_picker: bool,
+    },
     Editor(Box<TaskEditor>),
     EditorListPicker {
         editor: Box<TaskEditor>,
@@ -566,7 +624,9 @@ impl App {
     fn mode(&self) -> Mode {
         match self.screen {
             Screen::ListPicker => Mode::Lists,
-            Screen::DeleteListConfirm { .. } => Mode::DeleteListConfirm,
+            Screen::DeleteListConfirm { .. }
+            | Screen::PurgeTaskConfirm { .. }
+            | Screen::EmptyTrashConfirm { .. } => Mode::DeleteConfirm,
             Screen::Editor(ref editor) if editor.active == 2 => Mode::DueField,
             Screen::Editor(ref editor) if editor.active == 3 => Mode::ListField,
             Screen::Editor(_) => Mode::Editor,
@@ -664,7 +724,7 @@ impl App {
         }
         let outcome_message = if external || date_changed || manual {
             self.refresh(store)?;
-            self.refresh_deletion_preview(store, config)?
+            self.refresh_confirmation(store, config)?
         } else {
             false
         };
@@ -679,30 +739,68 @@ impl App {
         Ok(())
     }
 
-    fn refresh_deletion_preview(&mut self, store: &Store, config: &Config) -> Result<bool> {
-        let Screen::DeleteListConfirm {
-            preview,
-            delete,
-            changed,
-        } = &mut self.screen
-        else {
-            return Ok(false);
-        };
-        if !self.lists.iter().any(|list| list.id == preview.list_id) {
-            self.screen = Screen::ListPicker;
-            self.show_message(
-                tr(config.language, "list_delete_missing"),
-                true,
-                Instant::now(),
-            );
-            return Ok(true);
-        } else {
-            let current = store.preview_list_deletion(preview.list_id)?;
-            if current != **preview {
-                *preview = Box::new(current);
-                *delete = false;
-                *changed = true;
+    /// Rechecks an open deletion confirmation against fresh data, resetting the choice to No
+    /// when its target changed. Returns true when it closed the confirmation with a message.
+    fn refresh_confirmation(&mut self, store: &Store, config: &Config) -> Result<bool> {
+        let language = config.language;
+        match &mut self.screen {
+            Screen::DeleteListConfirm {
+                preview,
+                delete,
+                changed,
+            } => {
+                if !self.lists.iter().any(|list| list.id == preview.list_id) {
+                    self.screen = Screen::ListPicker;
+                    self.show_message(tr(language, "list_delete_missing"), true, Instant::now());
+                    return Ok(true);
+                }
+                let current = store.preview_list_deletion(preview.list_id)?;
+                if current != **preview {
+                    *preview = Box::new(current);
+                    *delete = false;
+                    *changed = true;
+                }
             }
+            Screen::PurgeTaskConfirm {
+                task,
+                delete,
+                changed,
+            } => {
+                let Some(current) = self
+                    .tasks
+                    .iter()
+                    .find(|current| current.id == task.id && current.deleted)
+                else {
+                    self.screen = Screen::Navigation;
+                    self.show_message(tr(language, "task_left_trash"), true, Instant::now());
+                    return Ok(true);
+                };
+                if current.version != task.version {
+                    *task = Box::new(current.clone());
+                    *delete = false;
+                    *changed = true;
+                }
+            }
+            Screen::EmptyTrashConfirm {
+                preview,
+                delete,
+                changed,
+                from_picker,
+            } => {
+                let current = store.preview_empty_trash()?;
+                if current.count == 0 {
+                    self.screen = trash_confirmation_origin(*from_picker);
+                    // An error is not hidden behind the external update notice.
+                    self.show_message(tr(language, "trash_empty"), true, Instant::now());
+                    return Ok(true);
+                }
+                if current != *preview {
+                    *preview = current;
+                    *delete = false;
+                    *changed = true;
+                }
+            }
+            _ => {}
         }
         Ok(false)
     }
@@ -1387,10 +1485,8 @@ impl App {
                             };
                         }
                     }
-                    Some(Action::DeleteList) => {
-                        if let Some(RowIdentity::List(id)) =
-                            self.picker_identity(self.picker.selection)
-                        {
+                    Some(Action::DeleteList) => match self.picker_identity(self.picker.selection) {
+                        Some(RowIdentity::List(id)) => {
                             if self.lists.iter().map(|list| list.id).min() == Some(id) {
                                 self.show_message(
                                     tr(config.language, "default_list_cannot_delete"),
@@ -1405,7 +1501,11 @@ impl App {
                                 };
                             }
                         }
-                    }
+                        Some(RowIdentity::Trash) => {
+                            self.confirm_empty_trash(store, config, true)?
+                        }
+                        _ => {}
+                    },
                     Some(Action::MoveUp | Action::MoveDown) => {
                         if let Some(RowIdentity::List(id)) =
                             self.picker_identity(self.picker.selection)
@@ -1419,56 +1519,33 @@ impl App {
                 }
                 return Ok(false);
             }
-            Screen::DeleteListConfirm { delete, .. } => {
-                if action == Some(Action::Back) {
-                    self.screen = Screen::ListPicker;
-                    self.refresh(store)?;
-                } else if let Some(choice) = confirmation_letter(key) {
-                    *delete = choice;
-                    self.finish_list_deletion(store, config)?;
-                } else if key.modifiers.is_empty() {
-                    match key.code {
-                        KeyCode::Left
-                        | KeyCode::Right
-                        | KeyCode::Up
-                        | KeyCode::Down
-                        | KeyCode::Tab
-                        | KeyCode::BackTab => *delete = !*delete,
-                        KeyCode::Enter => self.finish_list_deletion(store, config)?,
-                        _ => {}
+            Screen::DeleteListConfirm { delete, .. }
+            | Screen::PurgeTaskConfirm { delete, .. }
+            | Screen::EmptyTrashConfirm { delete, .. } => {
+                match confirm_key(key, action, Action::Back) {
+                    ConfirmKey::Cancel => self.cancel_deletion(store)?,
+                    ConfirmKey::Answer(choice) => {
+                        *delete = choice;
+                        self.finish_deletion(store, config)?;
                     }
-                } else if matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
-                    && key.modifiers == KeyModifiers::SHIFT
-                {
-                    *delete = !*delete;
+                    ConfirmKey::Toggle => *delete = !*delete,
+                    ConfirmKey::Accept => self.finish_deletion(store, config)?,
+                    ConfirmKey::Ignore => {}
                 }
                 return Ok(false);
             }
             Screen::ConfirmDiscard { discard, .. } => {
-                if action == Some(Action::Discard) {
-                    self.finish_discard_confirmation(false, store)?;
-                } else if let Some(choice) = confirmation_letter(key) {
-                    self.finish_discard_confirmation(choice, store)?;
-                } else if key.modifiers.is_empty() {
-                    match key.code {
-                        KeyCode::Left
-                        | KeyCode::Right
-                        | KeyCode::Up
-                        | KeyCode::Down
-                        | KeyCode::Tab
-                        | KeyCode::BackTab => {
-                            *discard = !*discard;
-                        }
-                        KeyCode::Enter => {
-                            let discard = *discard;
-                            self.finish_discard_confirmation(discard, store)?;
-                        }
-                        _ => {}
+                match confirm_key(key, action, Action::Discard) {
+                    ConfirmKey::Cancel => self.finish_discard_confirmation(false, store)?,
+                    ConfirmKey::Answer(choice) => {
+                        self.finish_discard_confirmation(choice, store)?
                     }
-                } else if matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
-                    && key.modifiers == KeyModifiers::SHIFT
-                {
-                    *discard = !*discard;
+                    ConfirmKey::Toggle => *discard = !*discard,
+                    ConfirmKey::Accept => {
+                        let discard = *discard;
+                        self.finish_discard_confirmation(discard, store)?;
+                    }
+                    ConfirmKey::Ignore => {}
                 }
                 return Ok(false);
             }
@@ -1679,6 +1756,12 @@ impl App {
             Action::Help => self.open_help(),
             Action::MoveTask => self.open_move_picker(store)?,
             Action::Undo if self.view != View::Trash => self.undo_last(store, config)?,
+            Action::Trash if self.view == View::Trash => self.confirm_task_purge(),
+            Action::EmptyTrash => {
+                if self.view == View::Trash {
+                    self.confirm_empty_trash(store, config, false)?;
+                }
+            }
             _ => self.task_action(action, store, config)?,
         }
         Ok(false)
@@ -1948,6 +2031,135 @@ impl App {
         Ok(())
     }
 
+    /// Closes a deletion confirmation without deleting, returning to the screen that opened it.
+    fn cancel_deletion(&mut self, store: &Store) -> Result<()> {
+        self.screen = match self.screen {
+            Screen::DeleteListConfirm { .. }
+            | Screen::EmptyTrashConfirm {
+                from_picker: true, ..
+            } => Screen::ListPicker,
+            _ => Screen::Navigation,
+        };
+        self.refresh(store)
+    }
+
+    /// Applies the selected choice of the open deletion confirmation.
+    fn finish_deletion(&mut self, store: &mut Store, config: &Config) -> Result<()> {
+        match self.screen {
+            Screen::DeleteListConfirm { .. } => self.finish_list_deletion(store, config),
+            Screen::PurgeTaskConfirm { .. } => self.finish_task_purge(store, config),
+            Screen::EmptyTrashConfirm { .. } => self.finish_empty_trash(store, config),
+            _ => Ok(()),
+        }
+    }
+
+    /// Opens the Delete forever confirmation for the selected task in Trash.
+    fn confirm_task_purge(&mut self) {
+        if let Some(task) = self.selected_task().filter(|task| task.deleted) {
+            self.screen = Screen::PurgeTaskConfirm {
+                task: Box::new(task.clone()),
+                delete: false,
+                changed: false,
+            };
+        }
+    }
+
+    fn finish_task_purge(&mut self, store: &mut Store, config: &Config) -> Result<()> {
+        let Screen::PurgeTaskConfirm { task, delete, .. } = &self.screen else {
+            return Ok(());
+        };
+        if !delete {
+            return self.cancel_deletion(store);
+        }
+        let language = config.language;
+        match store.purge_task(task.id, task.version)? {
+            TaskPurgeOutcome::Deleted => {
+                self.screen = Screen::Navigation;
+                // A deleted task cannot be restored, so no earlier action can be undone safely.
+                self.undo = None;
+                self.refresh(store)?;
+                self.show_message(tr(language, "deleted_forever"), false, Instant::now());
+            }
+            TaskPurgeOutcome::Changed(current) => {
+                self.screen = Screen::PurgeTaskConfirm {
+                    task: Box::new(current),
+                    delete: false,
+                    changed: true,
+                };
+                self.refresh(store)?;
+            }
+            TaskPurgeOutcome::NotInTrash => {
+                self.screen = Screen::Navigation;
+                self.refresh(store)?;
+                self.show_message(tr(language, "task_left_trash"), true, Instant::now());
+            }
+        }
+        Ok(())
+    }
+
+    /// Opens the Empty Trash confirmation, or reports an empty Trash without opening it.
+    fn confirm_empty_trash(
+        &mut self,
+        store: &Store,
+        config: &Config,
+        from_picker: bool,
+    ) -> Result<()> {
+        let preview = store.preview_empty_trash()?;
+        if preview.count == 0 {
+            self.show_message(tr(config.language, "trash_empty"), false, Instant::now());
+        } else {
+            self.screen = Screen::EmptyTrashConfirm {
+                preview,
+                delete: false,
+                changed: false,
+                from_picker,
+            };
+        }
+        Ok(())
+    }
+
+    fn finish_empty_trash(&mut self, store: &mut Store, config: &Config) -> Result<()> {
+        let Screen::EmptyTrashConfirm {
+            preview,
+            delete,
+            from_picker,
+            ..
+        } = &self.screen
+        else {
+            return Ok(());
+        };
+        if !delete {
+            return self.cancel_deletion(store);
+        }
+        let from_picker = *from_picker;
+        let language = config.language;
+        match store.empty_trash(preview)? {
+            EmptyTrashOutcome::Emptied(_) => {
+                self.screen = trash_confirmation_origin(from_picker);
+                self.undo = None;
+                self.refresh(store)?;
+                self.show_message(tr(language, "trash_emptied"), false, Instant::now());
+            }
+            EmptyTrashOutcome::Changed(preview) if preview.count == 0 => {
+                // Another connection emptied Trash. An error is not hidden behind the external
+                // update notice, which the refresh below sets.
+                self.screen = trash_confirmation_origin(from_picker);
+                self.refresh(store)?;
+                self.show_message(tr(language, "trash_empty"), true, Instant::now());
+            }
+            EmptyTrashOutcome::Changed(preview) => {
+                self.screen = Screen::EmptyTrashConfirm {
+                    preview,
+                    delete: false,
+                    changed: true,
+                    from_picker,
+                };
+                self.refresh(store)?;
+            }
+        }
+        Ok(())
+    }
+
     fn finish_list_deletion(&mut self, store: &mut Store, config: &Config) -> Result<()> {
         let Screen::DeleteListConfirm {
             preview, delete, ..
@@ -1956,9 +2168,7 @@ impl App {
             return Ok(());
         };
         if !delete {
-            self.screen = Screen::ListPicker;
-            self.refresh(store)?;
-            return Ok(());
+            return self.cancel_deletion(store);
         }
         let destination = preview.destination_id;
         match store.delete_list(preview)? {
@@ -2246,6 +2456,8 @@ impl App {
                     | Screen::EditorListPicker { .. }
                     | Screen::ConfirmDiscard { .. }
                     | Screen::DeleteListConfirm { .. }
+                    | Screen::PurgeTaskConfirm { .. }
+                    | Screen::EmptyTrashConfirm { .. }
             ) && area.height < 18)
         {
             frame.render_widget(
@@ -2368,6 +2580,21 @@ impl App {
                 changed,
             } => {
                 draw_list_deletion(frame, sections[1], preview, *delete, *changed, language);
+            }
+            Screen::PurgeTaskConfirm {
+                task,
+                delete,
+                changed,
+            } => {
+                draw_task_purge(frame, sections[1], task, *delete, *changed, language);
+            }
+            Screen::EmptyTrashConfirm {
+                preview,
+                delete,
+                changed,
+                ..
+            } => {
+                draw_empty_trash(frame, sections[1], preview, *delete, *changed, language);
             }
             Screen::ConfirmDiscard { editor, discard } => {
                 let _ = draw_editor(frame, sections[1], editor, &self.lists, language);
@@ -2508,7 +2735,14 @@ impl App {
                 pair(Action::Back, "action_back"),
                 pair(Action::NewList, "new_list"),
                 pair(Action::RenameList, "rename_list"),
-                pair(Action::DeleteList, "action_delete_list"),
+                pair(
+                    Action::DeleteList,
+                    if self.picker_identity(self.picker.selection) == Some(RowIdentity::Trash) {
+                        "action_empty_trash"
+                    } else {
+                        "action_delete_list"
+                    },
+                ),
                 (
                     arrows(Action::MoveUp, Action::MoveDown),
                     label("reorder_short"),
@@ -2516,7 +2750,9 @@ impl App {
                 pair(Action::Help, "help"),
                 pair(Action::Quit, "action_quit"),
             ],
-            Screen::DeleteListConfirm { .. } => vec![
+            Screen::DeleteListConfirm { .. }
+            | Screen::PurgeTaskConfirm { .. }
+            | Screen::EmptyTrashConfirm { .. } => vec![
                 ("y".into(), label("yes")),
                 ("n".into(), label("no")),
                 (label("help_arrows"), label("choose_short")),
@@ -2568,6 +2804,8 @@ impl App {
                 let mut hints = Vec::new();
                 if self.view == View::Trash {
                     hints.push(pair(Action::Restore, "action_restore"));
+                    hints.push(pair(Action::Trash, "delete_forever_short"));
+                    hints.push(pair(Action::EmptyTrash, "action_empty_trash"));
                     hints.push(pair(Action::CopyText, "copy_short"));
                 } else {
                     hints.extend([
@@ -3127,7 +3365,6 @@ fn draw_list_deletion(
     changed: bool,
     language: Language,
 ) {
-    let width = area.width.saturating_sub(4).min(72);
     let mut paragraphs = vec![
         (
             format!(
@@ -3173,6 +3410,118 @@ fn draw_list_deletion(
             Color::Yellow,
         ));
     }
+    draw_deletion_dialog(
+        frame,
+        area,
+        "delete_list_confirm",
+        paragraphs,
+        delete,
+        language,
+    );
+}
+
+fn draw_task_purge(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    task: &Task,
+    delete: bool,
+    changed: bool,
+    language: Language,
+) {
+    let title = task.title.replace(['\r', '\n'], " ");
+    let inner_width = usize::from(deletion_dialog_width(area).saturating_sub(2));
+    let mut paragraphs = vec![
+        (
+            shortened_title(&title, &format!(" #{}", task.id), inner_width),
+            Color::Cyan,
+        ),
+        (tr(language, "cannot_undo").to_owned(), Color::Yellow),
+    ];
+    if changed {
+        paragraphs.push((tr(language, "task_purge_changed").to_owned(), Color::Yellow));
+    }
+    draw_deletion_dialog(
+        frame,
+        area,
+        "delete_forever_confirm",
+        paragraphs,
+        delete,
+        language,
+    );
+}
+
+fn draw_empty_trash(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    preview: &TrashPreview,
+    delete: bool,
+    changed: bool,
+    language: Language,
+) {
+    let mut paragraphs = vec![
+        (
+            format!("{}: {}", tr(language, "trashed"), preview.count),
+            Color::Cyan,
+        ),
+        (tr(language, "empty_trash_hint").to_owned(), Color::White),
+        (tr(language, "cannot_undo").to_owned(), Color::Yellow),
+    ];
+    if changed {
+        paragraphs.push((tr(language, "trash_changed").to_owned(), Color::Yellow));
+    }
+    draw_deletion_dialog(
+        frame,
+        area,
+        "empty_trash_confirm",
+        paragraphs,
+        delete,
+        language,
+    );
+}
+
+/// Wrapped lines a task title may use in the Delete forever dialog.
+const PURGE_TITLE_LINES: usize = 3;
+
+/// Joins `title` and `suffix`, shortening the title with an ellipsis so the result wraps
+/// into at most `PURGE_TITLE_LINES` lines of `width` cells. The suffix is always kept.
+fn shortened_title(title: &str, suffix: &str, width: usize) -> String {
+    let fits = |text: &str| TextLayout::new(text, width).lines.len() <= PURGE_TITLE_LINES;
+    let full = format!("{title}{suffix}");
+    if fits(&full) {
+        return full;
+    }
+    let characters: Vec<char> = title.chars().collect();
+    let shortened = |count: usize| {
+        let kept: String = characters[..count].iter().collect();
+        format!("{}…{suffix}", kept.trim_end())
+    };
+    // Find the longest title prefix that still fits.
+    let (mut low, mut high) = (0, characters.len());
+    while low < high {
+        let middle = (low + high).div_ceil(2);
+        if fits(&shortened(middle)) {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    shortened(low)
+}
+
+fn deletion_dialog_width(area: Rect) -> u16 {
+    area.width.saturating_sub(4).min(72)
+}
+
+/// Draws a centered No/Yes deletion dialog with wrapped, colored paragraphs.
+fn draw_deletion_dialog(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    title: &str,
+    paragraphs: Vec<(String, Color)>,
+    delete: bool,
+    language: Language,
+) {
+    let width = deletion_dialog_width(area);
     let mut lines: Vec<Line<'_>> = paragraphs
         .into_iter()
         .flat_map(|(text, color)| {
@@ -3220,7 +3569,7 @@ fn draw_list_deletion(
         Paragraph::new(lines).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(tr(language, "delete_list_confirm")),
+                .title(tr(language, title)),
         ),
         dialog,
     );
@@ -3334,6 +3683,7 @@ fn help_sections(config: &Config, origin: HelpOrigin) -> Vec<(&'static str, Vec<
                 Action::ToggleCancelled,
                 Action::Trash,
                 Action::Restore,
+                Action::EmptyTrash,
                 Action::Reopen,
                 Action::MoveTask,
                 Action::DueToday,
@@ -3347,7 +3697,12 @@ fn help_sections(config: &Config, origin: HelpOrigin) -> Vec<(&'static str, Vec<
                 Action::Quit,
             ]
             .into_iter()
-            .map(action)
+            .flat_map(|item| {
+                // In Trash, the trash keys delete the selected task forever.
+                let extra = (item == Action::Trash)
+                    .then(|| builtin(config.keys_for(Action::Trash), "help_delete_forever"));
+                std::iter::once(action(item)).chain(extra)
+            })
             .collect(),
         ),
         (
@@ -3363,7 +3718,16 @@ fn help_sections(config: &Config, origin: HelpOrigin) -> Vec<(&'static str, Vec<
                 Action::Quit,
             ]
             .into_iter()
-            .map(action)
+            .flat_map(|item| {
+                // On the Trash entry, the delete_list keys empty Trash.
+                let extra = (item == Action::DeleteList).then(|| {
+                    builtin(
+                        config.keys_for(Action::DeleteList),
+                        "help_empty_trash_entry",
+                    )
+                });
+                std::iter::once(action(item)).chain(extra)
+            })
             .collect(),
         ),
         ("help_editor", editor_entries),
@@ -4091,6 +4455,278 @@ mod tests {
         app.handle_key(key(KeyCode::Char('r')), &mut store, &config);
         assert!(!store.task(task.id).unwrap().deleted);
         assert!(app.visible.is_empty());
+    }
+
+    fn shift(character: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(character), KeyModifiers::SHIFT)
+    }
+
+    fn message(app: &App) -> &str {
+        app.message
+            .as_ref()
+            .map_or("", |message| message.text.as_str())
+    }
+
+    #[test]
+    fn delete_forever_defaults_to_no_and_clears_undo() {
+        let (_directory, mut store, config) = fixture();
+        let kept = store.create_task(&input(1, "Kept")).unwrap();
+        for title in ["First", "Second"] {
+            let task = store.create_task(&input(1, title)).unwrap();
+            store.set_deleted(task.id, task.version, true).unwrap();
+        }
+        let first = store.tasks().unwrap()[1].clone();
+        let mut app = App::new(&store, today()).unwrap();
+        app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
+        assert!(store.task(kept.id).unwrap().deleted);
+        assert!(app.undo.is_some());
+        app.set_view(View::Trash, &store).unwrap();
+        app.select_task_id(Some(first.id));
+        app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
+        assert!(matches!(
+            app.screen,
+            Screen::PurgeTaskConfirm { delete: false, .. }
+        ));
+        let display = rendered(&mut app, &config, 90, 24);
+        for text in [
+            "Delete this task forever?",
+            &format!("First #{}", first.id),
+            "This cannot be undone.",
+            "y Yes",
+        ] {
+            assert!(display.contains(text), "Missing {text}");
+        }
+        // Enter on the default No, Esc, and n all keep the task.
+        for keys in [
+            vec![key(KeyCode::Enter)],
+            vec![key(KeyCode::Esc)],
+            vec![key(KeyCode::Tab), key(KeyCode::Char('n'))],
+        ] {
+            if !matches!(app.screen, Screen::PurgeTaskConfirm { .. }) {
+                app.handle_key(key(KeyCode::Delete), &mut store, &config);
+            }
+            app.paste("Yes");
+            for event in keys {
+                app.handle_key(event, &mut store, &config);
+            }
+            assert!(matches!(app.screen, Screen::Navigation));
+            assert_eq!(store.task(first.id).unwrap(), first);
+            assert_eq!(app.selected_task().unwrap().id, first.id);
+        }
+        app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
+        app.handle_key(key(KeyCode::Right), &mut store, &config);
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        assert!(store.task(first.id).is_err());
+        assert!(app.visible.iter().all(|task| task.id != first.id));
+        assert_eq!(message(&app), "Deleted forever");
+        assert!(app.undo.is_none());
+        app.set_view(View::Planned, &store).unwrap();
+        app.handle_key(key(KeyCode::Char('u')), &mut store, &config);
+        assert_eq!(message(&app), "Nothing to undo");
+        assert!(store.task(kept.id).unwrap().deleted);
+    }
+
+    #[test]
+    fn delete_forever_reconfirms_external_edits_and_closes_after_restore() {
+        let (directory, mut store, config) = fixture();
+        let mut external = Store::open(&directory.path().join("tasks.db")).unwrap();
+        let task = store.create_task(&input(1, "Original")).unwrap();
+        let task = store.set_deleted(task.id, task.version, true).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.set_view(View::Trash, &store).unwrap();
+        app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
+        app.handle_key(key(KeyCode::Tab), &mut store, &config);
+        let mut renamed = TaskInput::from(&task);
+        renamed.title = "Renamed elsewhere".into();
+        let renamed = external
+            .update_task(task.id, task.version, &renamed)
+            .unwrap();
+        app.refresh_changes(&store, &config, today(), false)
+            .unwrap();
+        assert!(matches!(
+            &app.screen,
+            Screen::PurgeTaskConfirm { task, delete: false, changed: true }
+                if task.title == "Renamed elsewhere"
+        ));
+        let display = rendered(&mut app, &config, 90, 24);
+        assert!(display.contains("The task changed. Review it and confirm again."));
+        // A change between refreshes is caught by the store when confirming.
+        let mut edited = TaskInput::from(&renamed);
+        edited.description = "Edited again".into();
+        let edited = external
+            .update_task(task.id, renamed.version, &edited)
+            .unwrap();
+        app.handle_key(key(KeyCode::Char('y')), &mut store, &config);
+        assert!(matches!(
+            &app.screen,
+            Screen::PurgeTaskConfirm { task, delete: false, changed: true }
+                if task.version == edited.version
+        ));
+        assert_eq!(store.task(task.id).unwrap(), edited);
+        let restored = external
+            .set_deleted(task.id, edited.version, false)
+            .unwrap();
+        app.refresh_changes(&store, &config, today(), false)
+            .unwrap();
+        assert!(matches!(app.screen, Screen::Navigation));
+        assert_eq!(message(&app), "This task is no longer in Trash.");
+        assert_eq!(store.task(task.id).unwrap(), restored);
+        // A restore that the terminal has not seen yet also deletes nothing.
+        let trashed = store.set_deleted(task.id, restored.version, true).unwrap();
+        app.refresh(&store).unwrap();
+        app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
+        let restored = external
+            .set_deleted(task.id, trashed.version, false)
+            .unwrap();
+        app.handle_key(key(KeyCode::Char('y')), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        assert_eq!(message(&app), "This task is no longer in Trash.");
+        assert_eq!(store.task(task.id).unwrap(), restored);
+    }
+
+    #[test]
+    fn empty_trash_counts_hidden_tasks_and_reconfirms_a_changed_trash() {
+        let (directory, mut store, config) = fixture();
+        let mut external = Store::open(&directory.path().join("tasks.db")).unwrap();
+        let open = store.create_task(&input(1, "Open")).unwrap();
+        for title in ["Milk one", "Milk two", "Bread"] {
+            let task = store.create_task(&input(1, title)).unwrap();
+            store.set_deleted(task.id, task.version, true).unwrap();
+        }
+        let mut app = App::new(&store, today()).unwrap();
+        app.handle_key(shift('D'), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        assert_eq!(store.tasks().unwrap().len(), 4);
+        app.set_view(View::Trash, &store).unwrap();
+        app.filter = "milk".into();
+        app.query = Query::parse(&app.filter).unwrap();
+        app.refresh(&store).unwrap();
+        assert_eq!(app.visible.len(), 2);
+        app.handle_key(shift('D'), &mut store, &config);
+        assert!(matches!(
+            app.screen,
+            Screen::EmptyTrashConfirm {
+                delete: false,
+                from_picker: false,
+                ..
+            }
+        ));
+        let display = rendered(&mut app, &config, 90, 24);
+        for text in [
+            "Empty Trash?",
+            "In Trash: 3",
+            "including tasks the filter hides",
+            "This cannot be undone.",
+        ] {
+            assert!(display.contains(text), "Missing {text}");
+        }
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        assert_eq!(app.filter, "milk");
+        assert_eq!(store.tasks().unwrap().len(), 4);
+        app.handle_key(shift('D'), &mut store, &config);
+        app.handle_key(key(KeyCode::Left), &mut store, &config);
+        external.set_deleted(open.id, open.version, true).unwrap();
+        app.refresh_changes(&store, &config, today(), false)
+            .unwrap();
+        assert!(matches!(
+            &app.screen,
+            Screen::EmptyTrashConfirm { preview, delete: false, changed: true, .. }
+                if preview.count == 4
+        ));
+        let display = rendered(&mut app, &config, 90, 24);
+        assert!(display.contains("Trash changed. Review the count and confirm again."));
+        app.handle_key(key(KeyCode::Char('y')), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        assert!(store.tasks().unwrap().is_empty());
+        assert!(app.visible.is_empty());
+        assert_eq!(message(&app), "Trash emptied");
+        app.handle_key(shift('D'), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        assert_eq!(message(&app), "Trash is empty");
+    }
+
+    #[test]
+    fn empty_trash_from_the_picker_returns_to_the_trash_entry() {
+        let (directory, mut store, config) = fixture();
+        let mut external = Store::open(&directory.path().join("tasks.db")).unwrap();
+        for title in ["One", "Two"] {
+            let task = store.create_task(&input(1, title)).unwrap();
+            store.set_deleted(task.id, task.version, true).unwrap();
+        }
+        let mut app = App::new(&store, today()).unwrap();
+        app.open_picker();
+        app.select_picker_identity(RowIdentity::Trash);
+        assert!(rendered(&mut app, &config, 100, 24).contains("d Empty Trash"));
+        app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
+        app.handle_key(key(KeyCode::Tab), &mut store, &config);
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert!(matches!(app.screen, Screen::ListPicker));
+        assert_eq!(
+            app.picker_identity(app.picker.selection),
+            Some(RowIdentity::Trash)
+        );
+        assert!(store.tasks().unwrap().is_empty());
+        assert_eq!(message(&app), "Trash emptied");
+        assert!(rendered(&mut app, &config, 100, 24).contains("Trash (0)"));
+        app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
+        assert!(matches!(app.screen, Screen::ListPicker));
+        assert_eq!(message(&app), "Trash is empty");
+        // Trash emptied elsewhere closes the open confirmation.
+        let task = store.create_task(&input(1, "Three")).unwrap();
+        store.set_deleted(task.id, task.version, true).unwrap();
+        app.refresh(&store).unwrap();
+        app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
+        assert!(matches!(app.screen, Screen::EmptyTrashConfirm { .. }));
+        let preview = external.preview_empty_trash().unwrap();
+        external.empty_trash(&preview).unwrap();
+        app.refresh_changes(&store, &config, today(), false)
+            .unwrap();
+        assert!(matches!(app.screen, Screen::ListPicker));
+        assert_eq!(message(&app), "Trash is empty");
+        assert!(app.external_update);
+        assert!(rendered(&mut app, &config, 100, 24).contains("Trash is empty"));
+    }
+
+    #[test]
+    fn delete_forever_shortens_a_long_title_and_keeps_the_id() {
+        let (_directory, mut store, config) = fixture();
+        let title = "Very long title ".repeat(70);
+        let task = store.create_task(&input(1, &title)).unwrap();
+        store.set_deleted(task.id, task.version, true).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.set_view(View::Trash, &store).unwrap();
+        app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
+        for (width, height) in [(80, 24), (38, 18)] {
+            let display = rendered(&mut app, &config, width, height);
+            let id = format!("#{}", task.id);
+            for text in ["Delete", "…", id.as_str(), "This cannot be undone.", "Yes"] {
+                assert!(display.contains(text), "Missing {text} at {width}x{height}");
+            }
+            assert!(!display.contains(tr(config.language, "terminal_too_small")));
+        }
+        assert_eq!(shortened_title("Buy milk", " #7", 40), "Buy milk #7");
+        let long = shortened_title(&"word ".repeat(50), " #7", 20);
+        assert!(long.ends_with("… #7"));
+        assert!(TextLayout::new(&long, 20).lines.len() <= PURGE_TITLE_LINES);
+    }
+
+    #[test]
+    fn help_lists_delete_forever_and_empty_trash() {
+        let (_directory, store, config) = fixture();
+        let mut app = App::new(&store, today()).unwrap();
+        app.set_view(View::Trash, &store).unwrap();
+        app.open_help();
+        let help = rendered(&mut app, &config, 100, 80);
+        assert!(help.contains("Delete forever in Trash"));
+        assert!(help.contains("Empty Trash from the Trash entry"));
+        let empty_trash = help_lines(&config, HelpOrigin::Tasks)
+            .iter()
+            .map(|line| line.to_string())
+            .find(|line| line.ends_with(" Empty Trash"))
+            .unwrap();
+        assert!(empty_trash.starts_with("D "));
     }
 
     #[test]
@@ -5530,15 +6166,25 @@ mod tests {
         let mut app = App::new(&store, today()).unwrap();
         app.open_picker();
         assert!(rendered(&mut app, &config, 100, 24).contains("Personal (0) [default]"));
-        for identity in [
-            RowIdentity::AllTasks,
-            RowIdentity::Trash,
-            RowIdentity::List(1),
-        ] {
+        for identity in [RowIdentity::AllTasks, RowIdentity::List(1)] {
             app.select_picker_identity(identity);
             app.handle_key(key(KeyCode::Delete), &mut store, &config);
             assert!(matches!(app.screen, Screen::ListPicker));
         }
+        // Delete on Trash offers to empty it instead of deleting a list.
+        app.select_picker_identity(RowIdentity::Trash);
+        app.handle_key(key(KeyCode::Delete), &mut store, &config);
+        assert!(matches!(
+            app.screen,
+            Screen::EmptyTrashConfirm {
+                delete: false,
+                from_picker: true,
+                ..
+            }
+        ));
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(matches!(app.screen, Screen::ListPicker));
+        assert_eq!(store.tasks().unwrap(), original);
         app.select_picker_identity(RowIdentity::List(work.id));
         app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
         let display = rendered(&mut app, &config, 90, 24);
@@ -8315,10 +8961,19 @@ mod tests {
         store.set_deleted(task.id, task.version, true).unwrap();
         app.set_view(View::Trash, &store).unwrap();
         let trash = rendered(&mut app, &config, 80, 24);
-        assert!(trash.contains("r Restore"));
-        assert!(trash.contains("F4 Copy"));
+        for text in ["r Restore", "d Delete forever", "D Empty Trash", "F4 Copy"] {
+            assert!(trash.contains(text), "Missing {text}");
+        }
         assert!(!trash.contains("Space Done"));
         assert!(!trash.contains("m Move"));
+        let danish_trash = rendered(
+            &mut app,
+            &Config::from_toml("language = 'da'").unwrap(),
+            80,
+            24,
+        );
+        assert!(danish_trash.contains("d Slet permanent"));
+        assert!(danish_trash.contains("D Tøm papirkurven"));
         app.handle_key(key(KeyCode::Char('/')), &mut store, &config);
         let filter = rendered(&mut app, &config, 80, 24);
         assert!(filter.contains(tr(Language::En, "filter_hint")));

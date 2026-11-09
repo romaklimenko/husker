@@ -91,7 +91,8 @@ Run `husker config --example` to print all default settings.
 Use `--config FILE` to read an existing configuration file from another path.
 
 Read [Use Husker](docs/usage.md) for the editor, date groups, search syntax,
-History, Trash, moving tasks, undo, list removal, configuration, and backups.
+History, Trash and permanent deletion, moving tasks, undo, list removal,
+configuration, and backups.
 
 Click a task to select it or double-click to edit it. Press F4 to open plain
 task text for copying. Press F5 to refresh after another process changes tasks.
@@ -123,10 +124,17 @@ The default list stays first among them and is marked as the default. Husker rem
 Press Delete on a list to review its removal, then `y` to confirm.
 After confirmation, every task moves to the default list and only the list is removed.
 
+Press `d` on a task to move it to Trash. Choose Trash in the list picker
+and press `r` to restore the selected task. To remove tasks for good, press
+`d` in Trash to delete the selected task forever, or `D` to empty Trash.
+Delete on the Trash entry in the list picker also empties Trash. Husker
+asks you to confirm each of these, and a task deleted forever cannot be
+restored or undone.
+
 ## Current scope
 
 Husker supports local lists and tasks, plain text descriptions, planned dates,
-recoverable Trash, one-step undo of task actions, mouse navigation,
+Trash with restore and permanent deletion, one-step undo of task actions, mouse navigation,
 configurable action keys, JSON commands, and local MCP tools.
 Write `#words` in titles or descriptions when useful.
 Search treats those words as ordinary text.
@@ -145,8 +153,9 @@ times, newest first. History headings show completion or cancellation dates.
 Open the editor to see a historical task's Planned date. History retains
 current task records, not every past edit or status change.
 
-Recurrence, reminders, subtasks, priorities, synchronization, an event log,
-and permanent task deletion are not included.
+Recurrence, reminders, subtasks, priorities, synchronization, and an event
+log are not included. Permanent deletion is available only in the terminal
+interface. No command or MCP tool deletes a task forever.
 
 ## Work on the project
 
