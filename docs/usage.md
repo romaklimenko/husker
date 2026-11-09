@@ -6,7 +6,7 @@ This guide is for people who want to capture and manage tasks from a terminal.
 
 Run `husker` in an interactive terminal. Press `n`, enter a task title, and
 press Ctrl+S to save. For example, enter `Buy milk`.
-The task appears in Sometime because it has no due date.
+The task appears in Sometime because it has no planned date.
 Ctrl+Enter also saves when your terminal sends it as a distinct key.
 
 Press Enter on a task to open its editor at Description. New tasks start at
@@ -16,7 +16,7 @@ Title. Use Tab and Shift+Tab to move between the fields:
 | --- | --- |
 | Title | A nonempty task title, such as `Buy milk`. |
 | Description | Plain text. Press Enter here to add another line. |
-| Due date | `2026-11-09`, a compact date such as `261109`, or no date. |
+| Planned date | `2026-11-09`, a compact date such as `261109`, or no date. |
 | List | Press Enter to choose an existing list, such as `Inbox`. |
 
 Description text wraps at the editor's width. Words move to the next visual
@@ -35,11 +35,11 @@ in the editor. Use an arrow key or Tab to select Yes, then press Enter to discar
 Esc or Ctrl+G at the prompt also returns to editing.
 An unchanged editor closes without a prompt.
 Navigation shortcuts such as `q`, `d`, and `l` are ordinary text in Title
-and Description. Due date also accepts the `t`, `T`, `w`, and `x` presets
+and Description. Planned date also accepts the `t`, `T`, `w`, and `x` presets
 described below. The List field is a selector: Enter or `l` opens its picker.
 The selector does not accept typing or paste.
 
-Remove an existing due date to move an open task to Sometime.
+Remove an existing planned date to move an open task to Sometime.
 A done or cancelled task stays in its status section.
 Write `#shopping` in the title or description if you want to find that text later.
 Husker has no separate tags or readiness fields.
@@ -54,7 +54,7 @@ the changed draft, then reopen the task to load its current values.
 
 ## Enter a date without separators
 
-In the editor's Due date field, type a date in any of these forms:
+In the editor's Planned date field, type a date in any of these forms:
 
 | Input | Result |
 | --- | --- |
@@ -70,7 +70,7 @@ Once the entry shows a full year, that year stays fixed. If an unfinished
 `0101` entry stays compact across New Year, saving it uses the new year.
 
 Press Tab or Shift+Tab, or click another field, to turn a valid entry into
-`YYYY-MM-DD`. This changes the draft only. Ctrl+Z in Due date restores the
+`YYYY-MM-DD`. This changes the draft only. Ctrl+Z in Planned date restores the
 original entry in one step. You can also press Ctrl+S directly to save a
 compact date without leaving the field first.
 
@@ -79,7 +79,7 @@ stays available for correction when you leave the field. Save reports the
 invalid date and keeps the editor open.
 
 An empty field shows a grey `YYYY-MM-DD` placeholder. Leave the field empty
-to save no due date. The placeholder is not part of your task text.
+to save no planned date. The placeholder is not part of your task text.
 
 These compact forms work in the task editor. Use `YYYY-MM-DD` in commands,
 MCP requests, and search filters, such as `due:2026-11-09`.
@@ -112,18 +112,18 @@ Husker keeps the original list identity and does not substitute another list
 that happens to have the same name. Undoing to a removed list also requires
 a new valid choice before Save.
 
-## Set a due date with a shortcut
+## Set a planned date with a shortcut
 
 Select a task in All tasks, an ordinary list, or History and use one of these keys:
 
-| Key | Due date |
+| Key | Planned date |
 | --- | --- |
 | `t` | Today. |
 | `T` (Shift+T) | Tomorrow. |
 | `w` | Next week on Monday. |
-| `x` | No due date. |
+| `x` | No planned date. |
 
-From a task row, the new due date saves immediately. Other task fields stay
+From a task row, the new planned date saves immediately. Other task fields stay
 unchanged. A done task stays done and keeps its completion date and time.
 The same task stays selected if it still matches your filter. For example,
 pressing `t` under `due:none` removes that task from the filtered results.
@@ -133,13 +133,13 @@ Next week means the next Monday after today. On Monday, November 9, `w`
 sets November 16. On Sunday, November 8, it sets November 9.
 Husker uses your computer's current local date, including after midnight.
 
-In the editor, focus Due date with Tab and use the same keys. A preset
+In the editor, focus Planned date with Tab and use the same keys. A preset
 replaces the whole field, even if you have selected only part of its text.
 It does not save the task or move to another field. Press Ctrl+S to save.
 Ctrl+Z restores the previous field text, cursor, and selection in one step.
 You can still type a date such as `2026-11-09` manually.
 
-The Due date field shows the configured shortcuts while it is focused.
+The Planned date field shows the configured shortcuts while it is focused.
 Press `?` from navigation to find all four actions in Help.
 To rebind a preset, set an action such as `due_today = ["ctrl+t"]` under
 `[keys]`. Use `due_tomorrow`, `due_next_week`, or `clear_due` for the others.
@@ -147,7 +147,7 @@ An empty array disables that preset, for example `clear_due = []`.
 
 ## Edit text with the keyboard
 
-Use these shortcuts in Title, Description, Due date, the filter input,
+Use these shortcuts in Title, Description, Planned date, the filter input,
 or a list-name form. List has the choice controls described above:
 
 | Key | Result |
@@ -256,30 +256,33 @@ and counts before choosing Yes. An editor opened before the move keeps
 your draft. Reopen that task to load its new list before editing again.
 A stale editor cannot overwrite the transferred task.
 
-## Plan by due date
+## Plan tasks by date
 
-Set an open task's Due date in the editor to place the task in a dated group.
+Planned date is the day you intend to work on the task. For example, set a
+report's Planned date to `2026-11-10` if you intend to work on it that Tuesday.
+
+Set an open task's Planned date in the editor to place the task in a dated group.
 Husker uses your computer's local calendar date to group open tasks:
 
 | Group | Tasks shown |
 | --- | --- |
-| Overdue | Due before today. |
-| Today | Due today. |
-| Tomorrow | Due tomorrow. |
-| An exact date | Due at least two days after today. Each date has its own heading. |
-| Sometime | No due date. Shown as Engang in Danish. |
+| Earlier | Planned before today. Shown as Tidligere in Danish. |
+| Today | Planned for today. |
+| Tomorrow | Planned for tomorrow. |
+| An exact date | Planned at least two days after today. Each date has its own heading. |
+| Sometime | No planned date. Shown as Engang in Danish. |
 
-If today is November 8, tasks due on November 10 and November 16 appear
+If today is November 8, tasks planned for November 10 and November 16 appear
 under separate headings for those dates. Today and Tomorrow also include
 the actual date, such as `Tomorrow - 2026-11-09 Mon W46`.
 Future dates appear in ascending order. Sometime is the
-last open-task group. Overdue can contain several dates, so its heading
+last open-task group. Earlier can contain several dates, so its heading
 does not claim a single day.
 
 Done today and Cancelled today follow the open tasks. Both headings show
 today's actual date. For example, completing
-an undated task moves it from Sometime to Done today without adding a due date.
-A task completed today appears there even if its stored due date is overdue.
+an undated task moves it from Sometime to Done today without adding a planned date.
+A task completed today appears there even if its planned date is before today.
 If a status filter includes older tasks, Done and Cancelled appear afterward.
 Within each finished section, newer status dates appear first. Tasks without
 a recorded status date appear last. Within one date, the most recent recorded
@@ -299,10 +302,10 @@ At a year boundary, `2027-01-01 Fri 2026-W53` shows that January 1 belongs
 to the final ISO week of 2026.
 
 Use Alt+Up or Alt+Down to change the order of open tasks sharing the same
-due date. Undated open tasks can move among other open tasks in Sometime.
+planned date. Undated open tasks can move among other open tasks in Sometime.
 Done and cancelled tasks use their recorded status dates and times and cannot
 be reordered manually.
-Reordering never changes a due date or moves a task between lists.
+Reordering never changes a planned date or moves a task between lists.
 With a filter active, reordering uses neighboring tasks in the visible results.
 
 ## Find tasks
@@ -319,15 +322,16 @@ Combine terms to narrow the results. Every term must match:
 | `l:private` | Tasks in the list named `Private`. |
 | `#shopping` | Tasks whose title or description contains `#shopping`. |
 | `l:private milk #shopping` | Tasks matching all three terms. |
-| `due:today` | Tasks due today. |
-| `due:2026-11-08` | Tasks due on that exact date. |
-| `due:none` or `due:undated` | Tasks with no due date. |
+| `due:today` | Tasks planned for today. |
+| `due:2026-11-08` | Tasks planned for that exact date. |
+| `due:none` or `due:undated` | Tasks with no planned date. |
 | `s:open` | Open tasks only. |
 | `s:done` | Completed tasks. |
 | `s:cancelled` | Cancelled tasks. |
 | `s:all` | Tasks of every status in the current view. |
 
-Use any of these date-group tokens with `due:`: `overdue`, `today`,
+The interface calls the field Planned date, or Planlagt dato in Danish.
+Search keeps the `due:` name. For example, `due:overdue` finds tasks planned before today. Use any of these date-group tokens with `due:`: `overdue`, `today`,
 `tomorrow`, `soon`, `next`, or `undated`.
 `due:soon` still means two through seven days after today. `due:next` means
 eight or more days after today. These filters keep their ranges even though
@@ -374,10 +378,16 @@ descending task ID. Tasks without a recorded date appear under Unknown date.
 Husker records the timestamp in UTC and keeps a separate local date for
 headings and the daily task view. It does not invent times for older tasks.
 
+History rows show the task without an appended planned date. For example,
+a task planned for November 12 and completed on November 9 appears under
+the November 9 completion heading. Press Enter to see November 12 in its
+Planned date field. A missing completion date stays Unknown date even if
+the task has a planned date.
+
 Press `/` to search History. For example, `s:done milk` finds completed tasks
 containing `milk`. `s:cancelled` shows cancelled tasks. `s:all` keeps both
 closed statuses, and `s:open` matches nothing in History.
-Due filters still check the task's due date. `due:today` does not mean
+Due filters still check the task's planned date. `due:today` does not mean
 completed today.
 
 Press Enter to edit a historical task or F4 to read and copy its text.
@@ -417,13 +427,13 @@ it was completed today. Restoring a task does not reset its completion date.
 
 Trash counts every deleted task, regardless of status. Tasks in Trash are
 excluded from ordinary task views even when the query is `s:all`.
-Trash keeps the task's title, description, due date, status date, and list membership.
+Trash keeps the task's title, description, planned date, status date, and list membership.
 Trash uses the heading `All tasks > Trash` and has no date-group headings.
 Press Esc to return to your previous All tasks view.
 
 ## Use the mouse and copy text
 
-Select text with the keyboard in Title, Description, Due date, a filter input,
+Select text with the keyboard in Title, Description, Planned date, a filter input,
 or a list-name form, then press Ctrl+C to copy that selection. A message confirms success.
 Copying preserves your unsaved text, cursor, and selection.
 Ctrl+C has no Husker clipboard action outside those inputs.
@@ -468,7 +478,7 @@ This notice has no time limit.
 
 Other status messages disappear after five seconds. For example, `Saved`
 clears after you save a task, even if you navigate to another list.
-Errors also clear after five seconds. If you enter the invalid due date
+Errors also clear after five seconds. If you enter the invalid planned date
 `2026-02-30`, the error disappears but the editor keeps your unsaved text.
 Correct the date and press Ctrl+S to try again.
 
@@ -484,28 +494,45 @@ when all actions do not fit on screen.
 
 | Key | Action |
 | --- | --- |
-| Up or `k` | Select the previous row. |
-| Down or `j` | Select the next row. |
+| Up or `k` | Select the previous item, wrapping from first to last. |
+| Down or `j` | Select the next item, wrapping from last to first. |
+| Home or `g` | Select the first item. |
+| End or `G` | Select the last item. |
 | Enter | Choose a picker entry or edit a task. |
 | `n` | Create a task outside History and Trash. |
 | `N` | Create a list from the picker. |
 | `R` | Rename an ordinary list from the picker. |
 | `l` | Open or cancel the list picker. |
 | `h` | Open History, or return to the view where you opened it. |
-| `t`, `T`, `w`, `x` | Set today, tomorrow, next Monday, or no due date outside Trash. |
+| `t`, `T`, `w`, `x` | Set today, tomorrow, next Monday, or no planned date outside Trash. |
 | `/` | Edit the task filter. |
 | Esc | Return from a list to All tasks, return from History, or cancel the picker. |
 | Space | Toggle done status. |
 | `c` | Toggle cancelled status. |
 | `d` or Delete | Move a task to Trash, or review deleting a list in the picker. |
 | `r` | Restore a task from Trash, or reopen a task in History. |
-| Alt+Up or Alt+Down | Reorder open tasks with the same due date, or ordinary lists in the picker. |
+| Alt+Up or Alt+Down | Reorder open tasks with the same planned date, or ordinary lists in the picker. |
 | F2 | Toggle mouse capture. |
 | F3 | Choose English or Dansk and save the interface language. |
 | F4 | Open plain task text for copying. |
 | F5 | Refresh database contents. |
 | `?` | Open help. Esc closes help. |
 | `q` | Quit. |
+
+Wrapping and first/last jumps work in task views, including History and
+Trash, and in both list pickers and the language picker. With a filter
+applied, the keys move only through matching tasks. Group headings are
+skipped, and the selected item scrolls into view. An empty result stays empty.
+A result with one item keeps that item selected.
+
+For example, press End to select the last task, then Down to return to the
+first. In the language picker, Home selects English and End selects Dansk.
+Press Enter to apply the selected language; moving selection alone does not save it.
+
+Mouse-wheel movement stops at each end. Alt+Up and Alt+Down reordering also
+stops at the allowed boundary. Text editing and Help or F4 copy-view scrolling
+keep their existing boundaries. In text fields, Home/End move the cursor
+and `g`/`G` enter text.
 
 In the task editor, Ctrl+Enter or Ctrl+S saves. Esc or Ctrl+G asks before
 discarding changed fields. An unchanged editor closes immediately.
@@ -564,7 +591,7 @@ Use `all_tasks` to change the root shortcut, for example
 override, such as `planned = ["p"]`. Use only one of those two names.
 The All tasks action has no default shortcut. Use Esc to leave a scoped list,
 or choose All tasks in the picker. Neither `a` nor `p` navigates by default.
-The new action names are `history`, `reopen`, `delete_list`, and `language`.
+Use `history`, `reopen`, `delete_list`, and `language` for those actions.
 For example, `delete_list = []` disables removal shortcuts in the picker.
 Under `[keys]`, `language = ["f6"]` changes the language-picker shortcut to F6.
 
@@ -575,6 +602,16 @@ Use `plus` for the `+` key. Run this command to see every action and default:
 ```text
 husker config --example
 ```
+
+Use `first` and `last` to customize boundary selection. For example,
+`first = ["ctrl+home"]` replaces both Home and `g`. Use `last = []` to disable
+both End and `G` for selecting the last item.
+
+If a custom action already uses `g`, `G`, Home, or End in a selection screen,
+the new defaults can cause a shortcut conflict. For example,
+`history = ["g"]` conflicts with First. Keep that History shortcut by adding
+`first = []` under `[keys]`, or rebind First to another key. Use `last = []`
+for an existing action that conflicts with Last.
 
 Husker rejects an unknown setting, action, key, or conflicting shortcut.
 For example, `quit = ["n"]` conflicts with task creation.
@@ -595,7 +632,8 @@ Relative paths start from the directory where you ran Husker.
 ## Run commands from scripts
 
 Use subcommands when you want to manage tasks without opening the terminal
-interface. For example:
+interface. The UI label Planned date still uses `--due` in commands and
+`due` in JSON. For example:
 
 ```text
 husker list-add Private
@@ -653,7 +691,7 @@ Every command accepts `--profile DIRECTORY` to select its task collection.
 
 ## Update an existing profile
 
-Back up your profile before updating to 0.10.0.
+Back up your profile before updating to 0.11.0.
 Follow [Back up your tasks](#back-up-your-tasks), then keep every old Husker
 process closed, including MCP clients, until the upgrade is complete.
 
@@ -663,8 +701,12 @@ Install the current version from the repository:
 cargo install --path . --locked
 ```
 
-Version 0.10.0 uses schema version 4, the same database format as 0.9.0.
-Updating from 0.9.0 requires no database migration.
+Version 0.11.0 uses schema version 4, the same database format as 0.9.0
+and 0.10.0. Updating from either version requires no database migration.
+Planned date and Earlier are new interface labels. Existing `--due`, `due:`
+filters, JSON fields, and `due_*` shortcut settings keep their names.
+Check any custom `g`, `G`, Home, or End bindings against the new First and
+Last defaults. Rebind them or set `first = []` or `last = []` under `[keys]`.
 
 If you are updating from 0.8.0 or earlier, run `husker lists` once to upgrade
 the database before reconnecting a read-only MCP client. For a custom profile,

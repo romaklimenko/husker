@@ -18,6 +18,8 @@ Husker SHALL classify every task into exactly one due-date bucket from its store
 | Next | `next` | The due date is at least eight days after today. |
 | Sometime | `undated` | The task has no due date. |
 
+The terminal displays the `overdue` bucket as Earlier in English and Tidligere in Danish.
+The accepted filter remains `due:overdue`; no `due:earlier` or `due:tidligere` alias is added.
 The terminal displays the undated group as `Sometime` in English and `Engang` in Danish.
 The internal group key remains `undated`. Both `due:none` and `due:undated` match tasks without due dates.
 The display names do not add `due:sometime` or `due:engang` filter values.
@@ -247,7 +249,7 @@ Husker SHALL resolve due-date presets from the current local calendar date using
 | Next week (Monday) | `due_next_week` | The first Monday strictly after the current date. |
 | Clear due date | `clear_due` | No due date. |
 
-The same calculation applies to navigation and the Due date editor field.
+The same calculation applies to navigation and the Planned date editor field.
 Tests supply the current date explicitly. Runtime actions use the local day at the keypress, including after crossing midnight.
 Monday advances seven days for Next week. Sunday advances one day.
 Calendar arithmetic handles month, year, and leap-day boundaries without treating a day as an elapsed 24-hour interval.

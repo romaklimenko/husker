@@ -1,7 +1,7 @@
 # Husker
 
 Husker is a local todo app for people who manage tasks from a terminal.
-Use the keyboard to capture tasks, organize lists, and plan by due date.
+Use the keyboard to capture tasks, organize lists, and choose a planned date.
 English and Danish interface text are included.
 
 ## Build and start Husker
@@ -17,8 +17,8 @@ Husker opens All tasks. Press `n` to create a task, enter a title,
 and press Ctrl+S to save. Esc asks before discarding changed task fields.
 Press `?` to see the shortcuts or `q` to quit.
 With a task selected, press `t` for today, `T` for tomorrow, `w` for next
-Monday, or `x` to clear its due date. These changes save immediately.
-The same shortcuts in the editor's Due date field change the draft until you save.
+Monday, or `x` to clear its planned date. These changes save immediately.
+The same shortcuts in the editor's Planned date field change the draft until you save.
 In 2026, you can also type `20261109`, `261109`, or `1109` for November 9.
 The four-digit form uses the current local year. To move a task to another
 list, focus List in the editor and press Enter to choose its destination.
@@ -102,6 +102,10 @@ Use Ctrl+Left and Ctrl+Right to move by word, Shift with movement keys to
 select text, Ctrl+C to copy the selection, and Ctrl+Z to undo.
 The editor heading shows an existing task's ID.
 
+Use Up/Down or `k`/`j` to move through tasks and picker entries. Selection
+wraps at either end. Home or `g` selects the first item; End or `G` selects
+the last. These keys also work in History, Trash, and the language picker.
+
 Press `l` to open the list picker over your tasks. Choose a list to show a
 view such as `All tasks > Work`. Esc returns to All tasks with your previous
 filter, selected task, and scroll position. Esc inside the picker cancels it.
@@ -115,19 +119,22 @@ After confirmation, every task moves to the default list and only the list is re
 
 ## Current scope
 
-Husker supports local lists and tasks, plain text descriptions, due dates,
+Husker supports local lists and tasks, plain text descriptions, planned dates,
 recoverable Trash, mouse navigation, configurable action keys, JSON commands,
 and local MCP tools. Write `#words` in titles or descriptions when useful.
 Search treats those words as ordinary text.
 Concurrent task edits use version checks so an older edit cannot silently
 overwrite a newer save.
-Future open tasks appear under their exact due dates. Today and Tomorrow
+Open tasks planned before today appear under Earlier, or Tidligere in Danish.
+Future open tasks appear under their exact planned dates. Today and Tomorrow
 headings also show the date, weekday, and ISO week. Open tasks without dates appear under
 Sometime, or Engang in Danish. Tasks completed or cancelled today appear in
 Done today or Cancelled today after the open tasks.
 Press `h` to see older completed and cancelled tasks in History. Press `r`
 there to reopen a task. Same-day completions use their recorded completion
-times, newest first. History retains current task records, not every past edit or status change.
+times, newest first. History headings show completion or cancellation dates.
+Open the editor to see a historical task's Planned date. History retains
+current task records, not every past edit or status change.
 
 Recurrence, reminders, subtasks, priorities, synchronization, an event log,
 and permanent task deletion are not included.

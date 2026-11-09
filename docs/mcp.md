@@ -6,7 +6,7 @@ The client starts Husker as a local process and communicates over standard input
 
 ## Install or update Husker
 
-This guide describes Husker 0.10.0 and its task tools.
+This guide describes Husker 0.11.0 and its task tools.
 Close running Husker instances before updating the executable.
 Disconnect MCP clients that already use Husker, then run this command from the source directory:
 
@@ -225,7 +225,7 @@ Removing a client registration does not delete your Husker tasks.
 
 After connecting a writable `Private` server, try these requests:
 
-- "Show my Husker tasks due today."
+- "Show my Husker tasks planned for today."
 - "Add Buy milk #shopping to Husker."
 - "Show completed Husker tasks."
 - "Restore Buy milk from Husker's Trash."
@@ -234,6 +234,8 @@ An empty search returns open tasks and tasks completed or cancelled today, outsi
 Ask for open tasks only when that is what you need. The agent can use `s:open`.
 The agent can use the [same search syntax as the terminal](usage.md#find-tasks), such as `due:today` or `s:done`.
 Use `s:done` or `s:cancelled` to retrieve older closed tasks as well as today's.
+The terminal calls the task date Planned date and the past-date group Earlier.
+MCP keeps the `due` field and `due:` query tokens, including `due:overdue`.
 Due filters always inspect the stored due date, even for completed tasks.
 The terminal's date-preset keys do not add MCP arguments. Agents still send
 ISO dates such as `2026-11-09`, or `clear_due = true` to remove a date.
@@ -244,7 +246,7 @@ ranges even though the terminal displays individual future-date headings.
 Tasks have no separate tags or readiness fields.
 Searching another list with `l:Work` cannot broaden the connection's access.
 Task searches return up to 100 results by default and allow pages of up to 200.
-Results follow the [planning order](usage.md#plan-by-due-date). Open tasks in
+Results follow the [planning order](usage.md#plan-tasks-by-date). Open tasks in
 due-date groups come first, followed by Done today, Cancelled today, Done,
 and Cancelled. Closed tasks use newest status dates first within each group,
 then newest recorded times within the same date. Unknown times follow known

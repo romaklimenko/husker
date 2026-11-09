@@ -85,7 +85,7 @@ pub fn tr(language: Language, key: &str) -> &'static str {
         "rename_list" => ("Rename list", "Omdøb liste"),
         "title" => ("Title", "Titel"),
         "description" => ("Description", "Beskrivelse"),
-        "due" => ("Due date", "Forfaldsdato"),
+        "due" => ("Planned date", "Planlagt dato"),
         "due_format_hint" => (
             "YYYY-MM-DD / YYYYMMDD / YYMMDD / MMDD",
             "YYYY-MM-DD / YYYYMMDD / YYMMDD / MMDD",
@@ -99,7 +99,7 @@ pub fn tr(language: Language, key: &str) -> &'static str {
             "List unavailable. Choose another list.",
             "Listen findes ikke. Vælg en anden liste.",
         ),
-        "overdue" => ("Overdue", "Overskredet"),
+        "overdue" => ("Earlier", "Tidligere"),
         "today" => ("Today", "I dag"),
         "tomorrow" => ("Tomorrow", "I morgen"),
         "soon" => ("Soon", "Snart"),
@@ -157,8 +157,8 @@ pub fn tr(language: Language, key: &str) -> &'static str {
         "help" => ("Help", "Hjælp"),
         "unbound" => ("unbound", "ingen genvej"),
         "editor_hint" => (
-            "Edit the fields. A blank due date removes the date.",
-            "Rediger felterne. En tom forfaldsdato fjerner datoen.",
+            "Edit the fields. A blank planned date removes the date.",
+            "Rediger felterne. En tom planlagt dato fjerner datoen.",
         ),
         "editor_keys_hint" => (
             "Ctrl+Left/Right word | Shift select | Ctrl+Z/Y undo/redo",
@@ -184,6 +184,8 @@ pub fn tr(language: Language, key: &str) -> &'static str {
         ),
         "action_up" => ("Move up", "Gå op"),
         "action_down" => ("Move down", "Gå ned"),
+        "action_first" => ("Select first item", "Vælg første punkt"),
+        "action_last" => ("Select last item", "Vælg sidste punkt"),
         "action_open" => ("Open", "Åbn"),
         "action_new_task" => ("New task", "Ny opgave"),
         "action_new_list" => ("New list", "Ny liste"),
@@ -194,13 +196,10 @@ pub fn tr(language: Language, key: &str) -> &'static str {
         "action_reopen" => ("Reopen task", "Genåbn opgave"),
         "action_delete_list" => ("Delete list", "Slet liste"),
         "action_filter" => ("Filter tasks", "Filtrer opgaver"),
-        "action_due_today" => ("Set due date to today", "Sæt forfaldsdato til i dag"),
-        "action_due_tomorrow" => ("Set due date to tomorrow", "Sæt forfaldsdato til i morgen"),
-        "action_due_next_week" => (
-            "Set due date to next Monday",
-            "Sæt forfaldsdato til næste mandag",
-        ),
-        "action_clear_due" => ("Clear due date", "Fjern forfaldsdato"),
+        "action_due_today" => ("Plan for today", "Planlæg til i dag"),
+        "action_due_tomorrow" => ("Plan for tomorrow", "Planlæg til i morgen"),
+        "action_due_next_week" => ("Plan for next Monday", "Planlæg til næste mandag"),
+        "action_clear_due" => ("Clear planned date", "Fjern planlagt dato"),
         "next_monday" => ("Next Monday", "Næste mandag"),
         "clear_due" => ("Clear date", "Fjern dato"),
         "action_toggle_done" => ("Toggle done", "Skift udført"),
@@ -252,7 +251,7 @@ fn danish_error(message: &str) -> String {
         "The default list cannot be deleted." => "Standardlisten kan ikke slettes.",
         "Only open tasks can be reordered." => "Kun åbne opgaver kan ændre rækkefølge.",
         "The due date is outside the supported calendar range." => {
-            "Forfaldsdatoen ligger uden for det understøttede datointerval."
+            "Den planlagte dato ligger uden for det understøttede datointerval."
         }
         "The configuration file is read-only." => "Konfigurationsfilen er skrivebeskyttet.",
         "The configuration changed while saving. Try again." => {

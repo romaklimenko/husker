@@ -156,6 +156,33 @@ fn due_preset(action: Action) -> Option<DuePreset> {
     }
 }
 
+fn navigation_selection(current: usize, count: usize, action: Action) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    let last = count - 1;
+    let current = current.min(last);
+    match action {
+        Action::First => 0,
+        Action::Last => last,
+        Action::Up => {
+            if current == 0 {
+                last
+            } else {
+                current - 1
+            }
+        }
+        Action::Down => {
+            if current == last {
+                0
+            } else {
+                current + 1
+            }
+        }
+        _ => current,
+    }
+}
+
 #[derive(Clone, Debug)]
 struct TaskEditor {
     original: Option<Task>,
@@ -1047,13 +1074,9 @@ impl App {
         match &mut self.screen {
             Screen::EditorListPicker { picker, .. } => {
                 match action {
-                    Some(Action::Up | Action::Down) => {
-                        picker.selection = if action == Some(Action::Down) {
-                            picker.selection.saturating_add(1)
-                        } else {
-                            picker.selection.saturating_sub(1)
-                        }
-                        .min(self.lists.len().saturating_sub(1));
+                    Some(action @ (Action::Up | Action::Down | Action::First | Action::Last)) => {
+                        picker.selection =
+                            navigation_selection(picker.selection, self.lists.len(), action);
                         picker
                             .state
                             .select((!self.lists.is_empty()).then_some(picker.selection));
@@ -1075,8 +1098,14 @@ impl App {
             }
             Screen::Language { selected, .. } => {
                 match action {
-                    Some(Action::Up) => *selected = Language::En,
-                    Some(Action::Down) => *selected = Language::Da,
+                    Some(action @ (Action::Up | Action::Down | Action::First | Action::Last)) => {
+                        let index = usize::from(*selected == Language::Da);
+                        *selected = if navigation_selection(index, 2, action) == 0 {
+                            Language::En
+                        } else {
+                            Language::Da
+                        };
+                    }
                     Some(Action::Apply) => self.pending_language = Some(*selected),
                     Some(Action::Back) => {
                         let Screen::Language { previous, .. } =
@@ -1100,12 +1129,12 @@ impl App {
                     }
                     Some(Action::AllTasks) => self.set_view(View::Planned, store)?,
                     Some(Action::Open) => self.choose_picker(store)?,
-                    Some(Action::Up) => {
-                        self.picker.selection = self.picker.selection.saturating_sub(1);
-                        self.clamp_picker();
-                    }
-                    Some(Action::Down) => {
-                        self.picker.selection = self.picker.selection.saturating_add(1);
+                    Some(action @ (Action::Up | Action::Down | Action::First | Action::Last)) => {
+                        self.picker.selection = navigation_selection(
+                            self.picker.selection,
+                            self.lists.len() + 2,
+                            action,
+                        );
                         self.clamp_picker();
                     }
                     Some(Action::NewList) => {
@@ -1369,12 +1398,8 @@ impl App {
         };
         match action {
             Action::Quit => return Ok(true),
-            Action::Up => {
-                self.selection = self.selection.saturating_sub(1);
-                self.clamp_selection();
-            }
-            Action::Down => {
-                self.selection = self.selection.saturating_add(1);
+            action @ (Action::Up | Action::Down | Action::First | Action::Last) => {
+                self.selection = navigation_selection(self.selection, self.row_count(), action);
                 self.clamp_selection();
             }
             Action::Lists => {
@@ -2182,6 +2207,7 @@ impl App {
             };
             let date = task
                 .due
+                .filter(|_| !history)
                 .map(|date| format!("  {}", date_label(date, language)))
                 .unwrap_or_default();
             let title = task.title.replace(['\r', '\n'], " ");
@@ -6194,6 +6220,479 @@ mod tests {
         )
         .unwrap();
         assert_eq!(app.selected_task().unwrap().id, expected_id);
+    }
+
+    #[test]
+    fn keyboard_wrap_and_jumps_follow_filtered_task_rows_without_writing() {
+        let (directory, mut store, config) = fixture();
+        let work = store.create_list("Work").unwrap();
+        for category in ["open", "history", "trash"] {
+            for index in 0..8 {
+                let prefix = if index % 4 == 3 { "Skip" } else { "Keep" };
+                let mut value = input(work.id, &format!("{prefix} {category} {index}"));
+                value.due = Some(today() + chrono::Duration::days(index % 3 - 1));
+                let task = store.create_task(&value).unwrap();
+                if category == "history" {
+                    store
+                        .set_status_on(
+                            task.id,
+                            task.version,
+                            Status::Done,
+                            today() - chrono::Duration::days(index % 3 + 1),
+                        )
+                        .unwrap();
+                } else if category == "trash" {
+                    store.set_deleted(task.id, task.version, true).unwrap();
+                }
+            }
+        }
+        store.create_task(&input(1, "Keep another list")).unwrap();
+        let baseline = store.tasks().unwrap();
+        let mut readonly =
+            Store::open_for_mcp(&directory.path().join("tasks.db"), None, true).unwrap();
+        let mut app = App::new(&readonly, today()).unwrap();
+        for view in [
+            View::Planned,
+            View::List(work.id),
+            View::Trash,
+            View::History(None),
+            View::History(Some(work.id)),
+        ] {
+            match view {
+                View::History(scope) => {
+                    app.set_view(scope.map_or(View::Planned, View::List), &readonly)
+                        .unwrap();
+                    app.open_history(&readonly).unwrap();
+                }
+                _ => app.set_view(view, &readonly).unwrap(),
+            }
+            app.filter = "keep".into();
+            app.query = Query::parse(&app.filter).unwrap();
+            app.refresh(&readonly).unwrap();
+            app.selection = 0;
+            let ids = app.visible.iter().map(|task| task.id).collect::<Vec<_>>();
+            assert!(ids.len() >= 6);
+            for (code, expected) in [
+                (KeyCode::Up, ids.len() - 1),
+                (KeyCode::Down, 0),
+                (KeyCode::Char('k'), ids.len() - 1),
+                (KeyCode::Char('j'), 0),
+                (KeyCode::End, ids.len() - 1),
+                (KeyCode::Char('g'), 0),
+                (KeyCode::Char('G'), ids.len() - 1),
+                (KeyCode::Home, 0),
+            ] {
+                app.handle_key(key(code), &mut readonly, &config);
+                assert_eq!(
+                    app.selected_task().unwrap().id,
+                    ids[expected],
+                    "{view:?} {code:?}"
+                );
+                rendered(&mut app, &config, 90, 10);
+                assert!(app.mouse_targets.iter().any(
+                    |(_, target)| matches!(target, MouseTarget::Row(index) if *index == expected)
+                ));
+                if expected == 0 {
+                    assert!(app.list_state.offset() <= 1);
+                } else {
+                    assert!(app.list_state.offset() > 0);
+                }
+            }
+            app.handle_mouse(
+                mouse(MouseEventKind::ScrollUp, 0, 4),
+                Instant::now(),
+                &mut readonly,
+                &config,
+            )
+            .unwrap();
+            assert_eq!(app.selection, 0);
+            app.handle_key(key(KeyCode::End), &mut readonly, &config);
+            app.handle_mouse(
+                mouse(MouseEventKind::ScrollDown, 0, 4),
+                Instant::now(),
+                &mut readonly,
+                &config,
+            )
+            .unwrap();
+            assert_eq!(app.selection, ids.len() - 1);
+        }
+        app.set_view(View::Planned, &readonly).unwrap();
+        for (filter, count) in [("No matching task", 0), ("\"Keep open 0\"", 1)] {
+            app.filter = filter.into();
+            app.query = Query::parse(filter).unwrap();
+            app.refresh(&readonly).unwrap();
+            for code in [
+                KeyCode::Up,
+                KeyCode::Down,
+                KeyCode::Home,
+                KeyCode::End,
+                KeyCode::Char('g'),
+                KeyCode::Char('G'),
+            ] {
+                app.handle_key(key(code), &mut readonly, &config);
+                assert_eq!(app.selection, 0);
+                assert_eq!(app.visible.len(), count);
+            }
+            rendered(&mut app, &config, 90, 10);
+            assert_eq!(app.list_state.selected().is_some(), count == 1);
+        }
+        assert_eq!(readonly.tasks().unwrap(), baseline);
+        app.filter = "Keep open".into();
+        app.query = Query::parse(&app.filter).unwrap();
+        app.refresh(&readonly).unwrap();
+        app.handle_key(key(KeyCode::End), &mut readonly, &config);
+        let removed = app.selected_task().unwrap().clone();
+        let count = app.visible.len();
+        store
+            .set_deleted(removed.id, removed.version, true)
+            .unwrap();
+        let changed = store.tasks().unwrap();
+        app.refresh(&readonly).unwrap();
+        assert_eq!(app.visible.len(), count - 1);
+        assert_eq!(app.selection, count - 2);
+        assert_eq!(readonly.tasks().unwrap(), changed);
+    }
+
+    #[test]
+    fn navigation_picker_wraps_virtual_endpoints_and_cancel_preserves_task_state() {
+        let (_directory, mut store, config) = fixture();
+        for index in 0..25 {
+            store.create_list(&format!("List {index}")).unwrap();
+            store
+                .create_task(&input(1, &format!("Keep task {index}")))
+                .unwrap();
+        }
+        let baseline = store.tasks().unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.filter = "keep".into();
+        app.query = Query::parse(&app.filter).unwrap();
+        app.refresh(&store).unwrap();
+        app.selection = 22;
+        rendered(&mut app, &config, 90, 12);
+        let task = app.selected_task().unwrap().id;
+        let scroll = app.list_state;
+        app.open_picker();
+        for (code, identity) in [
+            (KeyCode::Up, RowIdentity::Trash),
+            (KeyCode::Down, RowIdentity::AllTasks),
+            (KeyCode::Char('k'), RowIdentity::Trash),
+            (KeyCode::Char('j'), RowIdentity::AllTasks),
+            (KeyCode::End, RowIdentity::Trash),
+            (KeyCode::Home, RowIdentity::AllTasks),
+            (KeyCode::Char('G'), RowIdentity::Trash),
+            (KeyCode::Char('g'), RowIdentity::AllTasks),
+        ] {
+            app.handle_key(key(code), &mut store, &config);
+            assert_eq!(app.picker_identity(app.picker.selection), Some(identity));
+            rendered(&mut app, &config, 90, 12);
+            assert!(app.mouse_targets.iter().any(|(_, target)| matches!(target, MouseTarget::PickerRow(index) if *index == app.picker.selection)));
+            assert_eq!(app.list_state, scroll);
+        }
+        let area = app.picker.area.unwrap();
+        app.handle_mouse(
+            mouse(MouseEventKind::ScrollUp, area.x, area.y),
+            Instant::now(),
+            &mut store,
+            &config,
+        )
+        .unwrap();
+        assert_eq!(app.picker.selection, 0);
+        app.handle_key(key(KeyCode::End), &mut store, &config);
+        app.handle_mouse(
+            mouse(MouseEventKind::ScrollDown, area.x, area.y),
+            Instant::now(),
+            &mut store,
+            &config,
+        )
+        .unwrap();
+        assert_eq!(
+            app.picker_identity(app.picker.selection),
+            Some(RowIdentity::Trash)
+        );
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert_eq!(app.selected_task().unwrap().id, task);
+        assert_eq!(app.filter, "keep");
+        assert_eq!(app.list_state, scroll);
+        assert_eq!(store.tasks().unwrap(), baseline);
+    }
+
+    #[test]
+    fn editor_picker_wraps_ordinary_rows_and_handles_singleton_and_empty_choices() {
+        let (directory, mut store, config) = fixture();
+        let task = store.create_task(&input(1, "Original")).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.open_selection(&store).unwrap();
+        if let Screen::Editor(editor) = &mut app.screen {
+            editor.active = 3;
+        }
+        app.open_editor_list_picker(&store).unwrap();
+        for code in [KeyCode::Up, KeyCode::Down, KeyCode::Home, KeyCode::End] {
+            app.handle_key(key(code), &mut store, &config);
+            assert_eq!(app.screen.editor_picker().unwrap().selection, 0);
+        }
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        for index in 0..25 {
+            store.create_list(&format!("List {index}")).unwrap();
+        }
+        let Screen::Editor(editor) = &mut app.screen else {
+            panic!()
+        };
+        editor.fields[1].insert("Unsaved text");
+        let draft = editor.clone();
+        app.open_editor_list_picker(&store).unwrap();
+        let last = app.lists.len() - 1;
+        for (code, expected) in [
+            (KeyCode::Up, last),
+            (KeyCode::Down, 0),
+            (KeyCode::Char('G'), last),
+            (KeyCode::Char('g'), 0),
+            (KeyCode::End, last),
+            (KeyCode::Home, 0),
+        ] {
+            app.handle_key(key(code), &mut store, &config);
+            assert_eq!(app.screen.editor_picker().unwrap().selection, expected);
+            rendered(&mut app, &config, 90, 18);
+            assert!(app.mouse_targets.iter().any(|(_, target)| matches!(target, MouseTarget::EditorListRow(index) if *index == expected)));
+            assert!(
+                matches!(&app.screen, Screen::EditorListPicker { editor, .. } if editor.fields == draft.fields && editor.original == draft.original)
+            );
+        }
+        app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
+        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields == draft.fields));
+        assert_eq!(store.task(task.id).unwrap(), task);
+
+        let work = store.create_list("Removed scope").unwrap();
+        let scoped_task = store.create_task(&input(work.id, "Scoped task")).unwrap();
+        let mut scoped = Store::open_for_mcp(
+            &directory.path().join("tasks.db"),
+            Some("Removed scope"),
+            false,
+        )
+        .unwrap();
+        let mut empty = App::new(&scoped, today()).unwrap();
+        empty.open_selection(&scoped).unwrap();
+        if let Screen::Editor(editor) = &mut empty.screen {
+            editor.active = 3;
+        }
+        let preview = store.preview_list_deletion(work.id).unwrap();
+        store.delete_list(&preview).unwrap();
+        empty.open_editor_list_picker(&scoped).unwrap();
+        for code in [KeyCode::Up, KeyCode::Down, KeyCode::Home, KeyCode::End] {
+            empty.handle_key(key(code), &mut scoped, &config);
+            let picker = empty.screen.editor_picker().unwrap();
+            assert_eq!(picker.selection, 0);
+            assert!(picker.state.selected().is_none());
+        }
+        assert!(rendered(&mut empty, &config, 90, 18).contains(tr(config.language, "no_lists")));
+        empty.handle_key(key(KeyCode::Esc), &mut scoped, &config);
+        assert!(
+            matches!(&empty.screen, Screen::Editor(editor) if editor.original.as_ref().unwrap() == &scoped_task && editor.selected_list_id() == Some(work.id))
+        );
+    }
+
+    #[test]
+    fn language_wrap_and_jumps_do_not_apply_until_confirmed() {
+        let (directory, mut store, mut config) = fixture();
+        let task = store.create_task(&input(1, "Original")).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.open_selection(&store).unwrap();
+        app.paste("Unsaved description");
+        let Screen::Editor(editor) = &app.screen else {
+            panic!()
+        };
+        let draft = editor.clone();
+        app.handle_key(key(KeyCode::F(3)), &mut store, &config);
+        for (code, expected) in [
+            (KeyCode::Up, Language::Da),
+            (KeyCode::Up, Language::En),
+            (KeyCode::Down, Language::Da),
+            (KeyCode::Down, Language::En),
+            (KeyCode::Char('k'), Language::Da),
+            (KeyCode::Char('j'), Language::En),
+            (KeyCode::End, Language::Da),
+            (KeyCode::Home, Language::En),
+            (KeyCode::Char('G'), Language::Da),
+            (KeyCode::Char('g'), Language::En),
+        ] {
+            app.handle_key(key(code), &mut store, &config);
+            assert!(
+                matches!(&app.screen, Screen::Language { selected, .. } if *selected == expected)
+            );
+            assert!(app.pending_language.is_none());
+            assert_eq!(config.language, Language::En);
+        }
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        app.apply_language_change(&mut config, &directory.path().join("config.toml"))
+            .unwrap();
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields == draft.fields && editor.original == draft.original)
+        );
+        assert!(!directory.path().join("config.toml").exists());
+        assert_eq!(store.task(task.id).unwrap(), task);
+    }
+
+    #[test]
+    fn jumps_respect_configured_keys_and_leave_text_and_scrolling_controls_bounded() {
+        let (_directory, mut store, _) = fixture();
+        let config =
+            Config::from_toml("[keys]\nfirst = ['ctrl+home']\nlast = ['ctrl+end']").unwrap();
+        let first = store.create_task(&input(1, "First")).unwrap();
+        let last = store.create_task(&input(1, "Last")).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.handle_key(key(KeyCode::End), &mut store, &config);
+        assert_eq!(app.selected_task().unwrap().id, first.id);
+        app.handle_key(
+            KeyEvent::new(KeyCode::End, KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        assert_eq!(app.selected_task().unwrap().id, last.id);
+        app.handle_key(
+            KeyEvent::new(KeyCode::Home, KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        assert_eq!(app.selected_task().unwrap().id, first.id);
+        let unchanged = store.tasks().unwrap();
+        app.handle_key(
+            KeyEvent::new(KeyCode::Up, KeyModifiers::ALT),
+            &mut store,
+            &config,
+        );
+        assert_eq!(app.selection, 0);
+        assert_eq!(store.tasks().unwrap(), unchanged);
+        app.open_selection(&store).unwrap();
+        app.paste("gG\nsecond line");
+        if let Screen::Editor(editor) = &mut app.screen {
+            editor.active = 0;
+        }
+        let defaults = Config::default();
+        app.handle_key(key(KeyCode::Char('g')), &mut store, &defaults);
+        app.handle_key(key(KeyCode::Char('G')), &mut store, &defaults);
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[0].text == "FirstgG")
+        );
+        if let Screen::Editor(editor) = &mut app.screen {
+            editor.active = 1;
+        }
+        app.handle_key(
+            KeyEvent::new(KeyCode::Home, KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].cursor == 0 && editor.fields[1].text == "gG\nsecond line")
+        );
+        app.handle_key(key(KeyCode::End), &mut store, &config);
+        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].cursor == 2));
+        app.open_copy_text();
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        assert!(matches!(app.screen, Screen::CopyText { row: 0, .. }));
+        for _ in 0..10 {
+            app.handle_key(key(KeyCode::Down), &mut store, &config);
+        }
+        let Screen::CopyText { row, .. } = app.screen else {
+            panic!()
+        };
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        app.handle_key(
+            KeyEvent::new(KeyCode::Home, KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        assert!(matches!(app.screen, Screen::CopyText { row: actual, .. } if actual == row));
+        app.screen = Screen::Help {
+            previous: Box::new(Screen::Navigation),
+        };
+        app.help_state.select(Some(0));
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        assert_eq!(app.help_state.selected(), Some(0));
+        for _ in 0..Action::ALL.len() + 2 {
+            app.handle_key(key(KeyCode::Down), &mut store, &config);
+        }
+        assert_eq!(app.help_state.selected(), Some(Action::ALL.len() - 1));
+        app.handle_key(
+            KeyEvent::new(KeyCode::Home, KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        assert_eq!(app.help_state.selected(), Some(Action::ALL.len() - 1));
+        for screen in [
+            Screen::Filter(TextBuffer::default()),
+            Screen::ListName {
+                id: None,
+                buffer: TextBuffer::default(),
+            },
+        ] {
+            app.screen = screen;
+            app.handle_key(key(KeyCode::Char('g')), &mut store, &config);
+            app.handle_key(key(KeyCode::Char('G')), &mut store, &config);
+            app.handle_key(key(KeyCode::Home), &mut store, &config);
+            assert!(
+                matches!(&app.screen, Screen::Filter(buffer) | Screen::ListName { buffer, .. } if buffer.text == "gG" && buffer.cursor == 0)
+            );
+        }
+        assert_eq!(store.tasks().unwrap(), unchanged);
+    }
+
+    #[test]
+    fn history_hides_planned_date_suffixes_but_preserves_titles_filters_and_editor_values() {
+        let (directory, mut store, config) = fixture();
+        let work = store.create_list("Work").unwrap();
+        let mut value = input(work.id, "Known closure");
+        value.due = Some(parse_date("2035-11-09").unwrap());
+        let known = store.create_task(&value).unwrap();
+        store
+            .set_status_on(known.id, known.version, Status::Done, today())
+            .unwrap();
+        value.title = "Remember 1999-01-01".into();
+        value.due = Some(parse_date("2036-01-02").unwrap());
+        let unknown = store.create_task(&value).unwrap();
+        store
+            .set_status_on(unknown.id, unknown.version, Status::Cancelled, today())
+            .unwrap();
+        rusqlite::Connection::open(directory.path().join("tasks.db"))
+            .unwrap()
+            .execute(
+                "UPDATE tasks SET status_changed_on = NULL, status_changed_at = NULL WHERE id = ?1",
+                [unknown.id],
+            )
+            .unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        for scope in [None, Some(work.id)] {
+            app.set_view(scope.map_or(View::Planned, View::List), &store)
+                .unwrap();
+            app.open_history(&store).unwrap();
+            let display = rendered(&mut app, &config, 100, 24);
+            assert!(!display.contains("2035-11-09"));
+            assert!(!display.contains("2036-01-02"));
+            assert!(display.contains("Remember 1999-01-01"));
+            assert!(display.contains("Unknown date"));
+            assert!(display.contains(&format!("Today - {}", date_label(today(), Language::En))));
+            app.filter = "due:2035-11-09".into();
+            app.query = Query::parse(&app.filter).unwrap();
+            app.refresh(&store).unwrap();
+            assert_eq!(app.visible.len(), 1);
+            assert_eq!(app.selected_task().unwrap().id, known.id);
+            app.open_selection(&store).unwrap();
+            let display = rendered(&mut app, &config, 100, 24);
+            assert!(display.contains("Planned date"));
+            assert!(display.contains("2035-11-09"));
+            app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        }
+        for view in [View::Planned, View::List(work.id)] {
+            app.set_view(view, &store).unwrap();
+            app.filter = "s:all".into();
+            app.query = Query::parse(&app.filter).unwrap();
+            app.refresh(&store).unwrap();
+            let display = rendered(&mut app, &config, 100, 24);
+            assert!(display.contains("2035-11-09"));
+            assert!(display.contains("2036-01-02"));
+        }
+        let known = store.task(known.id).unwrap();
+        store.set_deleted(known.id, known.version, true).unwrap();
+        app.set_view(View::Trash, &store).unwrap();
+        assert!(rendered(&mut app, &config, 100, 24).contains("2035-11-09"));
     }
 
     #[test]

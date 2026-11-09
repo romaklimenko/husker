@@ -35,13 +35,48 @@ The installed copy does not lock the repository's build executable.
 Close installed Husker processes and disconnect MCP clients before replacing
 the installed copy with `cargo install --path . --locked`.
 
-Use only temporary profiles for migration tests. Versions 0.9.0 and 0.10.0
-use schema version 4. Updating from 0.9.0 to 0.10.0 requires no migration.
+Use only temporary profiles for migration tests. Versions 0.9.0, 0.10.0, and
+0.11.0 use schema version 4. Updating between them requires no migration.
 Starting the current version against a schema version 1, 2, or 3 profile
 migrates it to version 4 on writable
 access. Versions 0.4.0 through 0.8.0 use schema version 3 and cannot open an
 upgraded profile. Read-only connections require the writable upgrade first.
 Follow the [upgrade instructions](usage.md#update-an-existing-profile) for a real profile.
+
+## Checks for version 0.11.0
+
+Version 0.11.0 completed these checks on November 9, 2026:
+
+| Check | Result |
+| --- | --- |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.11.0. |
+| OpenSpec | All six capability specs passed strict validation after archiving the planning and navigation change. No active changes remain. |
+| Unit tests | 196 passed, including keyboard wrapping, boundary jumps, History date display, configuration, and bounded movement regressions. |
+| CLI integration tests | 9 passed against isolated profiles. |
+| MCP integration tests | 8 passed through child processes. |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Guide examples | Documented task/list commands, stale-version guards, strict external date input, and MCP help passed against an isolated profile. |
+| Shortcut compatibility | Verified First/Last defaults, conflicts with custom `g`, `G`, Home, and End bindings, and the documented rebinding or disabled-action remedies. Existing `h`, `l`, and date-preset defaults stayed unchanged. |
+| Date compatibility | JSON retained `due`. `due:overdue` matched both open and completed tasks with past planned dates. `due:earlier`, `due:tidligere`, and `planned:today` were rejected without task changes. |
+| Documentation | All 15 local links and anchors resolved. All 5 JSON and TOML examples parsed. |
+
+An 80 by 24 Windows pseudo-terminal check displayed Earlier and Planned
+date in English and Tidligere and Planlagt dato in Danish. Task selection
+wrapped with `k` and `j`. Home, End, and `G` selected boundary tasks.
+History showed the completion-day heading without the future planned-date
+suffix. Opening that task's editor still showed `2026-11-13`, although the
+task was completed on `2026-11-09`.
+
+In the navigation picker, `G` selected Trash and `j` wrapped to All tasks.
+The editor picker wrapped through ordinary lists with `j` and `k`.
+The language picker wrapped with `k` and `j`, and `G` followed by Enter
+saved Danish. Quitting restored the terminal. A separate CLI read confirmed
+the original task JSON and version 2 were unchanged, and configuration
+contained `language = "da"`.
+
+These checks used an isolated Windows profile. Mouse interaction was not
+checked manually. Linux and macOS were not tested in this session.
 
 ## Checks for version 0.10.0
 

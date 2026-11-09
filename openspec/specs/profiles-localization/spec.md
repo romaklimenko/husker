@@ -119,12 +119,20 @@ The due preset actions have these defaults.
 | `due_next_week` | `w` |
 | `clear_due` | `x` |
 
-They are available in ordinary task navigation and History outside Trash, and in the focused Due date editor field.
+They are available in ordinary task navigation and History outside Trash, and in the focused Planned date editor field.
 They are unavailable in other editor fields, filter and list-name inputs, list pickers, Help, confirmations, Copy text, and the language picker.
 Each override replaces that action's defaults, and an empty array disables it.
-Help and Due date hints use the configured bindings and selected language.
+Help and Planned date hints use the configured bindings and selected language.
 
-The List selector and editor list picker reuse the existing `open`, `lists`, `back`, navigation, Help, Language, Refresh, and Toggle mouse actions. No new action names or configuration keys are required.
+The List selector and editor list picker reuse the existing `open`, `lists`, `back`, navigation, Help, Language, Refresh, and Toggle mouse actions.
+
+The `first` action defaults to Home and `g`. The `last` action defaults to End and `G`.
+Both actions are available only in task navigation, History, the navigation list picker, editor list picker, and language picker.
+Their overrides replace defaults, and empty arrays disable their shortcuts. Visible hints use the configured bindings and selected language.
+A custom action that conflicts with these new defaults remains a configuration error.
+Users can rebind First or Last or set `first = []` or `last = []` to retain their existing custom action.
+The existing `history` and `lists` defaults remain `h` and `l`.
+The `due_*` and `clear_due` action names remain unchanged when visible labels use Planned date.
 
 #### Scenario: Replace a shortcut
 
@@ -167,12 +175,18 @@ The List selector and editor list picker reuse the existing `open`, `lists`, `ba
 
 - **WHEN** `[keys]` contains `due_today = ["ctrl+t"]`
 - **THEN** Ctrl+T invokes Today in its permitted modes and `t` no longer invokes that preset
-- **AND** Help and Due date hints show Ctrl+T
+- **AND** Help and Planned date hints show Ctrl+T
 
 #### Scenario: Disable a due preset
 
 - **WHEN** `[keys]` contains `clear_due = []`
 - **THEN** no shortcut invokes Clear due date and manual field deletion remains available
+
+#### Scenario: Rebind or disable boundary selection
+
+- **WHEN** `[keys]` contains `first = ["ctrl+home"]` and `last = []`
+- **THEN** Ctrl+Home selects the first item in supported selection modes and Home or `g` no longer invokes First
+- **AND** no shortcut invokes Last while existing text-editing Home and End behavior remains available
 
 ### Requirement: Key conflict validation
 
@@ -188,7 +202,7 @@ Husker SHALL reject unknown action names, invalid key strings, and shortcuts ass
 | Task editor | Enter Title or Description. |
 | List field | Select a draft list and open its picker. |
 | Editor list picker | Choose an ordinary list for an unsaved draft. |
-| Due date field | Enter a supported editor date or use a preset while retaining all task-editor controls. |
+| Planned date field | Enter a supported editor date or use a preset while retaining all task-editor controls. |
 | Filter editor | Enter a task filter. |
 | List-name editor | Enter a new or replacement list name. |
 | Discard confirmation | Choose whether to discard changed task fields. |
@@ -198,17 +212,19 @@ Husker SHALL reject unknown action names, invalid key strings, and shortcuts ass
 The same key may trigger different actions in different modes.
 The list picker retains its existing configurable bindings and conflict checks and adds `delete_list`.
 Text input modes do not execute task-navigation writes.
-Due date field mode includes every normal task-editor action and the due preset actions.
+Planned date field mode includes every normal task-editor action and the due preset actions.
 Preset actions in that mode edit only the draft field.
 List field mode includes normal task-editor actions except Copy selection, and adds Open and Lists.
-Editor list picker mode permits only Up, Down, Open, Lists, Back, Help, Language, Refresh, and Toggle mouse.
+Editor list picker mode permits only Up, Down, First, Last, Open, Lists, Back, Help, Language, Refresh, and Toggle mouse.
 Neither List mode permits text input or task-navigation writes. Choice Undo and Redo remain built-in List field controls.
 The navigation list picker retains its existing management actions.
 Configured actions take precedence over built-in text-editing shortcuts in their active mode.
 Discard confirmation uses fixed choice keys defined by the terminal-interface spec and retains configured Discard and Refresh actions.
 List-deletion confirmation uses fixed choice keys and retains configured Back and Refresh actions.
 History has a separate input mode so `reopen` and Trash's `restore` can both use `r`.
-The language picker uses the configured Up, Down, Apply, and Back actions.
+The language picker uses the configured Up, Down, First, Last, Apply, and Back actions.
+First and Last are available in task navigation, History, both list pickers, and the language picker.
+They are unavailable in text-input modes, the List field selector, confirmations, Help, and Copy text.
 Removed action names `anytime` and `maybe` are unknown actions.
 Existing configuration files must remove those overrides before loading.
 
@@ -256,7 +272,7 @@ Existing configuration files must remove those overrides before loading.
 #### Scenario: Reject a due-field action conflict
 
 - **WHEN** `[keys]` assigns `due_today` to Ctrl+S while Save retains Ctrl+S
-- **THEN** configuration loading reports the conflict in Due date field mode before opening the task database
+- **THEN** configuration loading reports the conflict in Planned date field mode before opening the task database
 
 #### Scenario: Keep a preset character literal in another field
 
@@ -273,6 +289,16 @@ Existing configuration files must remove those overrides before loading.
 
 - **WHEN** `lists` and `open` have the same key
 - **THEN** configuration loading rejects their conflict in the List field and editor list picker modes
+
+#### Scenario: Reject a first-action conflict
+
+- **WHEN** a task-navigation action uses `g` and First retains its default `g`
+- **THEN** configuration loading reports a conflict before opening the terminal interface
+
+#### Scenario: Preserve text-input boundaries
+
+- **WHEN** a text field is focused with default bindings
+- **THEN** Home and End move the text cursor, and `g` or `G` inserts text without invoking First or Last
 
 ### Requirement: Persist an interface-language choice without replacing configuration
 
@@ -313,3 +339,28 @@ Changing interface language does not write task data or translate user content.
 - **WHEN** writing or replacing the active configuration fails
 - **THEN** the previous file remains unchanged and the interface keeps its previous language
 - **AND** the picker reports the failure without discarding the underlying screen or draft
+
+### Requirement: Use planning terms in visible task-date labels
+
+Husker SHALL use the following English and Danish labels for the stored task date and its past-day group.
+
+| Meaning | English | Danish |
+| --- | --- | --- |
+| Task date field | Planned date | Planlagt dato |
+| Open tasks with a date before today | Earlier | Tidligere |
+
+Related terminal action descriptions, field hints, and help use the planning terms.
+List and History terminology remain unchanged. The task's stored `due` field and `overdue` bucket remain unchanged.
+CLI flags, JSON fields, MCP arguments, `due:` filter tokens, and existing `due_*`/`clear_due` configuration names remain unchanged.
+These labels do not introduce a second date field or change grouping, ordering, date arithmetic, or task data.
+
+#### Scenario: Show Danish planning labels
+
+- **WHEN** Danish is selected and an open task has a stored due date before today
+- **THEN** its heading is Tidligere and its editor date field is Planlagt dato
+- **AND** `due:overdue` still matches the task and JSON still names the field `due`
+
+#### Scenario: Keep English automation identifiers
+
+- **WHEN** the English interface shows Planned date and Earlier
+- **THEN** CLI `--due`, MCP `due`, query `due:overdue`, and configuration `due_today` retain their existing behavior

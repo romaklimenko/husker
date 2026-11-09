@@ -28,6 +28,8 @@ pub enum Mode {
 pub enum Action {
     Up,
     Down,
+    First,
+    Last,
     Open,
     NewTask,
     NewList,
@@ -67,9 +69,11 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Self; 38] = [
+    pub const ALL: [Self; 40] = [
         Self::Up,
         Self::Down,
+        Self::First,
+        Self::Last,
         Self::Open,
         Self::NewTask,
         Self::NewList,
@@ -112,6 +116,8 @@ impl Action {
         match self {
             Self::Up => "up",
             Self::Down => "down",
+            Self::First => "first",
+            Self::Last => "last",
             Self::Open => "open",
             Self::NewTask => "new_task",
             Self::NewList => "new_list",
@@ -161,6 +167,8 @@ impl Action {
                 self,
                 Self::Up
                     | Self::Down
+                    | Self::First
+                    | Self::Last
                     | Self::Open
                     | Self::Lists
                     | Self::Back
@@ -177,6 +185,12 @@ impl Action {
             ) || self.available_in(Mode::Editor);
         }
         match self {
+            Self::First | Self::Last => {
+                matches!(
+                    mode,
+                    Mode::Tasks | Mode::History | Mode::Lists | Mode::Language
+                )
+            }
             Self::DueToday | Self::DueTomorrow | Self::DueNextWeek | Self::ClearDue => {
                 matches!(mode, Mode::Tasks | Mode::History)
             }
@@ -238,6 +252,8 @@ impl Action {
         match self {
             Self::Up => &["up", "k"],
             Self::Down => &["down", "j"],
+            Self::First => &["home", "g"],
+            Self::Last => &["end", "G"],
             Self::Open => &["enter"],
             Self::NewTask => &["n"],
             Self::NewList => &["N"],
@@ -608,6 +624,115 @@ fn normalize_key(code: KeyCode, mut modifiers: KeyModifiers) -> (KeyCode, KeyMod
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn boundary_keys_select_only_in_navigation_modes() {
+        let config = Config::default();
+        let bindings = [
+            (key(KeyCode::Home), Action::First),
+            (key(KeyCode::Char('g')), Action::First),
+            (key(KeyCode::End), Action::Last),
+            (key(KeyCode::Char('G')), Action::Last),
+            (
+                KeyEvent::new(KeyCode::Char('g'), KeyModifiers::SHIFT),
+                Action::Last,
+            ),
+            (
+                KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT),
+                Action::Last,
+            ),
+        ];
+        for (event, action) in bindings {
+            for mode in [
+                Mode::Tasks,
+                Mode::History,
+                Mode::Lists,
+                Mode::EditorListPicker,
+                Mode::Language,
+            ] {
+                assert_eq!(config.action(event, mode), Some(action), "{mode:?}");
+            }
+            for mode in [
+                Mode::Editor,
+                Mode::DueField,
+                Mode::ListField,
+                Mode::Filter,
+                Mode::ListName,
+                Mode::ConfirmDiscard,
+                Mode::DeleteListConfirm,
+                Mode::Help,
+                Mode::CopyText,
+            ] {
+                assert_eq!(config.action(event, mode), None, "{mode:?}");
+            }
+        }
+        assert_eq!(
+            config.action(key(KeyCode::Char('h')), Mode::Tasks),
+            Some(Action::History)
+        );
+        assert_eq!(
+            config.action(key(KeyCode::Char('l')), Mode::Tasks),
+            Some(Action::Lists)
+        );
+        assert_eq!(
+            config.action(
+                KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+                Mode::Editor
+            ),
+            Some(Action::Discard)
+        );
+    }
+
+    #[test]
+    fn boundary_key_overrides_and_conflicts_follow_existing_rules() {
+        let config = Config::from_toml("[keys]\nfirst = ['f6']\nlast = ['f7']").unwrap();
+        for mode in [
+            Mode::Tasks,
+            Mode::History,
+            Mode::Lists,
+            Mode::EditorListPicker,
+            Mode::Language,
+        ] {
+            assert_eq!(config.action(key(KeyCode::F(6)), mode), Some(Action::First));
+            assert_eq!(config.action(key(KeyCode::F(7)), mode), Some(Action::Last));
+            for code in [
+                KeyCode::Home,
+                KeyCode::End,
+                KeyCode::Char('g'),
+                KeyCode::Char('G'),
+            ] {
+                assert_eq!(config.action(key(code), mode), None);
+            }
+        }
+        let disabled =
+            Config::from_toml("[keys]\nfirst = []\nlast = []\nhistory = ['g']\nlists = ['G']")
+                .unwrap();
+        assert_eq!(
+            disabled.action(key(KeyCode::Char('g')), Mode::Tasks),
+            Some(Action::History)
+        );
+        assert_eq!(
+            disabled.action(key(KeyCode::Char('G')), Mode::Tasks),
+            Some(Action::Lists)
+        );
+        assert_eq!(disabled.action(key(KeyCode::Home), Mode::Tasks), None);
+        assert_eq!(disabled.action(key(KeyCode::End), Mode::Tasks), None);
+        for binding in [
+            "history = ['g']",
+            "lists = ['G']",
+            "first = ['end']",
+            "last = ['home']",
+            "apply = ['g']",
+        ] {
+            assert!(
+                Config::from_toml(&format!("[keys]\n{binding}")).is_err(),
+                "{binding}"
+            );
+        }
+        let example = Config::example();
+        assert!(example.contains("first = [\"home\", \"g\"]"));
+        assert!(example.contains("last = [\"end\", \"G\"]"));
+    }
 
     #[test]
     fn due_presets_are_case_sensitive_and_inherit_editor_actions_only_in_due_field() {

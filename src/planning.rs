@@ -418,12 +418,7 @@ mod tests {
     fn ordinary_headings_show_each_future_date_without_changing_due_buckets() {
         let today = NaiveDate::from_ymd_opt(2026, 11, 8).unwrap();
         for (date, bucket, english, danish) in [
-            (
-                Some((2026, 11, 7)),
-                Bucket::Overdue,
-                "Overdue",
-                "Overskredet",
-            ),
+            (Some((2026, 11, 7)), Bucket::Overdue, "Earlier", "Tidligere"),
             (
                 Some((2026, 11, 8)),
                 Bucket::Today,
