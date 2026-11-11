@@ -7,18 +7,29 @@ This guide is for people who want to capture and manage tasks from a terminal.
 Run `husker` in an interactive terminal. Press `n`, type a task title, and
 press Enter to save. For example, type `Buy milk`. The message `Created`
 appears, and the task is listed under Sometime because it has no planned date.
+The task belongs to the list shown in the editor's List field. In a new
+profile, that's Inbox. See [Start a new task in the right list](#start-a-new-task-in-the-right-list).
 Ctrl+S saves from any field. Ctrl+Enter also saves when your terminal sends
 it as a distinct key.
 
-Press Enter on a task to open its editor at Description. New tasks start at
-Title. Use Tab and Shift+Tab to move between the fields:
+To plan a task while you capture it, press Tab twice after the title. For
+example, press `n`, type `Pay rent`, press Tab, press Tab again, press `t`,
+and press Enter. The first Tab focuses List and the second focuses Planned
+date. `t` fills in today's date, and Enter creates `Pay rent` planned for today.
+
+The editor shows its fields from top to bottom in this order:
 
 | Field | What to enter |
 | --- | --- |
 | Title | A nonempty task title, such as `Buy milk`. Enter saves the task. |
+| List | Press Enter or `l` to choose an existing list, such as `Inbox`. |
+| Planned date | `2026-11-09`, a compact date such as `261109`, or nothing for no date. Enter saves the task. |
 | Description | Plain text. Press Enter here to add another line. |
-| Planned date | `2026-11-09`, a compact date such as `261109`, or no date. Enter saves the task. |
-| List | Press Enter to choose an existing list, such as `Inbox`. |
+
+Press Tab to move to the next field down and Shift+Tab to move up. Tab on
+Description goes back to Title, and Shift+Tab on Title goes to Description.
+A new task opens at Title. Press Enter on an existing task to open its
+editor at Description.
 
 Description text wraps at the editor's width. Words move to the next visual
 row when needed, and long words split across rows. Wrapping does not add
@@ -56,6 +67,46 @@ and your text stays in the editor. Press F4 to copy any text you need to keep.
 Return from the copy view with Esc. Press Esc again and then `y` to discard
 the changed draft, then reopen the task to load its current values.
 
+## Start a new task in the right list
+
+If you know where a task belongs, open that list first. Press `l`, choose
+the list, and press `n`. For example, in `All tasks > Private`, a new task
+always starts in Private.
+
+All tasks shows every list, so when you press `n` there, Husker suggests a
+list. It looks at the 10 most recently created tasks outside Trash and
+picks the list that holds the most of them. For example, if 6 of those
+tasks are in Work, 3 in Private, and 1 in Inbox, the new task starts in
+Work. The List field shows the suggested list as soon as the editor opens.
+
+Husker counts the tasks this way:
+
+- Done and cancelled tasks count. Tasks in Trash don't.
+- Tasks created with `husker add` or by an agent count too.
+- Each task counts for the list it's in now. If you created a task in Inbox
+  and later moved it to Work, it counts for Work.
+- Editing or moving an older task doesn't make it one of the newest.
+- If two lists have the same count, the list with the newest of those tasks
+  wins. For example, if your newest tasks are in Private, Work, Private,
+  and Work, from newest to oldest, the new task starts in Private.
+- If every task is in Trash, or you have no tasks yet, the new task starts
+  in the default list. In a new profile, that's Inbox.
+
+To use another list, press Tab from Title to focus List, press Enter or
+`l`, and choose the list. Ctrl+Z with List focused undoes your choice and
+brings back the suggested list. See [Choose a task's list in the editor](#choose-a-tasks-list-in-the-editor).
+
+A filter doesn't change the suggestion. For example, if you filter All
+tasks with `l:Work` and press `n`, the new task still starts in the
+suggested list, which can be Private. Open Work with `l` when you want new
+tasks to start there.
+
+The suggestion is only for the terminal interface. `husker add` without
+`--list` puts the task in the default list. An agent connected through MCP
+adds tasks to the list its server is restricted to with `--list`. Without
+that restriction, the task goes to the list the agent names, or to the
+default list.
+
 ## Enter a date without separators
 
 In the editor's Planned date field, type a date in any of these forms:
@@ -82,16 +133,21 @@ Husker leaves the text alone while you type. An invalid entry such as `0230`
 stays available for correction when you leave the field. Save reports the
 invalid date and keeps the editor open.
 
-An empty field shows a grey `YYYY-MM-DD` placeholder. Leave the field empty
-to save no planned date. The placeholder is not part of your task text.
+An empty Planned date field shows a grey `Sometime` placeholder, or `Engang`
+in Danish. Leave the field empty to save no planned date. An open task then
+appears under Sometime. The placeholder disappears when you type, and it is
+not part of your task text. The field title lists the forms Husker accepts:
+`YYYY-MM-DD / YYYYMMDD / YYMMDD / MMDD`.
 
 These compact forms work in the task editor. Use `YYYY-MM-DD` in commands,
 MCP requests, and search filters, such as `due:2026-11-09`.
 
 ## Choose a task's list in the editor
 
-Focus List with Tab and press Enter or `l` to open its picker. You can also
-click the List field. Select a destination with Up or Down, then press Enter.
+Focus List and press Enter or `l` to open its picker. From Title, press Tab
+once to focus List. An existing task's editor opens at Description, so press
+Shift+Tab twice there. You can also click the List field.
+Select a destination with Up or Down, then press Enter.
 For example, choose Work to move the task there when you next save.
 Press Esc or `l` in the picker to return without changing the draft's list.
 
@@ -165,8 +221,10 @@ Next week means the next Monday after today. On Monday, November 9, `w`
 sets November 16. On Sunday, November 8, it sets November 9.
 Husker uses your computer's current local date, including after midnight.
 
-In the editor, focus Planned date with Tab and use the same keys. A preset
-replaces the whole field, even if you have selected only part of its text.
+In the editor, focus Planned date and use the same keys. From Title, press
+Tab twice. An existing task's editor opens at Description, so press
+Shift+Tab once there. A preset replaces the whole field, even if you have
+selected only part of its text.
 It does not save the task or move to another field. Press Ctrl+S to save.
 Ctrl+Z restores the previous field text, cursor, and selection in one step.
 You can still type a date such as `2026-11-09` manually.
@@ -247,7 +305,8 @@ Select an ordinary list and press Alt+Up or Alt+Down, or `K` or `J`, to
 change its position. Husker saves this order for the next session.
 The default list, initially Inbox, stays first among ordinary lists and is
 marked as the default. All tasks and Trash stay fixed.
-New tasks in All tasks use the default list.
+A new task you create in All tasks starts in a suggested list, which can
+differ from the default list. See [Start a new task in the right list](#start-a-new-task-in-the-right-list).
 
 Press `r` or `R` on a list to rename it. Enter the new name and press Enter.
 The tasks stay in the same list. Names are unique without regard to case,
@@ -255,7 +314,8 @@ so `Private` and `PRIVATE` cannot be separate lists.
 `Trash` and `Papirkurv` are reserved names.
 Renaming a list keeps its position and returns to the picker with that list
 selected. Renaming the default list keeps it first among ordinary lists
-and keeps it as the default destination for new tasks.
+and keeps it as the default. For example, `husker add` without `--list`
+still puts tasks there.
 
 The number beside an ordinary list counts its open tasks outside Trash.
 For example, `Private (4)` means that list has four open tasks.
@@ -994,7 +1054,7 @@ Every command accepts `--profile DIRECTORY` to select its task collection.
 
 ## Update an existing profile
 
-Back up your profile before updating to 0.13.0.
+Back up your profile before updating to 0.14.0.
 Follow [Back up your tasks](#back-up-your-tasks), then keep every old Husker
 process closed, including MCP clients, until the upgrade is complete.
 
@@ -1004,9 +1064,23 @@ Install the current version from the repository:
 cargo install --path . --locked
 ```
 
-Version 0.13.0 uses schema version 4, the same database format as 0.9.0
-through 0.12.1. Updating from these versions requires no database migration.
-CLI commands, JSON fields, MCP tools, and filter syntax are unchanged.
+Version 0.14.0 uses schema version 4, the same database format as 0.9.0
+through 0.13.0. Updating from these versions requires no database migration.
+CLI commands, JSON fields, MCP tools, filter syntax, and configuration
+settings are unchanged.
+
+Version 0.14.0 changes how you create tasks in the terminal:
+
+- The editor fields are now Title, List, Planned date, and Description,
+  from top to bottom. Tab and Shift+Tab follow that order. From Title,
+  press Tab once for List and twice for Planned date. If you press Tab a
+  fixed number of times out of habit, or a terminal macro does, update
+  that count. See [Capture your first task](#capture-your-first-task).
+- A new task you create in All tasks starts in the list that holds most of
+  your 10 newest tasks outside Trash, instead of always the default list. See
+  [Start a new task in the right list](#start-a-new-task-in-the-right-list).
+- An empty Planned date shows `Sometime`, or `Engang` in Danish, instead
+  of `YYYY-MM-DD`. Leaving it empty still saves no planned date.
 
 Version 0.13.0 lets you delete tasks forever in Trash. In Trash, `d` or
 Delete now asks to delete the selected task forever, and `D` asks to empty

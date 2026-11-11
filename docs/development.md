@@ -36,7 +36,7 @@ Close installed Husker processes and disconnect MCP clients before replacing
 the installed copy with `cargo install --path . --locked`.
 
 Use only temporary profiles for migration tests. Versions 0.9.0 through
-0.13.0 use schema version 4. Updating between them requires no migration.
+0.14.0 use schema version 4. Updating between them requires no migration.
 Starting the current version against a schema version 1, 2, or 3 profile
 migrates it to version 4 on writable
 access. Versions 0.4.0 through 0.8.0 use schema version 3 and cannot open an
@@ -70,6 +70,25 @@ these operations. No CLI command or MCP tool calls them.
 Task IDs come from an `AUTOINCREMENT` column, so a deleted ID is never
 reused. Permanent deletion needs no schema change. The schema stays at
 version 4.
+
+## Checks for version 0.14.0
+
+The task-capture update completed these checks on November 11, 2026:
+
+| Check | Result |
+| --- | --- |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Unit tests | 234 passed. New tests cover the suggested list: the most common of the 10 newest tasks, ties, the window after Trash filtering, closed and moved tasks, inaccessible lists, and the default-list fallback. Others cover Tab and Shift+Tab order with wrapping, the field positions and mouse hits, the two-Tab capture with `t`, and the `Sometime` and `Engang` placeholders. |
+| Review | An independent review found no code defects. It found two rules that no test checked, a task-storage spec sentence that the change contradicted, and three inaccurate sentences in the spec delta, the guide, and the README. All were fixed. Removing either rule from the code now fails a test. |
+| CLI integration tests | 9 passed against isolated profiles. |
+| MCP integration tests | 8 passed through child processes. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.14.0. |
+| Manual CLI check | In a temporary profile, `husker add` without `--list` still created the task in Inbox, list 1. |
+| Live terminal | The release executable ran in an 80 by 24 Windows pseudo-terminal against a temporary profile. With 3 of the 6 newest tasks in Work, `n` opened the editor with Work in List and `Sometime` in Planned date. Tab focused List, a second Tab focused Planned date and showed the preset hint, and `t` and Enter created the task under Today in Work. Shift+Tab from Title focused Description. The Danish run showed `Liste`, `Planlagt dato`, and `Engang`. `q` exited. |
+| OpenSpec | The change validated strictly, and all six capability specs passed strict validation after archiving. |
+
+Mouse clicks were covered by automated tests only. Linux and macOS were not tested in this session.
 
 ## Checks for version 0.13.0
 

@@ -30,7 +30,7 @@ use crate::i18n::{Language, error_message, tr};
 use crate::model::{Status, Task, TaskInput, TaskList};
 use crate::planning::{
     Bucket, DuePreset, PlannedGroup, date_label, history_group_label, open_group_label,
-    ordinary_group_label, planned_group,
+    ordinary_group_label, planned_group, suggested_list_id,
 };
 use crate::query::{Query, visible_history, visible_tasks};
 use crate::store::{
@@ -150,7 +150,13 @@ pub fn run(store: &mut Store, config: &Config, config_path: &Path) -> Result<()>
     Ok(())
 }
 
+// Task editor buffer indexes. `FIELD_ORDER` decides where each field is drawn and Tab order.
+const TITLE: usize = 0;
+const DESCRIPTION: usize = 1;
+const DUE: usize = 2;
+const LIST: usize = 3;
 const FIELD_KEYS: [&str; 4] = ["title", "description", "due", "list"];
+const FIELD_ORDER: [usize; 4] = [TITLE, LIST, DUE, DESCRIPTION];
 
 fn due_preset(action: Action) -> Option<DuePreset> {
     match action {
@@ -348,7 +354,7 @@ impl TaskEditor {
                 TextBuffer::new(list_id.to_string()),
             ]
         };
-        let active = if task.is_some() { 1 } else { 0 };
+        let active = if task.is_some() { DESCRIPTION } else { TITLE };
         Self {
             original: task,
             initial_text: std::array::from_fn(|index| fields[index].text.clone()),
@@ -365,25 +371,40 @@ impl TaskEditor {
     }
 
     fn selected_list_id(&self) -> Option<i64> {
-        self.fields[3].text.parse().ok()
+        self.fields[LIST].text.parse().ok()
     }
 
     fn choose_list(&mut self, id: i64) {
-        self.fields[3].replace_all(&id.to_string());
+        self.fields[LIST].replace_all(&id.to_string());
     }
 
     fn focus_field(&mut self, index: usize, today: NaiveDate) {
-        if self.active == 2
-            && index != 2
-            && let Ok(date) = parse_editor_date(&self.fields[2].text, today)
+        if self.active == DUE
+            && index != DUE
+            && let Ok(date) = parse_editor_date(&self.fields[DUE].text, today)
         {
-            self.fields[2].replace_all(&date.map(|date| date.to_string()).unwrap_or_default());
+            self.fields[DUE].replace_all(&date.map(|date| date.to_string()).unwrap_or_default());
         }
         self.active = index;
     }
 
+    /// The field after (or before) the active one in `FIELD_ORDER`, wrapping at both ends.
+    fn adjacent_field(&self, forward: bool) -> usize {
+        let count = FIELD_ORDER.len();
+        let position = FIELD_ORDER
+            .iter()
+            .position(|&index| index == self.active)
+            .unwrap_or(0);
+        let next = if forward {
+            (position + 1) % count
+        } else {
+            (position + count - 1) % count
+        };
+        FIELD_ORDER[next]
+    }
+
     fn input(&self, lists: &[TaskList], language: Language, today: NaiveDate) -> Result<TaskInput> {
-        let due = parse_editor_date(&self.fields[2].text, today)
+        let due = parse_editor_date(&self.fields[DUE].text, today)
             .with_context(|| tr(language, "invalid_date"))?;
         let list_id = lists
             .iter()
@@ -392,8 +413,8 @@ impl TaskEditor {
             .with_context(|| tr(language, "unknown_list"))?;
         Ok(TaskInput {
             list_id,
-            title: self.fields[0].text.clone(),
-            description: self.fields[1].text.clone(),
+            title: self.fields[TITLE].text.clone(),
+            description: self.fields[DESCRIPTION].text.clone(),
             due,
         })
     }
@@ -627,8 +648,8 @@ impl App {
             Screen::DeleteListConfirm { .. }
             | Screen::PurgeTaskConfirm { .. }
             | Screen::EmptyTrashConfirm { .. } => Mode::DeleteConfirm,
-            Screen::Editor(ref editor) if editor.active == 2 => Mode::DueField,
-            Screen::Editor(ref editor) if editor.active == 3 => Mode::ListField,
+            Screen::Editor(ref editor) if editor.active == DUE => Mode::DueField,
+            Screen::Editor(ref editor) if editor.active == LIST => Mode::ListField,
             Screen::Editor(_) => Mode::Editor,
             Screen::EditorListPicker { .. } | Screen::MoveTaskPicker { .. } => {
                 Mode::EditorListPicker
@@ -812,7 +833,10 @@ impl App {
     fn open_copy_text(&mut self) {
         let text = match &self.screen {
             Screen::Editor(editor) => {
-                format!("{}\n\n{}", editor.fields[0].text, editor.fields[1].text)
+                format!(
+                    "{}\n\n{}",
+                    editor.fields[TITLE].text, editor.fields[DESCRIPTION].text
+                )
             }
             Screen::Navigation => {
                 let Some(task) = self.selected_task() else {
@@ -1135,17 +1159,17 @@ impl App {
                     editor.focus_field(index, self.today);
                     let row = scroll_row + usize::from(mouse.row - rect.y);
                     let column = scroll_column + usize::from(mouse.column - rect.x);
-                    if index == 1 {
+                    if index == DESCRIPTION {
                         let layout = TextLayout::new(
                             &editor.fields[index].text,
                             usize::from(rect.width.saturating_sub(1)),
                         );
                         editor.fields[index].set_cursor(layout.cursor_at(row, column), false);
-                    } else if index != 3 {
+                    } else if index != LIST {
                         editor.fields[index].set_cursor_position(row, column);
                     }
                 }
-                if index == 3 && matches!(self.screen, Screen::Editor(_)) {
+                if index == LIST && matches!(self.screen, Screen::Editor(_)) {
                     self.open_editor_list_picker(store)?;
                 }
             }
@@ -1251,7 +1275,7 @@ impl App {
 
     fn copy_selection(&mut self, config: &Config) -> Result<()> {
         let buffer = match &self.screen {
-            Screen::Editor(editor) if editor.active != 3 => &editor.fields[editor.active],
+            Screen::Editor(editor) if editor.active != LIST => &editor.fields[editor.active],
             Screen::Filter(buffer) | Screen::ListName { buffer, .. } => buffer,
             _ => return Ok(()),
         };
@@ -1323,13 +1347,13 @@ impl App {
         let action = config.action(key, self.mode());
         if let Some(preset) = action.and_then(due_preset)
             && let Screen::Editor(editor) = &mut self.screen
-            && editor.active == 2
+            && editor.active == DUE
         {
             let value = preset
                 .resolve(self.today)?
                 .map(|date| date.to_string())
                 .unwrap_or_default();
-            editor.fields[2].replace_all(&value);
+            editor.fields[DUE].replace_all(&value);
             return Ok(false);
         }
         match action {
@@ -1585,7 +1609,7 @@ impl App {
             }
             Screen::Editor(editor) => {
                 match action {
-                    Some(Action::Open | Action::Lists) if editor.active == 3 => {
+                    Some(Action::Open | Action::Lists) if editor.active == LIST => {
                         self.open_editor_list_picker(store)?
                     }
                     Some(Action::Save) => self.save_editor(store, config)?,
@@ -1606,37 +1630,34 @@ impl App {
                         }
                     }
                     Some(Action::NextField) => {
-                        editor.focus_field((editor.active + 1) % FIELD_KEYS.len(), self.today);
+                        editor.focus_field(editor.adjacent_field(true), self.today);
                     }
                     Some(Action::PreviousField) => {
-                        editor.focus_field(
-                            (editor.active + FIELD_KEYS.len() - 1) % FIELD_KEYS.len(),
-                            self.today,
-                        );
+                        editor.focus_field(editor.adjacent_field(false), self.today);
                     }
                     _ => {
                         if key.code == KeyCode::Enter
                             && key.modifiers.is_empty()
-                            && matches!(editor.active, 0 | 2)
+                            && matches!(editor.active, TITLE | DUE)
                         {
                             self.save_editor(store, config)?;
-                        } else if editor.active == 3 {
+                        } else if editor.active == LIST {
                             if key.modifiers.contains(KeyModifiers::CONTROL)
                                 && !key.modifiers.contains(KeyModifiers::ALT)
                                 && matches!(key.code, KeyCode::Char('z' | 'Z' | 'y' | 'Y'))
                             {
-                                editor.fields[3].key(key, false);
+                                editor.fields[LIST].key(key, false);
                             }
-                        } else if editor.active == 1
+                        } else if editor.active == DESCRIPTION
                             && matches!(key.code, KeyCode::Up | KeyCode::Down)
                         {
-                            editor.fields[1].move_wrapped_vertical(
+                            editor.fields[DESCRIPTION].move_wrapped_vertical(
                                 key.code == KeyCode::Down,
                                 self.description_width,
                                 key.modifiers.contains(KeyModifiers::SHIFT),
                             );
                         } else {
-                            editor.fields[editor.active].key(key, editor.active == 1);
+                            editor.fields[editor.active].key(key, editor.active == DESCRIPTION);
                         }
                     }
                 }
@@ -1913,9 +1934,9 @@ impl App {
 
     fn paste(&mut self, text: &str) {
         match &mut self.screen {
-            Screen::Editor(editor) if editor.active != 3 => {
+            Screen::Editor(editor) if editor.active != LIST => {
                 let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-                let normalized = if editor.active == 1 {
+                let normalized = if editor.active == DESCRIPTION {
                     normalized
                 } else {
                     normalized.replace('\n', " ")
@@ -2211,12 +2232,16 @@ impl App {
     }
 
     fn new_task(&mut self) {
-        let list = match self.view {
-            View::List(id) => self.lists.iter().find(|list| list.id == id),
-            _ => self.lists.iter().min_by_key(|list| list.id),
+        let list_id = match self.view {
+            View::List(id) => self
+                .lists
+                .iter()
+                .find(|list| list.id == id)
+                .map(|list| list.id),
+            _ => suggested_list_id(&self.tasks, &self.lists),
         };
-        if let Some(list) = list {
-            self.screen = Screen::Editor(Box::new(TaskEditor::new(None, list.id)));
+        if let Some(list_id) = list_id {
+            self.screen = Screen::Editor(Box::new(TaskEditor::new(None, list_id)));
             self.message = None;
             self.held.clear();
         }
@@ -2519,7 +2544,7 @@ impl App {
             )
         };
         let mut header_lines = vec![Line::from(header)];
-        if matches!(&self.screen, Screen::Editor(editor) if editor.active == 2) {
+        if matches!(&self.screen, Screen::Editor(editor) if editor.active == DUE) {
             header_lines.push(Line::from(format!(
                 "{} {} | {} {} | {} {} | {} {}",
                 config.keys_for(Action::DueToday),
@@ -2531,7 +2556,7 @@ impl App {
                 config.keys_for(Action::ClearDue),
                 tr(language, "clear_due"),
             )));
-        } else if matches!(&self.screen, Screen::Editor(editor) if editor.active == 3) {
+        } else if matches!(&self.screen, Screen::Editor(editor) if editor.active == LIST) {
             header_lines.push(Line::from(format!(
                 "{} / {} {} | {}",
                 config.keys_for(Action::Open),
@@ -2602,11 +2627,15 @@ impl App {
             }
             Screen::Editor(editor) => {
                 self.mouse_targets = draw_editor(frame, sections[1], editor, &self.lists, language);
-                if let Some((rect, _)) = self
-                    .mouse_targets
-                    .iter()
-                    .find(|(_, target)| matches!(target, MouseTarget::EditorField { index: 1, .. }))
-                {
+                if let Some((rect, _)) = self.mouse_targets.iter().find(|(_, target)| {
+                    matches!(
+                        target,
+                        MouseTarget::EditorField {
+                            index: DESCRIPTION,
+                            ..
+                        }
+                    )
+                }) {
                     self.description_width = usize::from(rect.width.saturating_sub(1));
                 }
             }
@@ -3197,53 +3226,56 @@ fn draw_editor(
     lists: &[TaskList],
     language: Language,
 ) -> Vec<(Rect, MouseTarget)> {
-    let fields = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Min(3),
-        Constraint::Length(3),
-        Constraint::Length(3),
-    ])
+    // Description takes the remaining height. The other fields are one line each.
+    let rows = Layout::vertical(FIELD_ORDER.map(|index| {
+        if index == DESCRIPTION {
+            Constraint::Min(3)
+        } else {
+            Constraint::Length(3)
+        }
+    }))
     .split(area);
-    let mut targets = Vec::with_capacity(FIELD_KEYS.len());
-    for (index, key) in FIELD_KEYS.iter().enumerate() {
-        let (inner, scroll_row, scroll_column) = if index == 1 {
+    let mut targets = Vec::with_capacity(FIELD_ORDER.len());
+    for (&index, &area) in FIELD_ORDER.iter().zip(rows.iter()) {
+        let key = FIELD_KEYS[index];
+        let (inner, scroll_row, scroll_column) = if index == DESCRIPTION {
             draw_description(
                 frame,
-                fields[index],
+                area,
                 tr(language, key),
                 &editor.fields[index],
                 index == editor.active,
             )
-        } else if index == 3 {
+        } else if index == LIST {
             let block = Block::default()
                 .borders(Borders::TOP | Borders::BOTTOM)
                 .title(tr(language, key))
-                .border_style(Style::default().fg(if editor.active == 3 {
+                .border_style(Style::default().fg(if editor.active == LIST {
                     Color::Cyan
                 } else {
                     Color::DarkGray
                 }));
-            let inner = block.inner(fields[index]);
+            let inner = block.inner(area);
             let name = lists
                 .iter()
                 .find(|list| Some(list.id) == editor.selected_list_id())
                 .map(|list| list.name.replace(['\r', '\n'], " "))
                 .unwrap_or_else(|| tr(language, "list_unavailable").to_owned());
-            frame.render_widget(Paragraph::new(name).block(block), fields[index]);
+            frame.render_widget(Paragraph::new(name).block(block), area);
             (inner, 0, 0)
-        } else if index == 2 {
+        } else if index == DUE {
             draw_input_placeholder(
                 frame,
-                fields[index],
+                area,
                 &format!("{}  {}", tr(language, key), tr(language, "due_format_hint")),
                 &editor.fields[index],
                 index == editor.active,
-                Some("YYYY-MM-DD"),
+                Some(tr(language, "undated")),
             )
         } else {
             draw_input(
                 frame,
-                fields[index],
+                area,
                 tr(language, key),
                 &editor.fields[index],
                 index == editor.active,
@@ -3878,8 +3910,8 @@ mod tests {
         let Screen::Editor(editor) = &mut app.screen else {
             panic!()
         };
-        editor.fields[1].set_cursor(5, false);
-        editor.fields[1].set_cursor(value.description.len() - 4, true);
+        editor.fields[DESCRIPTION].set_cursor(5, false);
+        editor.fields[DESCRIPTION].set_cursor(value.description.len() - 4, true);
         let before = editor.fields.clone();
         rendered(&mut app, &config, 38, 24);
         assert!(!app.handle_key(
@@ -4129,11 +4161,11 @@ mod tests {
         let Screen::Editor(editor) = &mut app.screen else {
             panic!("Expected the task editor");
         };
-        editor.fields[0] = TextBuffer::new("Changed title");
-        editor.fields[1] = TextBuffer::new("Unsaved description\nSecond line");
-        editor.fields[2] = TextBuffer::new("not-a-date");
-        editor.active = 2;
-        editor.fields[2].cursor = 3;
+        editor.fields[TITLE] = TextBuffer::new("Changed title");
+        editor.fields[DESCRIPTION] = TextBuffer::new("Unsaved description\nSecond line");
+        editor.fields[DUE] = TextBuffer::new("not-a-date");
+        editor.active = DUE;
+        editor.fields[DUE].cursor = 3;
         let draft = editor.clone();
         app.handle_key(
             KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
@@ -4213,10 +4245,12 @@ mod tests {
         let mut app = App::new(&store, today()).unwrap();
         app.handle_key(key(KeyCode::Char('n')), &mut store, &config);
         app.paste("Køb mælk");
+        // Title, List, Planned date, Description.
         app.handle_key(key(KeyCode::Tab), &mut store, &config);
-        app.paste("To kartoner\nHavremælk");
         app.handle_key(key(KeyCode::Tab), &mut store, &config);
         app.paste("2026-02-30");
+        app.handle_key(key(KeyCode::Tab), &mut store, &config);
+        app.paste("To kartoner\nHavremælk");
         app.handle_key(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
             &mut store,
@@ -4225,7 +4259,7 @@ mod tests {
         assert!(matches!(app.screen, Screen::Editor(_)));
         assert!(store.tasks().unwrap().is_empty());
         if let Screen::Editor(editor) = &mut app.screen {
-            editor.fields[2] = TextBuffer::new("2026-11-09");
+            editor.fields[DUE] = TextBuffer::new("2026-11-09");
         }
         app.handle_key(
             KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
@@ -4247,7 +4281,9 @@ mod tests {
         for character in "qlpd".chars() {
             app.handle_key(key(KeyCode::Char(character)), &mut store, &config);
         }
-        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[0].text == "qlpd"));
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[TITLE].text == "qlpd")
+        );
         app.handle_key(
             KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
             &mut store,
@@ -4271,7 +4307,7 @@ mod tests {
         task_input.due = Some(today());
         let task = store.create_task(&task_input).unwrap();
         let mut editor = TaskEditor::new(Some(task), list.id);
-        editor.fields[2] = TextBuffer::default();
+        editor.fields[DUE] = TextBuffer::default();
         let fields = editor.input(&[list], config.language, today()).unwrap();
         assert!(fields.due.is_none());
         assert_eq!(fields.title, "Milk");
@@ -4284,7 +4320,7 @@ mod tests {
         let task = store.create_task(&input(list_id, "Original")).unwrap();
         let mut app = App::new(&store, today()).unwrap();
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
-        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.active == 1));
+        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.active == DESCRIPTION));
         store
             .update_task(task.id, task.version, &input(list_id, "External"))
             .unwrap();
@@ -4788,7 +4824,7 @@ mod tests {
         ));
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].text == "Unsaved description")
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DESCRIPTION].text == "Unsaved description")
         );
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         app.handle_key(key(KeyCode::Down), &mut store, &config);
@@ -4867,7 +4903,7 @@ mod tests {
             ));
             app.handle_key(key(KeyCode::Enter), &mut store, &config);
             assert!(
-                matches!(&app.screen, Screen::Editor(editor) if editor.fields[0].text == "Keep this draft")
+                matches!(&app.screen, Screen::Editor(editor) if editor.fields[TITLE].text == "Keep this draft")
             );
         }
         assert!(store.tasks().unwrap().is_empty());
@@ -4966,15 +5002,23 @@ mod tests {
         let Screen::Editor(editor) = &mut app.screen else {
             panic!()
         };
-        editor.fields[1].set_cursor(4, false);
-        editor.fields[1].set_cursor(80, true);
+        editor.fields[DESCRIPTION].set_cursor(4, false);
+        editor.fields[DESCRIPTION].set_cursor(80, true);
         for width in [38, 80] {
             let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
             terminal.draw(|frame| app.draw(frame, &config)).unwrap();
             let (rect, MouseTarget::EditorField { scroll_row, .. }) = app
                 .mouse_targets
                 .iter()
-                .find(|(_, target)| matches!(target, MouseTarget::EditorField { index: 1, .. }))
+                .find(|(_, target)| {
+                    matches!(
+                        target,
+                        MouseTarget::EditorField {
+                            index: DESCRIPTION,
+                            ..
+                        }
+                    )
+                })
                 .copied()
                 .unwrap()
             else {
@@ -4996,7 +5040,7 @@ mod tests {
             }
             assert!(highlighted > 0);
             assert!(
-                matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].text == value.description && editor.fields[1].selection() == Some(4..80))
+                matches!(&app.screen, Screen::Editor(editor) if editor.fields[DESCRIPTION].text == value.description && editor.fields[DESCRIPTION].selection() == Some(4..80))
             );
         }
     }
@@ -5043,7 +5087,7 @@ mod tests {
             &config,
         );
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[0].text == "Replacement title" && editor.fields[1].text.is_empty())
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[TITLE].text == "Replacement title" && editor.fields[DESCRIPTION].text.is_empty())
         );
         app.handle_key(
             KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
@@ -5058,7 +5102,7 @@ mod tests {
             &config,
         );
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[0].text == "Initial title" && editor.fields[0].selection() == Some(0..13))
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[TITLE].text == "Initial title" && editor.fields[TITLE].selection() == Some(0..13))
         );
         app.handle_key(
             KeyEvent::new(
@@ -5069,7 +5113,7 @@ mod tests {
             &config,
         );
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[0].text == "Replacement title")
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[TITLE].text == "Replacement title")
         );
     }
 
@@ -5216,7 +5260,15 @@ mod tests {
         let (rect, _) = app
             .mouse_targets
             .iter()
-            .find(|(_, target)| matches!(target, MouseTarget::EditorField { index: 1, .. }))
+            .find(|(_, target)| {
+                matches!(
+                    target,
+                    MouseTarget::EditorField {
+                        index: DESCRIPTION,
+                        ..
+                    }
+                )
+            })
             .copied()
             .unwrap();
         app.handle_mouse(
@@ -5232,7 +5284,7 @@ mod tests {
         .unwrap();
         app.paste("!");
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.active == 1 && editor.fields[1].text == "Æble\n界!x")
+            matches!(&app.screen, Screen::Editor(editor) if editor.active == DESCRIPTION && editor.fields[DESCRIPTION].text == "Æble\n界!x")
         );
     }
 
@@ -5263,7 +5315,7 @@ mod tests {
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         assert!(app.wants_mouse_capture());
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].text == "First line\nSecond line")
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DESCRIPTION].text == "First line\nSecond line")
         );
         assert_eq!(store.task(task.id).unwrap(), task);
         app.handle_key(key(KeyCode::F(2)), &mut store, &config);
@@ -5286,7 +5338,7 @@ mod tests {
         app.refresh_changes(&store, &config, today(), true).unwrap();
         assert!(app.external_update);
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].text == "Unsaved local text" && editor.original.as_ref().unwrap().version == task.version)
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DESCRIPTION].text == "Unsaved local text" && editor.original.as_ref().unwrap().version == task.version)
         );
         config.language = Language::Da;
         assert!(
@@ -5424,18 +5476,30 @@ mod tests {
         let mut app = App::new(&store, today()).unwrap();
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         if let Screen::Editor(editor) = &mut app.screen {
-            editor.fields[1].cursor = 41;
+            editor.fields[DESCRIPTION].cursor = 41;
         }
         let screen = rendered(&mut app, &config, 38, 24);
         assert!(screen.contains("five six seven"));
         app.handle_key(key(KeyCode::Up), &mut store, &config);
-        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].cursor == 5));
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DESCRIPTION].cursor == 5)
+        );
         app.handle_key(key(KeyCode::Down), &mut store, &config);
-        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].cursor == 41));
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DESCRIPTION].cursor == 41)
+        );
         let (rect, _) = app
             .mouse_targets
             .iter()
-            .find(|(_, target)| matches!(target, MouseTarget::EditorField { index: 1, .. }))
+            .find(|(_, target)| {
+                matches!(
+                    target,
+                    MouseTarget::EditorField {
+                        index: DESCRIPTION,
+                        ..
+                    }
+                )
+            })
             .copied()
             .unwrap();
         app.handle_mouse(
@@ -5449,10 +5513,14 @@ mod tests {
             &config,
         )
         .unwrap();
-        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].cursor == 43));
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DESCRIPTION].cursor == 43)
+        );
         app.paste("!");
         let expected = description.replacen("six", "si!x", 1);
-        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].text == expected));
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DESCRIPTION].text == expected)
+        );
         rendered(&mut app, &config, 120, 24);
         app.handle_key(
             KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
@@ -5480,7 +5548,15 @@ mod tests {
         let (_, MouseTarget::EditorField { scroll_row, .. }) = app
             .mouse_targets
             .iter()
-            .find(|(_, target)| matches!(target, MouseTarget::EditorField { index: 1, .. }))
+            .find(|(_, target)| {
+                matches!(
+                    target,
+                    MouseTarget::EditorField {
+                        index: DESCRIPTION,
+                        ..
+                    }
+                )
+            })
             .copied()
             .unwrap()
         else {
@@ -5489,11 +5565,11 @@ mod tests {
         assert!(scroll_row > 0);
         app.handle_key(key(KeyCode::Left), &mut store, &config);
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].cursor == description.len() - "👨‍👩‍👧‍👦".len())
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DESCRIPTION].cursor == description.len() - "👨‍👩‍👧‍👦".len())
         );
         app.handle_key(key(KeyCode::Left), &mut store, &config);
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].cursor == description.len() - "e\u{301}👨‍👩‍👧‍👦".len())
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DESCRIPTION].cursor == description.len() - "e\u{301}👨‍👩‍👧‍👦".len())
         );
         app.handle_key(
             KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
@@ -6348,7 +6424,7 @@ mod tests {
             .unwrap();
         assert_eq!(app.view, View::Planned);
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].text == "Unsaved description" && editor.original.as_ref().unwrap().version == task.version)
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DESCRIPTION].text == "Unsaved description" && editor.original.as_ref().unwrap().version == task.version)
         );
         app.handle_key(
             KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
@@ -6757,40 +6833,45 @@ mod tests {
         let task = store.create_task(&value).unwrap();
         let mut app = App::new(&store, today()).unwrap();
         app.open_selection(&store).unwrap();
-        app.handle_key(key(KeyCode::Tab), &mut store, &config);
+        // An existing task opens at Description. Planned date is just above it.
+        app.handle_key(
+            KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+            &mut store,
+            &config,
+        );
         assert_eq!(app.mode(), Mode::DueField);
         let Screen::Editor(editor) = &mut app.screen else {
             panic!()
         };
-        editor.fields[2].insert("3");
-        editor.fields[2].set_cursor(2, false);
-        editor.fields[2].set_cursor(5, true);
-        let old_text = editor.fields[2].text.clone();
-        let old_cursor = editor.fields[2].cursor;
-        let old_selection = editor.fields[2].selection();
-        let title = editor.fields[0].clone();
-        let description = editor.fields[1].clone();
-        let list = editor.fields[3].clone();
+        editor.fields[DUE].insert("3");
+        editor.fields[DUE].set_cursor(2, false);
+        editor.fields[DUE].set_cursor(5, true);
+        let old_text = editor.fields[DUE].text.clone();
+        let old_cursor = editor.fields[DUE].cursor;
+        let old_selection = editor.fields[DUE].selection();
+        let title = editor.fields[TITLE].clone();
+        let description = editor.fields[DESCRIPTION].clone();
+        let list = editor.fields[LIST].clone();
         app.handle_key(key(KeyCode::Char('t')), &mut store, &config);
         let Screen::Editor(editor) = &app.screen else {
             panic!()
         };
-        assert_eq!(editor.fields[2].text, "2026-11-08");
-        assert_eq!(editor.fields[2].cursor, 10);
-        assert!(editor.fields[2].selection().is_none());
-        assert_eq!(editor.fields[0], title);
-        assert_eq!(editor.fields[1], description);
-        assert_eq!(editor.fields[3], list);
-        assert_eq!(editor.active, 2);
+        assert_eq!(editor.fields[DUE].text, "2026-11-08");
+        assert_eq!(editor.fields[DUE].cursor, 10);
+        assert!(editor.fields[DUE].selection().is_none());
+        assert_eq!(editor.fields[TITLE], title);
+        assert_eq!(editor.fields[DESCRIPTION], description);
+        assert_eq!(editor.fields[LIST], list);
+        assert_eq!(editor.active, DUE);
         assert_eq!(store.task(task.id).unwrap(), task);
         let Screen::Editor(editor) = &mut app.screen else {
             panic!()
         };
-        editor.fields[2].set_cursor(2, false);
-        editor.fields[2].set_cursor(5, true);
-        let unchanged = editor.fields[2].clone();
+        editor.fields[DUE].set_cursor(2, false);
+        editor.fields[DUE].set_cursor(5, true);
+        let unchanged = editor.fields[DUE].clone();
         app.handle_key(key(KeyCode::Char('t')), &mut store, &config);
-        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[2] == unchanged));
+        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[DUE] == unchanged));
         let copied = record_clipboard(&mut app, false);
         app.handle_key(
             KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
@@ -6806,16 +6887,16 @@ mod tests {
         let Screen::Editor(editor) = &app.screen else {
             panic!()
         };
-        assert_eq!(editor.fields[2].text, old_text);
-        assert_eq!(editor.fields[2].cursor, old_cursor);
-        assert_eq!(editor.fields[2].selection(), old_selection);
+        assert_eq!(editor.fields[DUE].text, old_text);
+        assert_eq!(editor.fields[DUE].cursor, old_cursor);
+        assert_eq!(editor.fields[DUE].selection(), old_selection);
         app.handle_key(
             KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
             &mut store,
             &config,
         );
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[2].text == "2026-11-12")
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DUE].text == "2026-11-12")
         );
         for _ in 0..2 {
             app.handle_key(
@@ -6825,14 +6906,16 @@ mod tests {
             );
         }
         app.handle_key(key(KeyCode::Char('x')), &mut store, &config);
-        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[2].text.is_empty()));
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DUE].text.is_empty())
+        );
         app.handle_key(
             KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
             &mut store,
             &config,
         );
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[2].text == "2026-11-08")
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DUE].text == "2026-11-08")
         );
         app.handle_key(
             KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
@@ -6881,7 +6964,7 @@ mod tests {
         let Screen::Editor(editor) = &mut app.screen else {
             panic!()
         };
-        editor.active = 2;
+        editor.active = DUE;
         let display = rendered(&mut app, &config, 130, 24);
         for text in [
             "Ctrl+T",
@@ -6896,17 +6979,18 @@ mod tests {
             assert!(display.contains(text), "Missing {text}");
         }
         app.handle_key(key(KeyCode::Char('t')), &mut store, &config);
-        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[2].text == "t"));
+        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[DUE].text == "t"));
         app.handle_key(
             KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
             &mut store,
             &config,
         );
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[2].text == "2026-11-08")
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DUE].text == "2026-11-08")
         );
         app.handle_key(key(KeyCode::Tab), &mut store, &config);
-        assert_eq!(app.mode(), Mode::ListField);
+        assert_eq!(app.mode(), Mode::Editor);
+        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.active == DESCRIPTION));
         assert!(!rendered(&mut app, &config, 130, 24).contains(tr(Language::Da, "next_monday")));
         assert!(store.tasks().unwrap().is_empty());
     }
@@ -6936,12 +7020,12 @@ mod tests {
         let Screen::Editor(editor) = &mut app.screen else {
             panic!()
         };
-        editor.active = 2;
-        editor.fields[1].insert("Keep unsaved text");
+        editor.active = DUE;
+        editor.fields[DESCRIPTION].insert("Keep unsaved text");
         let next_day = tomorrow.succ_opt().unwrap();
         app.handle_key_on_date(key(KeyCode::Char('t')), &mut store, &config, next_day);
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[2].text == next_day.to_string() && editor.fields[1].text == "Keep unsaved text" && editor.original.as_ref().unwrap().version == open.version)
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DUE].text == next_day.to_string() && editor.fields[DESCRIPTION].text == "Keep unsaved text" && editor.original.as_ref().unwrap().version == open.version)
         );
         assert_eq!(store.task(open.id).unwrap(), open);
     }
@@ -6976,7 +7060,9 @@ mod tests {
         );
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         app.open_selection(&store).unwrap();
-        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[0].text == "Review"));
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[TITLE].text == "Review")
+        );
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         assert_eq!(store.task(work_task.id).unwrap(), work_task);
         assert_eq!(store.task(home_task.id).unwrap(), home_task);
@@ -7036,13 +7122,17 @@ mod tests {
         let task = store.create_task(&input(1, "Original")).unwrap();
         let mut app = App::new(&store, today()).unwrap();
         app.open_selection(&store).unwrap();
-        app.handle_key(key(KeyCode::Tab), &mut store, &config);
+        app.handle_key(
+            KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+            &mut store,
+            &config,
+        );
         let display = rendered(&mut app, &config, 80, 24);
         for format in ["YYYY-MM-DD", "YYYYMMDD", "YYMMDD", "MMDD"] {
             assert!(display.contains(format));
         }
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[2].text.is_empty() && !editor.is_dirty())
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DUE].text.is_empty() && !editor.is_dirty())
         );
         let copied = record_clipboard(&mut app, false);
         app.handle_key(
@@ -7060,18 +7150,22 @@ mod tests {
             let Screen::Editor(editor) = &mut app.screen else {
                 panic!()
             };
-            editor.active = 2;
-            editor.fields[2] = TextBuffer::default();
+            editor.active = DUE;
+            editor.fields[DUE] = TextBuffer::default();
             for character in raw.chars() {
                 app.handle_key(key(KeyCode::Char(character)), &mut store, &config);
             }
-            assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[2].text == raw));
+            assert!(
+                matches!(&app.screen, Screen::Editor(editor) if editor.fields[DUE].text == raw)
+            );
             if exit == 2 {
                 rendered(&mut app, &config, 80, 24);
                 let (rect, _) = app
                     .mouse_targets
                     .iter()
-                    .find(|(_, target)| matches!(target, MouseTarget::EditorField { index: 0, .. }))
+                    .find(|(_, target)| {
+                        matches!(target, MouseTarget::EditorField { index: TITLE, .. })
+                    })
                     .copied()
                     .unwrap();
                 app.handle_mouse(
@@ -7095,14 +7189,16 @@ mod tests {
             let Screen::Editor(editor) = &mut app.screen else {
                 panic!()
             };
-            assert_eq!(editor.fields[2].text, "2026-11-09");
-            editor.active = 2;
+            assert_eq!(editor.fields[DUE].text, "2026-11-09");
+            editor.active = DUE;
             app.handle_key(
                 KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
                 &mut store,
                 &config,
             );
-            assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[2].text == raw));
+            assert!(
+                matches!(&app.screen, Screen::Editor(editor) if editor.fields[DUE].text == raw)
+            );
             app.handle_key(
                 KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL),
                 &mut store,
@@ -7111,18 +7207,18 @@ mod tests {
             let Screen::Editor(editor) = &app.screen else {
                 panic!()
             };
-            let normalized = editor.fields[2].clone();
+            let normalized = editor.fields[DUE].clone();
             app.handle_key(key(KeyCode::Tab), &mut store, &config);
             assert!(
-                matches!(&app.screen, Screen::Editor(editor) if editor.fields[2] == normalized)
+                matches!(&app.screen, Screen::Editor(editor) if editor.fields[DUE] == normalized)
             );
             assert_eq!(store.task(task.id).unwrap(), task);
         }
         let Screen::Editor(editor) = &mut app.screen else {
             panic!()
         };
-        editor.active = 2;
-        editor.fields[2].replace_all("2026-");
+        editor.active = DUE;
+        editor.fields[DUE].replace_all("2026-");
         app.handle_key(key(KeyCode::Tab), &mut store, &config);
         app.handle_key(
             KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
@@ -7130,7 +7226,7 @@ mod tests {
             &config,
         );
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[2].text == "2026-" && editor.active == 3)
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DUE].text == "2026-" && editor.active == DESCRIPTION)
         );
         assert!(app.message.as_ref().unwrap().is_error);
         assert_eq!(store.task(task.id).unwrap(), task);
@@ -7147,23 +7243,23 @@ mod tests {
         let Screen::Editor(editor) = &mut app.screen else {
             panic!()
         };
-        editor.active = 2;
-        editor.fields[2].insert("0102");
+        editor.active = DUE;
+        editor.fields[DUE].insert("0102");
         app.handle_key_on_date(key(KeyCode::Tab), &mut store, &config, january);
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[2].text == "2027-01-02")
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DUE].text == "2027-01-02")
         );
         app.today = december;
         let Screen::Editor(editor) = &mut app.screen else {
             panic!()
         };
-        editor.active = 2;
-        editor.fields[2].replace_all("0103");
+        editor.active = DUE;
+        editor.fields[DUE].replace_all("0103");
         rendered(&mut app, &config, 80, 24);
         let (rect, _) = app
             .mouse_targets
             .iter()
-            .find(|(_, target)| matches!(target, MouseTarget::EditorField { index: 0, .. }))
+            .find(|(_, target)| matches!(target, MouseTarget::EditorField { index: TITLE, .. }))
             .copied()
             .unwrap();
         app.handle_mouse_on_date(
@@ -7175,14 +7271,14 @@ mod tests {
         )
         .unwrap();
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[2].text == "2027-01-03")
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DUE].text == "2027-01-03")
         );
         app.today = december;
         let Screen::Editor(editor) = &mut app.screen else {
             panic!()
         };
-        editor.active = 2;
-        editor.fields[2].replace_all("0104");
+        editor.active = DUE;
+        editor.fields[DUE].replace_all("0104");
         app.handle_key_on_date(
             KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
             &mut store,
@@ -7256,7 +7352,7 @@ mod tests {
         app.handle_key(key(KeyCode::Down), &mut store, &config);
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields == before.fields && editor.active == 3)
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields == before.fields && editor.active == LIST)
         );
         app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
         app.handle_key(key(KeyCode::Down), &mut store, &config);
@@ -7267,7 +7363,7 @@ mod tests {
         assert_eq!(editor.selected_list_id(), Some(work.id));
         assert_eq!(editor.fields[..3], before.fields[..3]);
         assert_eq!(editor.original, before.original);
-        assert_eq!(editor.active, 3);
+        assert_eq!(editor.active, LIST);
         assert_eq!(store.task(task.id).unwrap(), task);
         app.handle_key(
             KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
@@ -7305,7 +7401,7 @@ mod tests {
         let Screen::Editor(editor) = &mut app.screen else {
             panic!()
         };
-        editor.active = 3;
+        editor.active = LIST;
         let clean = editor.fields.clone();
         external.rename_list(1, "Personal").unwrap();
         app.refresh(&store).unwrap();
@@ -7386,7 +7482,7 @@ mod tests {
         let navigation_picker = app.picker.state;
         app.open_selection(&store).unwrap();
         if let Screen::Editor(editor) = &mut app.screen {
-            editor.active = 3;
+            editor.active = LIST;
         }
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         for _ in 0..22 {
@@ -7439,14 +7535,14 @@ mod tests {
         let mut app = App::new(&store, today()).unwrap();
         app.open_selection(&store).unwrap();
         if let Screen::Editor(editor) = &mut app.screen {
-            editor.active = 2;
-            editor.fields[2].insert("1109");
+            editor.active = DUE;
+            editor.fields[DUE].insert("1109");
         }
         rendered(&mut app, &config, 80, 24);
         let (field, _) = app
             .mouse_targets
             .iter()
-            .find(|(_, target)| matches!(target, MouseTarget::EditorField { index: 3, .. }))
+            .find(|(_, target)| matches!(target, MouseTarget::EditorField { index: LIST, .. }))
             .copied()
             .unwrap();
         let now = Instant::now();
@@ -7458,7 +7554,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            matches!(&app.screen, Screen::EditorListPicker { editor, .. } if editor.active == 3 && editor.fields[2].text == "2026-11-09")
+            matches!(&app.screen, Screen::EditorListPicker { editor, .. } if editor.active == LIST && editor.fields[DUE].text == "2026-11-09")
         );
         rendered(&mut app, &config, 80, 18);
         let inner = app.screen.editor_picker().unwrap().area.unwrap();
@@ -7511,7 +7607,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.selected_list_id() == Some(expected) && editor.active == 3)
+            matches!(&app.screen, Screen::Editor(editor) if editor.selected_list_id() == Some(expected) && editor.active == LIST)
         );
         assert_eq!(store.task(task.id).unwrap(), task);
     }
@@ -7527,7 +7623,7 @@ mod tests {
         let mut app = App::new(&store, today()).unwrap();
         app.open_selection(&store).unwrap();
         if let Screen::Editor(editor) = &mut app.screen {
-            editor.active = 3;
+            editor.active = LIST;
         }
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         assert!(matches!(app.screen, Screen::Editor(_)));
@@ -7845,7 +7941,7 @@ mod tests {
         let mut app = App::new(&store, today()).unwrap();
         app.open_selection(&store).unwrap();
         if let Screen::Editor(editor) = &mut app.screen {
-            editor.active = 3;
+            editor.active = LIST;
         }
         app.open_editor_list_picker(&store).unwrap();
         for code in [KeyCode::Up, KeyCode::Down, KeyCode::Home, KeyCode::End] {
@@ -7859,7 +7955,7 @@ mod tests {
         let Screen::Editor(editor) = &mut app.screen else {
             panic!()
         };
-        editor.fields[1].insert("Unsaved text");
+        editor.fields[DESCRIPTION].insert("Unsaved text");
         let draft = editor.clone();
         app.open_editor_list_picker(&store).unwrap();
         let last = app.lists.len() - 1;
@@ -7896,7 +7992,7 @@ mod tests {
         let mut empty = App::new(&scoped, today()).unwrap();
         empty.open_selection(&scoped).unwrap();
         if let Screen::Editor(editor) = &mut empty.screen {
-            editor.active = 3;
+            editor.active = LIST;
         }
         let preview = store.preview_list_deletion(work.id).unwrap();
         store.delete_list(&preview).unwrap();
@@ -7990,16 +8086,16 @@ mod tests {
         app.open_selection(&store).unwrap();
         app.paste("gG\nsecond line");
         if let Screen::Editor(editor) = &mut app.screen {
-            editor.active = 0;
+            editor.active = TITLE;
         }
         let defaults = Config::default();
         app.handle_key(key(KeyCode::Char('g')), &mut store, &defaults);
         app.handle_key(key(KeyCode::Char('G')), &mut store, &defaults);
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[0].text == "FirstgG")
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[TITLE].text == "FirstgG")
         );
         if let Screen::Editor(editor) = &mut app.screen {
-            editor.active = 1;
+            editor.active = DESCRIPTION;
         }
         app.handle_key(
             KeyEvent::new(KeyCode::Home, KeyModifiers::CONTROL),
@@ -8007,10 +8103,12 @@ mod tests {
             &config,
         );
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].cursor == 0 && editor.fields[1].text == "gG\nsecond line")
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DESCRIPTION].cursor == 0 && editor.fields[DESCRIPTION].text == "gG\nsecond line")
         );
         app.handle_key(key(KeyCode::End), &mut store, &config);
-        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].cursor == 2));
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DESCRIPTION].cursor == 2)
+        );
         app.open_copy_text();
         app.handle_key(key(KeyCode::Up), &mut store, &config);
         assert!(matches!(app.screen, Screen::CopyText { row: 0, .. }));
@@ -8136,7 +8234,7 @@ mod tests {
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].text == "Unsaved description")
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DESCRIPTION].text == "Unsaved description")
         );
         assert_eq!(app.view, View::List(work.id));
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
@@ -8382,7 +8480,11 @@ mod tests {
         app.select_task_id(Some(third.id));
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         app.paste("Edited description");
-        app.handle_key(key(KeyCode::Tab), &mut store, &config);
+        app.handle_key(
+            KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+            &mut store,
+            &config,
+        );
         app.paste("1112");
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         let edited = store.task(third.id).unwrap();
@@ -8478,7 +8580,7 @@ mod tests {
         app.handle_key(key(KeyCode::Char('n')), &mut store, &rebound);
         app.paste("Title");
         app.handle_key(key(KeyCode::Enter), &mut store, &rebound);
-        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.active == 1));
+        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.active == LIST));
         assert!(store.tasks().unwrap().is_empty());
     }
 
@@ -8572,9 +8674,13 @@ mod tests {
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         app.paste("Line two");
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].text == "Line one\nLine two")
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DESCRIPTION].text == "Line one\nLine two")
         );
-        app.handle_key(key(KeyCode::Tab), &mut store, &config);
+        app.handle_key(
+            KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+            &mut store,
+            &config,
+        );
         app.paste("1112");
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         assert!(matches!(app.screen, Screen::Navigation));
@@ -8727,7 +8833,7 @@ mod tests {
         assert!(matches!(app.screen, Screen::ConfirmDiscard { .. }));
         app.handle_key(key(KeyCode::Char('n')), &mut store, &config);
         assert!(
-            matches!(&app.screen, Screen::Editor(editor) if editor.fields[1].text == " changed")
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[DESCRIPTION].text == " changed")
         );
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         app.handle_key(
@@ -8817,7 +8923,7 @@ mod tests {
         assert_eq!(picker.selection, usize::from(picker.area.unwrap().height));
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         if let Screen::Editor(editor) = &mut app.screen {
-            editor.active = 1;
+            editor.active = DESCRIPTION;
         }
         app.paste(&"line\n".repeat(40));
         app.open_copy_text();
@@ -9073,5 +9179,179 @@ mod tests {
                 .unwrap()
                 .contains("Engang (1)")
         );
+    }
+
+    fn newest_task(store: &Store) -> Task {
+        store
+            .tasks()
+            .unwrap()
+            .into_iter()
+            .max_by_key(|task| task.id)
+            .unwrap()
+    }
+
+    fn editor_target(app: &App, field: usize) -> Rect {
+        app.mouse_targets
+            .iter()
+            .find(|(_, target)| matches!(target, MouseTarget::EditorField { index, .. } if *index == field))
+            .map(|(rect, _)| *rect)
+            .unwrap()
+    }
+
+    fn screen_row(screen: &str, width: u16, row: u16) -> String {
+        screen
+            .chars()
+            .skip(usize::from(row) * usize::from(width))
+            .take(usize::from(width))
+            .collect()
+    }
+
+    #[test]
+    fn new_tasks_from_all_tasks_start_in_the_most_common_recent_list() {
+        let (_directory, mut store, config) = fixture();
+        let work = store.create_list("Work").unwrap();
+        let private = store.create_list("Private").unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.handle_key(key(KeyCode::Char('n')), &mut store, &config);
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.selected_list_id() == Some(1))
+        );
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        for list_id in [private.id, work.id, work.id, 1] {
+            store.create_task(&input(list_id, "Task")).unwrap();
+        }
+        // Trash does not count, so Private has one vote and Work has two.
+        for _ in 0..2 {
+            let trashed = store.create_task(&input(private.id, "Mistake")).unwrap();
+            store
+                .set_deleted(trashed.id, trashed.version, true)
+                .unwrap();
+        }
+        app.refresh(&store).unwrap();
+        app.handle_key(key(KeyCode::Char('n')), &mut store, &config);
+        let Screen::Editor(editor) = &app.screen else {
+            panic!()
+        };
+        assert_eq!(editor.selected_list_id(), Some(work.id));
+        assert_eq!(editor.active, TITLE);
+        assert!(editor.fields[TITLE].text.is_empty());
+        assert!(editor.fields[DESCRIPTION].text.is_empty());
+        assert!(editor.fields[DUE].text.is_empty());
+        assert!(!editor.is_dirty());
+        let screen = rendered(&mut app, &config, 80, 24);
+        assert_eq!(
+            screen_row(&screen, 80, editor_target(&app, LIST).y).trim(),
+            "Work"
+        );
+        app.paste("Suggested");
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        let created = newest_task(&store);
+        assert_eq!(created.title, "Suggested");
+        assert_eq!(created.list_id, work.id);
+        assert_eq!(created.due, None);
+
+        app.set_view(View::List(private.id), &store).unwrap();
+        app.handle_key(key(KeyCode::Char('n')), &mut store, &config);
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.selected_list_id() == Some(private.id))
+        );
+    }
+
+    #[test]
+    fn editor_fields_follow_title_list_date_description_order() {
+        let (_directory, mut store, config) = fixture();
+        let mut app = App::new(&store, today()).unwrap();
+        app.handle_key(key(KeyCode::Char('n')), &mut store, &config);
+        let active = |app: &App| match &app.screen {
+            Screen::Editor(editor) => editor.active,
+            _ => panic!(),
+        };
+        assert_eq!(active(&app), TITLE);
+        for expected in [LIST, DUE, DESCRIPTION, TITLE] {
+            app.handle_key(key(KeyCode::Tab), &mut store, &config);
+            assert_eq!(active(&app), expected);
+        }
+        for expected in [DESCRIPTION, DUE, LIST, TITLE] {
+            app.handle_key(
+                KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+                &mut store,
+                &config,
+            );
+            assert_eq!(active(&app), expected);
+        }
+        let screen = rendered(&mut app, &config, 80, 24);
+        let rects = FIELD_ORDER.map(|field| editor_target(&app, field));
+        assert!(rects.windows(2).all(|pair| pair[0].y < pair[1].y));
+        assert_eq!(rects[0].height, 1);
+        assert!(rects[3].height > 1, "Description fills the remaining rows");
+        for (rect, label) in rects
+            .iter()
+            .zip(["Title", "List", "Planned date", "Description"])
+        {
+            assert!(screen_row(&screen, 80, rect.y - 1).contains(label));
+        }
+        // A click on Planned date focuses it in its new position.
+        app.handle_mouse(
+            mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                rects[2].x,
+                rects[2].y,
+            ),
+            Instant::now(),
+            &mut store,
+            &config,
+        )
+        .unwrap();
+        assert_eq!(active(&app), DUE);
+    }
+
+    #[test]
+    fn two_tabs_plan_a_new_task_for_today() {
+        let (_directory, mut store, config) = fixture();
+        let work = store.create_list("Work").unwrap();
+        store.create_task(&input(work.id, "Earlier")).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.handle_key(key(KeyCode::Char('n')), &mut store, &config);
+        app.paste("Pay rent");
+        app.handle_key(key(KeyCode::Tab), &mut store, &config);
+        assert_eq!(app.mode(), Mode::ListField);
+        app.handle_key(key(KeyCode::Tab), &mut store, &config);
+        assert_eq!(app.mode(), Mode::DueField);
+        app.handle_key(key(KeyCode::Char('t')), &mut store, &config);
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        assert_eq!(app.message.as_ref().unwrap().text, "Created");
+        let created = newest_task(&store);
+        assert_eq!(created.title, "Pay rent");
+        assert_eq!(created.list_id, work.id);
+        assert_eq!(created.due, Some(today()));
+    }
+
+    #[test]
+    fn empty_planned_date_shows_a_localized_sometime_placeholder() {
+        let (_directory, mut store, config) = fixture();
+        let mut app = App::new(&store, today()).unwrap();
+        app.handle_key(key(KeyCode::Char('n')), &mut store, &config);
+        let screen = rendered(&mut app, &config, 80, 24);
+        let due = editor_target(&app, DUE);
+        assert_eq!(screen_row(&screen, 80, due.y).trim(), "Sometime");
+        assert!(
+            screen_row(&screen, 80, due.y - 1).contains("YYYY-MM-DD / YYYYMMDD / YYMMDD / MMDD")
+        );
+
+        let danish = Config::from_toml("language = 'da'").unwrap();
+        let screen = rendered(&mut app, &danish, 80, 24);
+        assert_eq!(screen_row(&screen, 80, due.y).trim(), "Engang");
+        let title = screen_row(&screen, 80, due.y - 1);
+        assert!(title.contains("Planlagt dato"));
+        assert!(title.contains("YYYY-MM-DD / YYYYMMDD / YYMMDD / MMDD"));
+
+        app.handle_key(key(KeyCode::Tab), &mut store, &config);
+        app.handle_key(key(KeyCode::Tab), &mut store, &config);
+        app.paste("1109");
+        let screen = rendered(&mut app, &config, 80, 24);
+        assert_eq!(screen_row(&screen, 80, due.y).trim(), "1109");
+        assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[DUE].text == "1109"));
     }
 }

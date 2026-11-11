@@ -5,7 +5,7 @@ use chrono::{Datelike, Days, NaiveDate};
 
 use crate::{
     i18n::{Language, tr},
-    model::{Status, Task},
+    model::{Status, Task, TaskList},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -130,6 +130,43 @@ pub fn planned_group(task: &Task, today: NaiveDate) -> PlannedGroup {
         (Status::Done, false) => PlannedGroup::Done,
         (Status::Cancelled, false) => PlannedGroup::Cancelled,
     }
+}
+
+/// The number of most recently created tasks that decide a new task's suggested list.
+pub const LIST_SUGGESTION_WINDOW: usize = 10;
+
+/// Suggests the list for a new task created outside a list view.
+///
+/// The most common list among the newest counted tasks wins. A counted task is outside
+/// Trash and belongs to one of `lists`. Task IDs grow with creation and are never reused,
+/// so the highest IDs are the newest tasks. A tie goes to the list with the newest counted
+/// task. Without a counted task, the lowest-ID list is returned.
+pub fn suggested_list_id(tasks: &[Task], lists: &[TaskList]) -> Option<i64> {
+    let mut recent: Vec<&Task> = tasks
+        .iter()
+        .filter(|task| !task.deleted && lists.iter().any(|list| list.id == task.list_id))
+        .collect();
+    recent.sort_unstable_by(|left, right| right.id.cmp(&left.id));
+    recent.truncate(LIST_SUGGESTION_WINDOW);
+    // Lists appear in the order of their newest task, so the first highest count wins ties.
+    let mut counts: Vec<(i64, usize)> = Vec::new();
+    for task in recent {
+        match counts
+            .iter_mut()
+            .find(|(list_id, _)| *list_id == task.list_id)
+        {
+            Some((_, count)) => *count += 1,
+            None => counts.push((task.list_id, 1)),
+        }
+    }
+    let mut best: Option<(i64, usize)> = None;
+    for (list_id, count) in counts {
+        if best.is_none_or(|(_, best_count)| count > best_count) {
+            best = Some((list_id, count));
+        }
+    }
+    best.map(|(list_id, _)| list_id)
+        .or_else(|| lists.iter().map(|list| list.id).min())
 }
 
 pub fn ordinary_group_label(task: &Task, today: NaiveDate, language: Language) -> String {
@@ -563,5 +600,105 @@ mod tests {
             date_label(boundary, Language::En),
             "2027-01-01 Fri 2026-W53"
         );
+    }
+
+    const INBOX: i64 = 1;
+    const WORK: i64 = 2;
+    const PRIVATE: i64 = 3;
+    const ERRANDS: i64 = 4;
+
+    fn lists(ids: &[i64]) -> Vec<TaskList> {
+        ids.iter()
+            .map(|&id| TaskList {
+                id,
+                name: format!("List {id}"),
+                count: 0,
+            })
+            .collect()
+    }
+
+    /// Builds tasks with IDs 1, 2, 3, ... in the given list order, oldest first.
+    fn created(list_ids: &[i64]) -> Vec<Task> {
+        list_ids
+            .iter()
+            .enumerate()
+            .map(|(index, &list_id)| Task {
+                id: index as i64 + 1,
+                list_id,
+                ..task(None)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn suggests_the_most_common_list_among_recent_tasks() {
+        let all = lists(&[INBOX, WORK, PRIVATE]);
+        let tasks = created(&[
+            WORK, PRIVATE, WORK, INBOX, WORK, PRIVATE, WORK, WORK, PRIVATE, WORK,
+        ]);
+        assert_eq!(suggested_list_id(&tasks, &all), Some(WORK));
+    }
+
+    #[test]
+    fn suggestion_ties_go_to_the_list_with_the_newest_task() {
+        let all = lists(&[INBOX, WORK, PRIVATE]);
+        // Newest to oldest: Private, Work, Private, Work.
+        let tasks = created(&[WORK, PRIVATE, WORK, PRIVATE]);
+        assert_eq!(suggested_list_id(&tasks, &all), Some(PRIVATE));
+        let tasks = created(&[PRIVATE, WORK, PRIVATE, WORK]);
+        assert_eq!(suggested_list_id(&tasks, &all), Some(WORK));
+        // Input order does not matter, only IDs do.
+        let mut reversed = created(&[WORK, PRIVATE, WORK, PRIVATE]);
+        reversed.reverse();
+        assert_eq!(suggested_list_id(&reversed, &all), Some(PRIVATE));
+    }
+
+    #[test]
+    fn suggestion_counts_only_the_newest_tasks_outside_trash() {
+        let all = lists(&[INBOX, WORK, PRIVATE, ERRANDS]);
+        // Twenty old Work tasks fall outside the window of the newest ten.
+        let mut order = vec![WORK; 20];
+        order.extend([PRIVATE; 6]);
+        order.extend([WORK; 4]);
+        // The three newest tasks are in Trash. If they took three of the ten
+        // places, Work would win four to three.
+        order.extend([ERRANDS; 3]);
+        let mut tasks = created(&order);
+        for task in tasks.iter_mut().filter(|task| task.list_id == ERRANDS) {
+            task.deleted = true;
+        }
+        assert_eq!(suggested_list_id(&tasks, &all), Some(PRIVATE));
+    }
+
+    #[test]
+    fn suggestion_counts_closed_and_moved_tasks_by_their_current_list() {
+        let all = lists(&[INBOX, WORK, PRIVATE]);
+        let mut tasks = created(&[WORK, WORK, WORK, PRIVATE, PRIVATE]);
+        tasks[0].status = Status::Done;
+        tasks[1].status = Status::Done;
+        tasks[2].status = Status::Cancelled;
+        assert_eq!(suggested_list_id(&tasks, &all), Some(WORK));
+
+        // Both Inbox tasks were later moved to Private, so Private wins.
+        let mut tasks = created(&[WORK, INBOX, INBOX]);
+        tasks[1].list_id = PRIVATE;
+        tasks[2].list_id = PRIVATE;
+        assert_eq!(suggested_list_id(&tasks, &all), Some(PRIVATE));
+    }
+
+    #[test]
+    fn suggestion_ignores_inaccessible_lists_and_falls_back_to_the_default() {
+        let scoped = lists(&[PRIVATE]);
+        let tasks = created(&[PRIVATE, WORK, WORK, WORK]);
+        assert_eq!(suggested_list_id(&tasks, &scoped), Some(PRIVATE));
+
+        let all = lists(&[WORK, INBOX, PRIVATE]);
+        assert_eq!(suggested_list_id(&[], &all), Some(INBOX));
+        let mut trashed = created(&[WORK, PRIVATE]);
+        for task in &mut trashed {
+            task.deleted = true;
+        }
+        assert_eq!(suggested_list_id(&trashed, &all), Some(INBOX));
+        assert_eq!(suggested_list_id(&trashed, &[]), None);
     }
 }

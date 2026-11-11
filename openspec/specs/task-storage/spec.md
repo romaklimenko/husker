@@ -387,13 +387,14 @@ Husker SHALL return the lowest-ID ordinary list first, followed by other lists i
 The lowest-ID list is the default list and stays first even after a rename.
 Virtual Trash appears after ordinary lists where a caller includes it.
 New lists append after existing ordinary lists. Renaming a list preserves its position.
-Default task creation uses the selected list, or the default list when no list is selected.
+CLI `add` creates a task in the list given by `--list`, or in the default list without `--list`. MCP `add_task` creates a task in the list given by `list_id`, or without `list_id` in the restricted list of a restricted server and in the default list otherwise.
+A new task created from All tasks in the terminal interface starts in the list defined by the `terminal-interface` requirement Suggest a list for a new task.
 Saved positions are internal storage fields and do not change the `TaskList` JSON fields.
 
 #### Scenario: Keep a renamed default list pinned
 
 - **WHEN** list 1 Inbox is renamed to Personal
-- **THEN** Personal remains first and remains the default destination for task creation without a selected list
+- **THEN** Personal remains first and remains the destination of `husker add` without `--list`
 
 #### Scenario: Append a new list
 
