@@ -402,6 +402,11 @@ description preview. Press Enter to open its Description field, or F4 to
 read and copy its plain text.
 Group headings are labels. They do not receive selection highlighting,
 and keyboard navigation skips them.
+Use Down or PageDown to move through a long list. The first visible group's
+heading stays at the top of the task area. For example, Tomorrow keeps its
+date and full group count above the remaining visible tasks, even after
+earlier tasks have scrolled out of view. If only one row is available,
+Husker shows the selected task instead.
 
 Date labels include the weekday and ISO week number:
 `2026-11-08 Sun W45`. Danish uses `2026-11-08 søn W45`.
@@ -494,6 +499,7 @@ The most recent recorded status dates appear first. Today and Yesterday
 headings include the actual date, such as `Today - 2026-11-08 Sun W45 (2)`.
 Older headings show the date, weekday, and week, such as `2026-11-06 Fri W45 (1)`.
 The number in parentheses is the count of tasks under that heading.
+As you scroll, the first visible group's heading stays above its tasks.
 Within one date, later completion or
 cancellation times appear first. Tasks migrated without a recorded time
 follow tasks with known times on the same date. Equal or unknown times use

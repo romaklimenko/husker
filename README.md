@@ -173,9 +173,10 @@ overwrite a newer save.
 Open tasks planned before today appear under Earlier, or Tidligere in Danish.
 Future open tasks appear under their exact planned dates. Every heading shows
 the number of tasks in its group. Today and Tomorrow headings also show the
-date, weekday, and ISO week. Open tasks without dates appear under
-Sometime, or Engang in Danish. Tasks completed or cancelled today appear in
-Done today or Cancelled today after the open tasks. A task you mark done
+date, weekday, and ISO week. As you scroll, the first visible group's heading
+stays above its tasks in task views and History. Open tasks without dates
+appear under Sometime, or Engang in Danish. Tasks completed or cancelled
+today appear in Done today or Cancelled today after the open tasks. A task you mark done
 with Space keeps its row, dimmed, until you change the view.
 Press `h` to see older completed and cancelled tasks in History. Press `r`
 there to reopen a task. Same-day completions use their recorded completion

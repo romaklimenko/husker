@@ -246,6 +246,46 @@ fn page_selection(current: usize, count: usize, page: usize, down: bool) -> usiz
     }
 }
 
+/// Maps screen rows to the full navigation list, retaining a scrolled group's heading.
+fn navigation_viewport(
+    row_tasks: &[Option<usize>],
+    state: &mut ListState,
+    height: usize,
+) -> Vec<usize> {
+    let Some(selected) = state
+        .selected()
+        .filter(|_| height > 0 && !row_tasks.is_empty())
+    else {
+        return Vec::new();
+    };
+    let selected = selected.min(row_tasks.len() - 1);
+    let heading = |offset: usize| {
+        if height > 1 && row_tasks[offset].is_some() {
+            row_tasks[..offset].iter().rposition(Option::is_none)
+        } else {
+            None
+        }
+    };
+    let mut offset = state
+        .offset()
+        .min(selected)
+        .max(selected.saturating_sub(height - 1));
+    while selected - offset >= height - usize::from(heading(offset).is_some()) {
+        offset += 1;
+    }
+    // A natural heading and its retained copy produce the same visible rows.
+    // Prefer the natural position so returning Home restores offset zero.
+    if height > 1 && offset > 0 && row_tasks[offset - 1].is_none() {
+        offset -= 1;
+    }
+    *state.offset_mut() = offset;
+    heading(offset)
+        .into_iter()
+        .chain(offset..row_tasks.len())
+        .take(height)
+        .collect()
+}
+
 /// `y` or `n` in a confirmation, with Shift allowed for the uppercase letters.
 fn confirmation_letter(key: KeyEvent) -> Option<bool> {
     if !key.modifiers.difference(KeyModifiers::SHIFT).is_empty() {
@@ -3167,8 +3207,15 @@ impl App {
             rows.push(ListItem::new(line));
             row_tasks.push(Some(index));
         }
+        let viewport =
+            navigation_viewport(&row_tasks, &mut self.list_state, usize::from(area.height));
+        let mut viewport_state = ListState::default().with_selected(
+            viewport
+                .iter()
+                .position(|row| Some(*row) == self.list_state.selected()),
+        );
         frame.render_stateful_widget(
-            List::new(rows)
+            List::new(viewport.iter().map(|row| rows[*row].clone()))
                 .highlight_style(
                     Style::default()
                         .fg(Color::Cyan)
@@ -3176,20 +3223,15 @@ impl App {
                 )
                 .highlight_symbol("> "),
             area,
-            &mut self.list_state,
+            &mut viewport_state,
         );
         let mut displayed_tasks = 0;
-        for (row, task_index) in row_tasks
-            .iter()
-            .skip(self.list_state.offset())
-            .take(usize::from(area.height))
-            .enumerate()
-        {
-            if let Some(index) = task_index {
+        for (row, source_row) in viewport.iter().enumerate() {
+            if let Some(index) = row_tasks[*source_row] {
                 displayed_tasks += 1;
                 self.mouse_targets.push((
                     Rect::new(area.x, area.y + row as u16, area.width, 1),
-                    MouseTarget::Row(*index),
+                    MouseTarget::Row(index),
                 ));
             }
         }
@@ -7781,6 +7823,154 @@ mod tests {
                 .contains("changed in another process")
         );
         assert_eq!(store.task(task.id).unwrap().version, task.version + 1);
+    }
+
+    #[test]
+    fn returning_home_keeps_tomorrow_heading_in_a_long_list() {
+        let (_directory, mut store, mut config) = fixture();
+        for index in 0..30 {
+            let mut value = input(1, &format!("Tomorrow task {index:02}"));
+            value.due = Some(today().succ_opt().unwrap());
+            store.create_task(&value).unwrap();
+        }
+        for language in [Language::En, Language::Da] {
+            config.language = language;
+            let mut app = App::new(&store, today()).unwrap();
+            for height in [12, 10, 24] {
+                app.handle_key(key(KeyCode::End), &mut store, &config);
+                rendered(&mut app, &config, 100, height);
+                app.handle_key(key(KeyCode::Home), &mut store, &config);
+                let screen = rendered(&mut app, &config, 100, height);
+                let heading = format!(
+                    "{} (30)",
+                    ordinary_group_label(&app.visible[0], today(), language)
+                );
+                assert!(screen.contains(&heading), "{screen}");
+                assert!(screen.contains("> [ ] [Inbox] Tomorrow task 00"));
+                assert_eq!(screen.matches(&heading).count(), 1);
+                assert_eq!(app.list_state.offset(), 0);
+                assert_eq!(rendered(&mut app, &config, 100, height), screen);
+            }
+        }
+    }
+
+    #[test]
+    fn scrolled_group_headings_match_visible_tasks_and_mouse_targets() {
+        for view in [
+            View::Planned,
+            View::List(1),
+            View::History(None),
+            View::History(Some(1)),
+            View::Trash,
+        ] {
+            let (_directory, mut store, mut config) = fixture();
+            for index in 0..18 {
+                let mut value = input(1, &format!("Task {index:02}"));
+                value.due = Some(today() + chrono::Duration::days(1 + index / 6));
+                let task = store.create_task(&value).unwrap();
+                if matches!(view, View::History(_)) {
+                    store
+                        .set_status_on(
+                            task.id,
+                            task.version,
+                            Status::Done,
+                            today() - chrono::Duration::days(1 + index / 6),
+                        )
+                        .unwrap();
+                } else if view == View::Trash {
+                    store.set_deleted(task.id, task.version, true).unwrap();
+                }
+            }
+            let mut app = App::new(&store, today()).unwrap();
+            app.set_view(view, &store).unwrap();
+            for language in [Language::En, Language::Da] {
+                config.language = language;
+                for height in [8, 2, 1, 0, 6] {
+                    for selected in [0, 5, 6, 11, 12, 17, 0, 17, 6] {
+                        app.selection = selected;
+                        let mut terminal = Terminal::new(TestBackend::new(100, height)).unwrap();
+                        let mut previous = None;
+                        for _ in 0..2 {
+                            app.mouse_targets.clear();
+                            terminal
+                                .draw(|frame| app.draw_navigation(frame, frame.area(), &config))
+                                .unwrap();
+                            let buffer = terminal.backend().buffer();
+                            let row_text = |y| {
+                                (0..100)
+                                    .map(|x| buffer[(x, y)].symbol())
+                                    .collect::<String>()
+                            };
+                            if height == 0 {
+                                assert!(app.mouse_targets.is_empty());
+                                continue;
+                            }
+                            assert_eq!(app.page_rows, app.mouse_targets.len());
+                            let selected_row = app
+                                .mouse_targets
+                                .iter()
+                                .find(|(_, target)| {
+                                    matches!(target, MouseTarget::Row(index) if *index == selected)
+                                })
+                                .expect("selected task must stay visible")
+                                .0;
+                            assert!(row_text(selected_row.y).starts_with("> "));
+                            for (rect, target) in &app.mouse_targets {
+                                let MouseTarget::Row(index) = target else {
+                                    panic!("unexpected mouse target");
+                                };
+                                assert!(row_text(rect.y).contains(&app.visible[*index].title));
+                            }
+                            if height > 1 && view != View::Trash {
+                                let (rect, MouseTarget::Row(index)) = app.mouse_targets[0] else {
+                                    panic!("missing first visible task");
+                                };
+                                assert_eq!(rect.y, 1);
+                                let first = &app.visible[index];
+                                let label = if matches!(view, View::History(_)) {
+                                    history_group_label(first.status_changed_on, today(), language)
+                                } else {
+                                    ordinary_group_label(first, today(), language)
+                                };
+                                assert_eq!(row_text(0).trim(), format!("{label} (6)"));
+                                assert_eq!(buffer[(2, 0)].fg, Color::Yellow);
+                                assert!(!buffer[(2, 0)].modifier.contains(Modifier::BOLD));
+                                assert!(app.mouse_targets.iter().all(|(rect, _)| rect.y != 0));
+                            } else {
+                                assert!(row_text(0).contains("Task "));
+                            }
+                            let current = (buffer.clone(), app.list_state.offset());
+                            if let Some(previous) = &previous {
+                                assert_eq!(&current, previous, "repeated frame must stay stable");
+                            }
+                            previous = Some(current);
+                        }
+                        if height > 1 && view != View::Trash {
+                            app.handle_mouse(
+                                mouse(MouseEventKind::Down(MouseButton::Left), 2, 0),
+                                Instant::now(),
+                                &mut store,
+                                &config,
+                            )
+                            .unwrap();
+                            assert_eq!(app.selection, selected);
+                            let (rect, MouseTarget::Row(index)) = app.mouse_targets[0] else {
+                                panic!();
+                            };
+                            app.handle_mouse(
+                                mouse(MouseEventKind::Down(MouseButton::Left), 2, rect.y),
+                                Instant::now(),
+                                &mut store,
+                                &config,
+                            )
+                            .unwrap();
+                            assert_eq!(app.selection, index);
+                            app.last_click = None;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
