@@ -26,7 +26,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::clipboard::{SystemClipboard, TextClipboard};
 use crate::config::{Action, Config, Mode};
 use crate::editor_date::parse_editor_date;
-use crate::i18n::{Language, error_message, tr};
+use crate::i18n::{Language, error_message, sync_failure_message, tr};
 use crate::model::{Status, Task, TaskInput, TaskList};
 use crate::planning::{
     Bucket, DuePreset, PlannedGroup, date_label, history_group_label, open_group_label,
@@ -34,9 +34,10 @@ use crate::planning::{
 };
 use crate::query::{Query, visible_history, visible_tasks};
 use crate::store::{
-    EmptyTrashOutcome, ListDeletionOutcome, ListDeletionPreview, Store, TaskPurgeOutcome,
-    TrashPreview,
+    EmptyTrashOutcome, ListDeletionOutcome, ListDeletionPreview, Store, SyncCounters,
+    TaskPurgeOutcome, TrashPreview,
 };
+use crate::sync::worker::SyncWorker;
 use crate::text_buffer::TextBuffer;
 use crate::text_layout::TextLayout;
 
@@ -91,13 +92,23 @@ impl Drop for TerminalGuard {
     }
 }
 
-pub fn run(store: &mut Store, config: &Config, config_path: &Path) -> Result<()> {
+/// How long the exit sync may take before Husker leaves the changes for the next sync.
+const EXIT_SYNC_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Runs the terminal interface. `sync` is the background sync worker of a
+/// profile with sync settings.
+pub fn run(
+    store: &mut Store,
+    config: &Config,
+    config_path: &Path,
+    sync: Option<SyncWorker>,
+) -> Result<()> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         bail!(tr(config.language, "terminal_required"));
     }
     let mut app = App::new(store, Local::now().date_naive())?;
     let mut config = config.clone();
-    let _guard = TerminalGuard::enter()?;
+    let guard = TerminalGuard::enter()?;
     let mut terminal: Terminal<CrosstermBackend<Stdout>> =
         Terminal::new(CrosstermBackend::new(io::stdout()))?;
     let mut refreshed = Instant::now();
@@ -106,7 +117,13 @@ pub fn run(store: &mut Store, config: &Config, config_path: &Path) -> Result<()>
         app.expire_message(Instant::now());
         terminal.draw(|frame| app.draw(frame, &config))?;
         if event::poll(Duration::from_millis(200))? {
-            match event::read()? {
+            let event = event::read()?;
+            if let Some(sync) = &sync
+                && matches!(event, Event::Key(_) | Event::Paste(_) | Event::Mouse(_))
+            {
+                sync.input();
+            }
+            match event {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
                     if app.handle_key_on_date(key, store, &config, Local::now().date_naive()) {
                         break;
@@ -146,8 +163,29 @@ pub fn run(store: &mut Store, config: &Config, config_path: &Path) -> Result<()>
             }
             refreshed = Instant::now();
         }
+        app.report_sync(sync.as_ref(), &config, Instant::now());
+    }
+    let mut unsent = None;
+    if let Some(sync) = sync
+        && store.sync_pending().unwrap_or(false)
+    {
+        app.show_message(tr(config.language, "sync_exit"), false, Instant::now());
+        terminal.draw(|frame| app.draw(frame, &config))?;
+        unsent = sync.finish(EXIT_SYNC_TIMEOUT);
+    }
+    drop(terminal);
+    drop(guard);
+    if let Some(failure) = unsent {
+        eprintln!("{}", sync_failure_message(config.language, failure.kind));
     }
     Ok(())
+}
+
+/// What the last sync commit did, for the message the interface shows once.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SyncNotice {
+    Received,
+    Conflict,
 }
 
 // Task editor buffer indexes. `FIELD_ORDER` decides where each field is drawn and Tab order.
@@ -594,6 +632,13 @@ struct App {
     message: Option<TransientMessage>,
     data_version: i64,
     external_update: bool,
+    sync_counters: SyncCounters,
+    sync_notice: Option<SyncNotice>,
+    sync_requested: bool,
+    /// True while `refresh_changes` runs its refresh.
+    periodic_refresh: bool,
+    /// Set when a refresh found a change by another program.
+    external_seen: bool,
     mouse_enabled: bool,
     mouse_targets: Vec<(Rect, MouseTarget)>,
     last_click: Option<(RowIdentity, Instant)>,
@@ -629,6 +674,11 @@ impl App {
             message: None,
             data_version: store.data_version()?,
             external_update: false,
+            sync_counters: store.sync_counters()?,
+            sync_notice: None,
+            sync_requested: false,
+            periodic_refresh: false,
+            external_seen: false,
             mouse_enabled: true,
             mouse_targets: Vec::new(),
             last_click: None,
@@ -667,7 +717,27 @@ impl App {
 
     fn refresh(&mut self, store: &Store) -> Result<()> {
         let data_version = store.data_version()?;
-        self.external_update |= data_version != self.data_version;
+        let mut unexplained = false;
+        if data_version != self.data_version {
+            // A sync commit is not a change by another program. It gets its own
+            // message instead of the notice that stays until F5.
+            let counters = store.sync_counters()?;
+            if counters.commits == self.sync_counters.commits {
+                self.external_update = true;
+                self.external_seen = true;
+            } else if counters.conflicts != self.sync_counters.conflicts {
+                self.sync_notice = Some(SyncNotice::Conflict);
+            } else if counters.applied != self.sync_counters.applied {
+                if self.sync_notice.is_none() {
+                    self.sync_notice = Some(SyncNotice::Received);
+                }
+            } else {
+                // The sync commit changed no list or task. If they differ anyway,
+                // another program committed in the same interval.
+                unexplained = self.periodic_refresh;
+            }
+            self.sync_counters = counters;
+        }
         let mut selected_task = self.selected_task().map(|task| task.id);
         let selected_list = self.picker_identity(self.picker.selection);
         let editor_list = self
@@ -677,6 +747,10 @@ impl App {
             .map(|list| list.id);
         let lists = store.lists()?;
         let tasks = store.tasks()?;
+        if unexplained && (lists != self.lists || tasks != self.tasks) {
+            self.external_update = true;
+            self.external_seen = true;
+        }
         self.lists = lists;
         self.tasks = tasks;
         if let Some(id) = self.view.scope().0
@@ -736,20 +810,25 @@ impl App {
         today: NaiveDate,
         manual: bool,
     ) -> Result<()> {
-        let previous_version = self.data_version;
         let external = store.data_version()? != self.data_version;
         let date_changed = self.today != today;
         self.today = today;
         if manual || date_changed {
             self.held.clear();
         }
+        self.external_seen = false;
         let outcome_message = if external || date_changed || manual {
-            self.refresh(store)?;
+            // Only this refresh may compare stored tasks with the loaded ones. A
+            // refresh after the user's own action would see that action as a difference.
+            self.periodic_refresh = true;
+            let refreshed = self.refresh(store);
+            self.periodic_refresh = false;
+            refreshed?;
             self.refresh_confirmation(store, config)?
         } else {
             false
         };
-        if self.data_version != previous_version {
+        if self.external_seen {
             self.external_update = true;
         } else if manual {
             self.external_update = false;
@@ -1253,6 +1332,31 @@ impl App {
         });
     }
 
+    /// Passes an F5 request to the sync worker and shows what sync did or why it failed.
+    fn report_sync(&mut self, sync: Option<&SyncWorker>, config: &Config, now: Instant) {
+        let requested = std::mem::take(&mut self.sync_requested);
+        if let Some(notice) = self.sync_notice.take() {
+            let key = match notice {
+                SyncNotice::Received => "sync_received",
+                SyncNotice::Conflict => "sync_conflict",
+            };
+            self.show_message(tr(config.language, key), false, now);
+        }
+        let Some(sync) = sync else {
+            return;
+        };
+        if requested {
+            sync.sync_now();
+        }
+        if let Some(failure) = sync.take_failure() {
+            self.show_message(
+                sync_failure_message(config.language, failure.kind),
+                true,
+                now,
+            );
+        }
+    }
+
     fn expire_message(&mut self, now: Instant) {
         if self.message.as_ref().is_some_and(|message| {
             now.saturating_duration_since(message.created_at) >= MESSAGE_LIFETIME
@@ -1371,6 +1475,7 @@ impl App {
                 return Ok(false);
             }
             Some(Action::Refresh) => {
+                self.sync_requested = true;
                 self.refresh_changes(store, config, Local::now().date_naive(), true)?;
                 return Ok(false);
             }
@@ -3870,6 +3975,9 @@ mod tests {
     use super::*;
     use crate::planning::Bucket;
     use crate::query::parse_date;
+    use crate::sync::remote::testing::MemoryRemote;
+    use crate::sync::worker::Cadence;
+    use crate::sync::{FailureKind, sync_once};
     use ratatui::backend::TestBackend;
     use tempfile::TempDir;
 
@@ -9353,5 +9461,222 @@ mod tests {
         let screen = rendered(&mut app, &config, 80, 24);
         assert_eq!(screen_row(&screen, 80, due.y).trim(), "1109");
         assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields[DUE].text == "1109"));
+    }
+
+    /// The connection a sync worker would use, plus a second device and their shared sync file.
+    struct SyncFixture {
+        worker: Store,
+        other: Store,
+        remote: Arc<MemoryRemote>,
+        _other_directory: TempDir,
+    }
+
+    fn sync_fixture(directory: &TempDir) -> SyncFixture {
+        let remote = MemoryRemote::shared();
+        let mut worker = Store::open(&directory.path().join("tasks.db")).unwrap();
+        sync_once(&mut worker, &remote).unwrap();
+        let other_directory = tempfile::tempdir().unwrap();
+        let mut other = Store::open(&other_directory.path().join("tasks.db")).unwrap();
+        sync_once(&mut other, &remote).unwrap();
+        SyncFixture {
+            worker,
+            other,
+            remote,
+            _other_directory: other_directory,
+        }
+    }
+
+    #[test]
+    fn sync_commits_show_a_message_instead_of_the_external_notice() {
+        let (directory, mut store, mut config) = fixture();
+        let mut sync = sync_fixture(&directory);
+        let mut app = App::new(&store, today()).unwrap();
+
+        // A task from another device arrives through the worker's connection.
+        sync.other
+            .create_task(&input(1, "From another device"))
+            .unwrap();
+        sync_once(&mut sync.other, &sync.remote).unwrap();
+        sync_once(&mut sync.worker, &sync.remote).unwrap();
+        app.refresh_changes(&store, &config, today(), false)
+            .unwrap();
+        assert!(!app.external_update);
+        app.report_sync(None, &config, Instant::now());
+        assert_eq!(message(&app), "Synced changes from another device.");
+        let screen = rendered(&mut app, &config, 120, 24);
+        assert!(screen.contains("From another device"));
+        assert!(!screen.contains(tr(config.language, "external_update")));
+
+        // Uploading a local change commits sync state only: no notice and no message.
+        app.message = None;
+        store.create_task(&input(1, "Created here")).unwrap();
+        app.refresh(&store).unwrap();
+        let report = sync_once(&mut sync.worker, &sync.remote).unwrap();
+        assert_eq!((report.received, report.sent), (0, 1));
+        app.refresh_changes(&store, &config, today(), false)
+            .unwrap();
+        app.report_sync(None, &config, Instant::now());
+        assert!(!app.external_update);
+        assert!(app.message.is_none());
+
+        // A script that adds a task and syncs within one refresh interval commits twice:
+        // the task, and the sync state. The task still raises the notice.
+        sync.worker
+            .create_task(&input(1, "Added and synced by a script"))
+            .unwrap();
+        sync_once(&mut sync.worker, &sync.remote).unwrap();
+        app.refresh_changes(&store, &config, today(), false)
+            .unwrap();
+        assert!(app.external_update);
+        app.report_sync(None, &config, Instant::now());
+        assert!(app.message.is_none());
+        app.handle_key(key(KeyCode::F(5)), &mut store, &config);
+        assert!(!app.external_update);
+        app.sync_requested = false;
+        app.message = None;
+
+        // A sync that changes nothing commits nothing.
+        let version = store.data_version().unwrap();
+        sync_once(&mut sync.worker, &sync.remote).unwrap();
+        assert_eq!(store.data_version().unwrap(), version);
+
+        // A change by another program still raises the notice that stays until F5.
+        sync.worker
+            .create_task(&input(1, "Added by a script"))
+            .unwrap();
+        app.refresh_changes(&store, &config, today(), false)
+            .unwrap();
+        assert!(app.external_update);
+        app.report_sync(None, &config, Instant::now());
+        assert!(app.message.is_none());
+
+        // F5 during a sync commit acknowledges the notice and shows the Danish sync message.
+        config.language = Language::Da;
+        sync.other.create_task(&input(1, "Endnu en")).unwrap();
+        sync_once(&mut sync.other, &sync.remote).unwrap();
+        sync_once(&mut sync.worker, &sync.remote).unwrap();
+        app.handle_key(key(KeyCode::F(5)), &mut store, &config);
+        assert!(!app.external_update);
+        app.report_sync(None, &config, Instant::now());
+        assert_eq!(
+            message(&app),
+            "Synkroniserede ændringer fra en anden enhed."
+        );
+    }
+
+    #[test]
+    fn a_conflict_copy_is_announced_and_an_open_draft_is_kept() {
+        let (directory, mut store, config) = fixture();
+        let task = store.create_task(&input(1, "Buy milk")).unwrap();
+        let mut sync = sync_fixture(&directory);
+        sync_once(&mut sync.other, &sync.remote).unwrap();
+        let theirs = sync.other.tasks().unwrap().remove(0);
+        sync.other
+            .update_task(theirs.id, theirs.version, &input(1, "Buy oat milk"))
+            .unwrap();
+        sync_once(&mut sync.other, &sync.remote).unwrap();
+        store
+            .update_task(task.id, task.version, &input(1, "Buy whole milk"))
+            .unwrap();
+
+        let mut app = App::new(&store, today()).unwrap();
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        app.paste(" tomorrow");
+        let report = sync_once(&mut sync.worker, &sync.remote).unwrap();
+        assert_eq!(report.conflicts, 1);
+        app.refresh_changes(&store, &config, today(), false)
+            .unwrap();
+        app.report_sync(None, &config, Instant::now());
+        assert!(!app.external_update);
+        assert_eq!(
+            message(&app),
+            "Sync kept both versions of a task. Search for #conflict."
+        );
+        // The draft and the version it was read at survive, so the save reports the change.
+        assert!(
+            matches!(&app.screen, Screen::Editor(editor) if editor.fields[TITLE].text == "Buy whole milk" && editor.fields[DESCRIPTION].text == " tomorrow")
+        );
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
+        assert!(matches!(app.screen, Screen::Editor(_)));
+        assert!(app.message.as_ref().unwrap().is_error);
+        let mut titles: Vec<String> = store
+            .tasks()
+            .unwrap()
+            .into_iter()
+            .map(|task| task.title)
+            .collect();
+        titles.sort();
+        assert_eq!(titles, ["Buy oat milk", "Buy whole milk #conflict"]);
+    }
+
+    #[test]
+    fn refresh_asks_the_worker_to_sync_and_a_failure_is_shown_once() {
+        let (directory, mut store, mut config) = fixture();
+        let remote = MemoryRemote::shared();
+        let worker = SyncWorker::spawn(
+            directory.path().join("tasks.db"),
+            Box::new(Arc::clone(&remote)),
+            Cadence {
+                debounce: Duration::from_secs(3600),
+                poll: Duration::from_secs(3600),
+                wake_after: None,
+                tick: Duration::from_millis(20),
+            },
+            true,
+            false,
+        );
+        let wait = |condition: &dyn Fn() -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !condition() {
+                assert!(Instant::now() < deadline, "condition not met in time");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+        wait(&|| remote.snapshot().is_some());
+        let mut app = App::new(&store, today()).unwrap();
+        app.report_sync(Some(&worker), &config, Instant::now());
+        assert!(app.message.is_none());
+
+        // F5 starts a sync without waiting for it.
+        let downloads = remote.counts().0;
+        app.handle_key(key(KeyCode::F(5)), &mut store, &config);
+        assert!(app.sync_requested);
+        app.report_sync(Some(&worker), &config, Instant::now());
+        assert!(!app.sync_requested);
+        wait(&|| remote.counts().0 > downloads);
+
+        // A failure appears once, as an error, in the interface language.
+        remote.fail(FailureKind::Offline);
+        config.language = Language::Da;
+        app.handle_key(key(KeyCode::F(5)), &mut store, &config);
+        app.message = None;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while app.message.is_none() {
+            assert!(Instant::now() < deadline, "no failure message");
+            std::thread::sleep(Duration::from_millis(20));
+            app.report_sync(Some(&worker), &config, Instant::now());
+        }
+        assert!(app.message.as_ref().unwrap().is_error);
+        assert_eq!(
+            message(&app),
+            "Synkronisering mislykkedes: Ingen forbindelse til synkroniseringslageret. Dine ændringer bliver på denne computer."
+        );
+        app.message = None;
+        app.handle_key(key(KeyCode::F(5)), &mut store, &config);
+        app.report_sync(Some(&worker), &config, Instant::now());
+        std::thread::sleep(Duration::from_millis(300));
+        app.report_sync(Some(&worker), &config, Instant::now());
+        assert!(
+            app.message.as_ref().is_none_or(|message| !message.is_error),
+            "the same failure streak is reported once"
+        );
+        assert_eq!(
+            sync_failure_message(Language::En, FailureKind::Denied),
+            "Sync failed: The sync storage refused access. Your changes stay on this computer."
+        );
     }
 }

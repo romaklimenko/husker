@@ -3,6 +3,8 @@ use std::{fmt, str::FromStr};
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::sync::FailureKind;
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Language {
@@ -167,6 +169,48 @@ pub fn tr(language: Language, key: &str) -> &'static str {
             "Database updated elsewhere. Unsaved text is kept.",
             "Databasen er opdateret et andet sted. Ugemt tekst er bevaret.",
         ),
+        "sync_received" => (
+            "Synced changes from another device.",
+            "Synkroniserede ændringer fra en anden enhed.",
+        ),
+        "sync_conflict" => (
+            "Sync kept both versions of a task. Search for #conflict.",
+            "Synkronisering beholdt begge versioner af en opgave. Søg efter #conflict.",
+        ),
+        "sync_exit" => ("Syncing...", "Synkroniserer..."),
+        "sync_failed" => ("Sync failed:", "Synkronisering mislykkedes:"),
+        "sync_kept_local" => (
+            "Your changes stay on this computer.",
+            "Dine ændringer bliver på denne computer.",
+        ),
+        "sync_offline" => (
+            "No connection to the sync storage.",
+            "Ingen forbindelse til synkroniseringslageret.",
+        ),
+        "sync_denied" => (
+            "The sync storage refused access.",
+            "Synkroniseringslageret afviste adgangen.",
+        ),
+        "sync_rejected" => (
+            "The sync storage gave an unexpected answer.",
+            "Synkroniseringslageret gav et uventet svar.",
+        ),
+        "sync_incompatible" => (
+            "The sync file needs a newer Husker.",
+            "Synkroniseringsfilen kræver en nyere Husker.",
+        ),
+        "sync_invalid" => (
+            "The sync file is not valid.",
+            "Synkroniseringsfilen er ikke gyldig.",
+        ),
+        "sync_busy" => (
+            "The sync file kept changing.",
+            "Synkroniseringsfilen blev ved med at ændre sig.",
+        ),
+        "sync_local" => (
+            "The database could not be updated.",
+            "Databasen kunne ikke opdateres.",
+        ),
         "mouse_on" => ("Mouse navigation on", "Musenavigation til"),
         "mouse_off" => (
             "Mouse navigation off. Select text with your terminal.",
@@ -300,6 +344,25 @@ pub fn tr(language: Language, key: &str) -> &'static str {
 }
 
 /// Localizes Husker diagnostics while retaining unknown library and OS details.
+/// The message for a failed sync: what failed, and that local changes are safe.
+pub fn sync_failure_message(language: Language, kind: FailureKind) -> String {
+    let reason = match kind {
+        FailureKind::Offline => "sync_offline",
+        FailureKind::Denied => "sync_denied",
+        FailureKind::Rejected => "sync_rejected",
+        FailureKind::Incompatible => "sync_incompatible",
+        FailureKind::Invalid => "sync_invalid",
+        FailureKind::Busy => "sync_busy",
+        FailureKind::Local => "sync_local",
+    };
+    format!(
+        "{} {} {}",
+        tr(language, "sync_failed"),
+        tr(language, reason),
+        tr(language, "sync_kept_local")
+    )
+}
+
 pub fn error_message(language: Language, error: &anyhow::Error) -> String {
     if language == Language::En {
         return format!("{error:#}");
@@ -423,10 +486,10 @@ fn danish_error(message: &str) -> String {
     if let Some(value) = between(
         message,
         "Unsupported database schema version ",
-        ". This Husker supports version 4.",
+        ". This Husker supports version 5.",
     ) {
         return format!(
-            "Databaseversion {value} understøttes ikke. Denne Husker understøtter version 4."
+            "Databaseversion {value} understøttes ikke. Denne Husker understøtter version 5."
         );
     }
     if let Some(version) = between(

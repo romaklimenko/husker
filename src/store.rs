@@ -8,6 +8,10 @@ use rusqlite::{
 
 use crate::model::{Status, Task, TaskInput, TaskList};
 
+mod sync;
+
+pub use sync::{MergeOutcome, SyncCounters};
+
 const TASK_COLUMNS: &str = "id, list_id, title, description, due, status, status_changed_on, deleted, position, version, status_changed_at";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -85,7 +89,8 @@ impl Store {
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
                             name TEXT NOT NULL CHECK(length(name) > 0),
                             name_key TEXT NOT NULL UNIQUE,
-                            position INTEGER NOT NULL DEFAULT 0
+                            position INTEGER NOT NULL DEFAULT 0,
+                            uid TEXT
                         );
                         CREATE TABLE tasks (
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,27 +103,41 @@ impl Store {
                             status_changed_at TEXT,
                             deleted INTEGER NOT NULL CHECK(deleted IN (0, 1)),
                             position INTEGER NOT NULL,
-                            version INTEGER NOT NULL CHECK(version > 0)
+                            version INTEGER NOT NULL CHECK(version > 0),
+                            uid TEXT
                         );
                         CREATE INDEX tasks_list ON tasks(list_id);
                         CREATE INDEX tasks_planning ON tasks(deleted, status, due, position);
-                        INSERT INTO lists(name, name_key) VALUES ('Inbox', 'inbox');
-                        PRAGMA user_version = 4;",
+                        CREATE UNIQUE INDEX lists_uid ON lists(uid);
+                        CREATE UNIQUE INDEX tasks_uid ON tasks(uid);
+                        CREATE TABLE sync_state (
+                            key TEXT PRIMARY KEY,
+                            value TEXT NOT NULL
+                        ) WITHOUT ROWID;
+                        INSERT INTO lists(name, name_key, uid)
+                            VALUES ('Inbox', 'inbox', lower(hex(randomblob(16))));
+                        PRAGMA user_version = 5;",
                     )?;
                 }
                 1 => {
                     migrate_schema_one(&transaction)?;
                     migrate_schema_two(&transaction)?;
                     migrate_schema_three(&transaction)?;
+                    migrate_schema_four(&transaction)?;
                 }
                 2 => {
                     migrate_schema_two(&transaction)?;
                     migrate_schema_three(&transaction)?;
+                    migrate_schema_four(&transaction)?;
                 }
-                3 => migrate_schema_three(&transaction)?,
-                4 => {}
+                3 => {
+                    migrate_schema_three(&transaction)?;
+                    migrate_schema_four(&transaction)?;
+                }
+                4 => migrate_schema_four(&transaction)?,
+                5 => {}
                 _ => bail!(
-                    "Unsupported database schema version {version}. This Husker supports version 4."
+                    "Unsupported database schema version {version}. This Husker supports version 5."
                 ),
             }
             transaction.commit()?;
@@ -257,8 +276,9 @@ impl Store {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         require_unique_list_name(&transaction, &name_key, None)?;
         transaction.execute(
-            "INSERT INTO lists(name, name_key, position)
-             VALUES (?1, ?2, (SELECT COALESCE(MAX(position), 0) + 1 FROM lists))",
+            "INSERT INTO lists(name, name_key, position, uid)
+             VALUES (?1, ?2, (SELECT COALESCE(MAX(position), 0) + 1 FROM lists),
+                lower(hex(randomblob(16))))",
             params![name, name_key],
         )?;
         let id = transaction.last_insert_rowid();
@@ -376,9 +396,11 @@ impl Store {
         require_list(&transaction, input.list_id)?;
         transaction.execute(
             "INSERT INTO tasks
-                (list_id, title, description, due, status, status_changed_on, deleted, position, version)
+                (list_id, title, description, due, status, status_changed_on, deleted, position,
+                 version, uid)
              VALUES (?1, ?2, ?3, ?4, 'open', NULL, 0,
-                (SELECT COALESCE(MAX(position), 0) + 1 FROM tasks), 1)",
+                (SELECT COALESCE(MAX(position), 0) + 1 FROM tasks), 1,
+                lower(hex(randomblob(16))))",
             params![
                 input.list_id,
                 input.title,
@@ -703,14 +725,14 @@ fn trash_preview(connection: &Connection) -> Result<TrashPreview> {
 }
 
 fn require_current_schema(version: i64) -> Result<()> {
-    if (1..=3).contains(&version) {
+    if (1..=4).contains(&version) {
         bail!(
             "Database schema version {version} needs an upgrade. Open this profile with writable Husker before connecting read-only."
         );
     }
     ensure!(
-        version == 4,
-        "Unsupported database schema version {version}. This Husker supports version 4."
+        version == 5,
+        "Unsupported database schema version {version}. This Husker supports version 5."
     );
     Ok(())
 }
@@ -784,6 +806,24 @@ fn migrate_schema_three(connection: &Connection) -> Result<()> {
     connection.execute_batch(
         "ALTER TABLE tasks ADD COLUMN status_changed_at TEXT;
          PRAGMA user_version = 4;",
+    )?;
+    Ok(())
+}
+
+/// Adds the sync identifiers and the sync-state table. Task versions do not change.
+fn migrate_schema_four(connection: &Connection) -> Result<()> {
+    connection.execute_batch(
+        "ALTER TABLE lists ADD COLUMN uid TEXT;
+         ALTER TABLE tasks ADD COLUMN uid TEXT;
+         UPDATE lists SET uid = lower(hex(randomblob(16)));
+         UPDATE tasks SET uid = lower(hex(randomblob(16)));
+         CREATE UNIQUE INDEX lists_uid ON lists(uid);
+         CREATE UNIQUE INDEX tasks_uid ON tasks(uid);
+         CREATE TABLE sync_state (
+             key TEXT PRIMARY KEY,
+             value TEXT NOT NULL
+         ) WITHOUT ROWID;
+         PRAGMA user_version = 5;",
     )?;
     Ok(())
 }
@@ -1051,7 +1091,7 @@ mod tests {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         drop(store);
         let scoped = Store::open_for_mcp(&path, Some("Home"), true).unwrap();
         assert_eq!(scoped.default_list_id().unwrap(), 2);
@@ -1215,7 +1255,7 @@ mod tests {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         assert_eq!(store.create_task(&input("Next task")).unwrap().id, 100);
         drop(store);
         let readonly = Store::open_for_mcp(&path, Some("Home"), true).unwrap();
@@ -1738,7 +1778,7 @@ mod tests {
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(schema, 4);
+        assert_eq!(schema, 5);
     }
 
     #[test]
@@ -2541,7 +2581,7 @@ mod tests {
     #[test]
     fn newer_and_unversioned_databases_are_not_changed() {
         let directory = tempfile::tempdir().unwrap();
-        for (name, version) in [("newer.db", 5), ("unversioned.db", 0)] {
+        for (name, version) in [("newer.db", 6), ("unversioned.db", 0)] {
             let path = directory.path().join(name);
             let connection = Connection::open(&path).unwrap();
             connection
@@ -2895,7 +2935,7 @@ mod tests {
         assert_eq!(mode, "delete");
         assert!(readonly.list_scope().is_none());
         drop(readonly);
-        for version in [0, 1, 2, 3, 5] {
+        for version in [0, 1, 2, 3, 4, 6] {
             let connection = Connection::open(&path).unwrap();
             connection
                 .pragma_update(None, "user_version", version)
@@ -2912,5 +2952,161 @@ mod tests {
                 .unwrap();
             assert_eq!(list_count, 1);
         }
+    }
+
+    fn schema_four_database(path: &Path) -> Connection {
+        let connection = Connection::open(path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE lists (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL CHECK(length(name) > 0),
+                    name_key TEXT NOT NULL UNIQUE,
+                    position INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    list_id INTEGER NOT NULL REFERENCES lists(id),
+                    title TEXT NOT NULL CHECK(length(title) > 0),
+                    description TEXT NOT NULL DEFAULT '',
+                    due TEXT,
+                    status TEXT NOT NULL CHECK(status IN ('open', 'done', 'cancelled')),
+                    status_changed_on TEXT,
+                    status_changed_at TEXT,
+                    deleted INTEGER NOT NULL CHECK(deleted IN (0, 1)),
+                    position INTEGER NOT NULL,
+                    version INTEGER NOT NULL CHECK(version > 0)
+                );
+                CREATE INDEX tasks_list ON tasks(list_id);
+                CREATE INDEX tasks_planning ON tasks(deleted, status, due, position);
+                INSERT INTO lists(id, name, name_key, position)
+                    VALUES (1, 'Inbox', 'inbox', 0), (2, 'Home', 'home', 4);
+                INSERT INTO tasks
+                    (id, list_id, title, description, due, status, status_changed_on,
+                     status_changed_at, deleted, position, version)
+                VALUES
+                    (7, 2, 'Milk', 'Notes', '2026-11-08', 'done', '2026-11-08',
+                     '2026-11-08T10:00:00+00:00', 0, 5, 3),
+                    (9, 1, 'Old idea', '', NULL, 'open', NULL, NULL, 1, 8, 4);
+                PRAGMA user_version = 4;",
+            )
+            .unwrap();
+        connection
+    }
+
+    fn uids(connection: &Connection, table: &str) -> Vec<Option<String>> {
+        connection
+            .prepare(&format!("SELECT uid FROM {table} ORDER BY id"))
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn schema_four_migration_adds_sync_identifiers_without_changing_tasks() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.db");
+        let connection = schema_four_database(&path);
+        let before: Vec<Task> = connection
+            .prepare(&format!("SELECT {TASK_COLUMNS} FROM tasks ORDER BY id"))
+            .unwrap()
+            .query_map([], read_task)
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let error = Store::open_for_mcp(&path, None, true).err().unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("Open this profile with writable Husker")
+        );
+        assert!(connection.prepare("SELECT uid FROM tasks").is_err());
+        drop(connection);
+
+        let mut store = Store::open(&path).unwrap();
+        assert_eq!(store.tasks().unwrap(), before);
+        assert_eq!(
+            store
+                .lists()
+                .unwrap()
+                .iter()
+                .map(|list| (list.id, list.name.as_str()))
+                .collect::<Vec<_>>(),
+            [(1, "Inbox"), (2, "Home")]
+        );
+        let version: i64 = store
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 5);
+        let created = store.create_task(&input("Next task")).unwrap();
+        assert_eq!(created.id, 10);
+        let list = store.create_list("New list").unwrap();
+        assert_eq!(list.id, 3);
+        let mut all = uids(&store.connection, "lists");
+        all.extend(uids(&store.connection, "tasks"));
+        assert_eq!(all.len(), 6);
+        for uid in &all {
+            let uid = uid.as_deref().unwrap();
+            assert_eq!(uid.len(), 32);
+            assert!(
+                uid.chars()
+                    .all(|character| matches!(character, '0'..='9' | 'a'..='f'))
+            );
+        }
+        all.sort();
+        all.dedup();
+        assert_eq!(all.len(), 6, "every row has its own identifier");
+        let state: i64 = store
+            .connection
+            .query_row("SELECT COUNT(*) FROM sync_state", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(state, 0);
+        assert_eq!(store.sync_counters().unwrap(), SyncCounters::default());
+        drop(store);
+        let readonly = Store::open_for_mcp(&path, None, true).unwrap();
+        assert_eq!(readonly.tasks().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn failed_schema_four_migration_keeps_the_database_at_version_four() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.db");
+        let connection = schema_four_database(&path);
+        // An existing table with the new name makes the migration fail after it added columns.
+        connection
+            .execute_batch("CREATE TABLE sync_state (other TEXT);")
+            .unwrap();
+        assert!(Store::open(&path).is_err());
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 4);
+        assert!(connection.prepare("SELECT uid FROM tasks").is_err());
+        let (title, task_version): (String, i64) = connection
+            .query_row("SELECT title, version FROM tasks WHERE id = 7", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!((title.as_str(), task_version), ("Milk", 3));
+    }
+
+    #[test]
+    fn new_databases_give_every_list_and_task_an_identifier() {
+        let mut store = memory_store();
+        store.create_list("Work").unwrap();
+        store.create_task(&input("First")).unwrap();
+        store.create_task(&input("Second")).unwrap();
+        let mut all = uids(&store.connection, "lists");
+        all.extend(uids(&store.connection, "tasks"));
+        assert!(
+            all.iter()
+                .all(|uid| uid.as_ref().is_some_and(|uid| uid.len() == 32))
+        );
+        all.sort();
+        all.dedup();
+        assert_eq!(all.len(), 4);
     }
 }

@@ -602,6 +602,12 @@ Deleting a task forever clears the undo entry, so `u` afterward shows
 forever, the next task you create still gets a higher ID, so an old
 reference to `#7` never points at a different task.
 
+If you set up [sync between computers](sync.md), deleting a task forever
+also deletes it on your other computers at their next sync. The same
+applies to emptying Trash. A task that another computer edited before it
+received the deletion is kept. See
+[What happens when two computers change the same task](sync.md#what-happens-when-two-computers-change-the-same-task).
+
 If you might need the task again, leave it in Trash or
 [back up your tasks](#back-up-your-tasks) first. Permanent deletion is
 available only in the terminal interface. No `husker` command or MCP tool
@@ -740,6 +746,12 @@ Press F5 to acknowledge a notice that is already visible.
 This notice has no time limit. F5 also moves a task you marked done or
 cancelled from its held row to Done today or Cancelled today.
 
+If you set up [sync between computers](sync.md), F5 also starts a sync at
+once and does not wait for it to finish. Changes that a sync brings in
+from another computer do not show the notice. They show `Synced changes from another device.` for five seconds,
+and you don't need to acknowledge them with F5. See
+[Read the sync messages in the terminal](sync.md#read-the-sync-messages-in-the-terminal).
+
 Other status messages disappear after five seconds. For example, `Saved`
 clears after you save a task, even if you navigate to another list.
 Errors also clear after five seconds. If you enter the invalid planned date
@@ -809,7 +821,7 @@ These are the default shortcuts:
 | F2 | Toggle mouse capture. |
 | F3 | Choose English or Dansk and save the interface language. |
 | F4 | Open plain task text for copying. |
-| F5 | Refresh database contents. |
+| F5 | Refresh database contents. Also start a sync if [sync](sync.md) is set up. |
 | `?` | Open Help. Esc or `?` closes it. |
 | `q` or Ctrl+C | Quit from a task view, History, or the list picker. |
 
@@ -1052,9 +1064,47 @@ Rename a list with `husker list-rename 2 Home`, replacing `2` with the list's ID
 The renamed list keeps its position.
 Every command accepts `--profile DIRECTORY` to select its task collection.
 
+If you set up [sync between computers](sync.md), run `husker sync` to sync
+the profile once. The commands above change only the local database and do
+not sync, so run `husker sync` after them when the change should reach your
+other computers right away:
+
+```text
+husker add "Buy milk"
+husker sync
+```
+
+The second command prints what the sync received and sent:
+
+```text
+Synced. Received 0, sent 1.
+```
+
+Both numbers count lists and tasks. `Received` is how many changed on this
+computer. `sent` is how many changed in the sync file. If two computers
+changed the title or description of the same task, the line ends with the
+number of tasks Husker kept in two versions, such as
+`Synced. Received 3, sent 3. Kept both versions of 1.` See
+[What happens when two computers change the same task](sync.md#what-happens-when-two-computers-change-the-same-task).
+
+`husker --json sync` prints the same three numbers as JSON:
+
+```json
+{
+  "received": 0,
+  "sent": 1,
+  "conflicts": 0
+}
+```
+
+If the sync fails, `husker sync` prints the reason to stderr and returns a
+nonzero exit code. Your changes stay in the local database, and the next
+sync sends them. Without `sync.toml` in the profile directory, the command
+fails with `Sync is not set up.` and names the file to create.
+
 ## Update an existing profile
 
-Back up your profile before updating to 0.14.0.
+Back up your profile before updating to 0.15.0.
 Follow [Back up your tasks](#back-up-your-tasks), then keep every old Husker
 process closed, including MCP clients, until the upgrade is complete.
 
@@ -1064,10 +1114,30 @@ Install the current version from the repository:
 cargo install --path . --locked
 ```
 
-Version 0.14.0 uses schema version 4, the same database format as 0.9.0
-through 0.13.0. Updating from these versions requires no database migration.
-CLI commands, JSON fields, MCP tools, filter syntax, and configuration
-settings are unchanged.
+Version 0.15.0 changes the database format. The first time you start
+`husker` or run a command such as `husker lists`, Husker migrates the
+profile's database to schema version 5. The migration keeps every list,
+every task field, and every task version.
+
+A read-only MCP server cannot migrate the database. Run `husker lists` once
+before you reconnect a read-only MCP client. For a custom profile, run
+`husker --profile DIRECTORY lists`.
+
+Husker 0.14.0 and older cannot open a migrated profile. Update every
+Husker executable that uses the profile at the same time. That includes the
+executable you start in the terminal and the executable each MCP client
+starts. For example, if Claude Code starts `husker` from another path than
+your terminal does, update that copy too. To go back to 0.14.0, restore the
+backup you made before the update.
+
+Existing commands, JSON fields, MCP tools, filter syntax, and configuration
+settings work as before. Version 0.15.0 adds sync between computers and the
+`husker sync` command. Sync is off until you create `sync.toml`, and
+without that file Husker makes no network request. See
+[Sync tasks between computers](sync.md).
+
+Versions 0.9.0 through 0.14.0 use schema version 4. Updating between those
+versions requires no database migration.
 
 Version 0.14.0 changes how you create tasks in the terminal:
 
@@ -1108,17 +1178,13 @@ Planned date and Earlier are the current interface labels. Existing `--due`,
 Check any custom `g`, `G`, Home, End, Left, or Right bindings against the
 First and Last defaults. Rebind them or set `first = []` or `last = []` under `[keys]`.
 
-If you are updating from 0.8.0 or earlier, run `husker lists` once to upgrade
-the database before reconnecting a read-only MCP client. For a custom profile,
-run `husker --profile DIRECTORY lists`. A read-only connection cannot upgrade it.
-
 Profiles from versions 0.4.0 through 0.8.0 keep every existing task field,
 task version, and saved list position. The upgrade adds a nullable completion
 timestamp. Older tasks receive no invented time. A new completion or
 cancellation records its time automatically.
 
-Keep older Husker executables closed after upgrading. Versions before 0.9.0
-cannot open the upgraded profile. Task JSON now includes `status_changed_at`,
+Keep older Husker executables closed after upgrading. Versions before 0.15.0
+cannot open the upgraded profile. Since 0.9.0, task JSON includes `status_changed_at`,
 a UTC timestamp or null, alongside the existing local `status_changed_on` date.
 
 If a custom action uses `t`, `T`, `w`, or `x` in an overlapping mode, rebind
@@ -1175,6 +1241,14 @@ husker --profile ./restored-tasks
 
 Keep the original profile until you have checked the restored tasks.
 
-A backup is the only way to get back a task you deleted forever or removed
+A backup is the way to get back a task you deleted forever or removed
 by emptying Trash. Open a backup made before the deletion as a separate
 profile, as shown above, and copy the task's text from there.
+
+[Sync between computers](sync.md) is not a backup of deleted tasks, because
+a task you delete forever is also deleted on your other computers. Blob
+versioning in Azure does keep earlier uploads of the sync file. See
+[Recover an earlier version of the sync file](sync.md#recover-an-earlier-version-of-the-sync-file).
+
+If sync is set up, the profile directory you copy contains `sync.toml` with
+the URL of the sync file. Store that backup as carefully as a password.

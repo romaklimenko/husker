@@ -39,7 +39,8 @@ The installed copy leaves the repository's build executable free to replace.
 Close Husker and disconnect its MCP clients before running `cargo install` again.
 For an existing profile, follow [Update an existing profile](docs/usage.md#update-an-existing-profile).
 
-Your tasks stay on your computer in `~/.husker/tasks.db`. A new profile starts
+Your tasks stay on your computer in `~/.husker/tasks.db`, unless you set up
+[sync between computers](#sync-between-computers). A new profile starts
 with an Inbox list. Use `--profile DIRECTORY` to keep another collection of
 tasks:
 
@@ -74,6 +75,28 @@ Configure Claude Code through a local registration or a shared `.mcp.json`.
 Configure Codex through the project's `.codex/config.toml`.
 Read [Connect an agent to Husker](docs/mcp.md#use-one-installation-across-projects)
 for project setup, custom profiles, and access settings.
+
+## Sync between computers
+
+Husker can keep the same lists and tasks on several computers. It stores
+them in one file in Azure Blob Storage that you create in your own Azure
+subscription. Each computer keeps its own `tasks.db` and works without a
+network.
+
+Sync is off by default. To turn it on, create `sync.toml` in your profile
+directory with the URL of that file, then run `husker sync`:
+
+```toml
+url = "https://<account>.blob.core.windows.net/husker/tasks.json?<token>"
+```
+
+After that, the terminal interface and writable MCP servers sync in the
+background. Commands such as `husker add` do not sync. Run `husker sync`
+after them.
+
+Read [Sync tasks between computers](docs/sync.md) to create the storage,
+add a second computer, and see what happens when two computers change the
+same task. The URL is a password, so keep `sync.toml` out of repositories.
 
 ## Configure the interface
 
@@ -140,6 +163,9 @@ restored or undone.
 Husker supports local lists and tasks, plain text descriptions, planned dates,
 Trash with restore and permanent deletion, one-step undo of task actions, mouse navigation,
 configurable action keys, JSON commands, and local MCP tools.
+Optional sync keeps the lists and tasks of several computers the same
+through one file in Azure Blob Storage. Azure Blob Storage is the only
+storage that sync supports. Settings in `config.toml` are not synced.
 Write `#words` in titles or descriptions when useful.
 Search treats those words as ordinary text.
 Concurrent task edits use version checks so an older edit cannot silently
@@ -157,8 +183,8 @@ times, newest first. History headings show completion or cancellation dates.
 Open the editor to see a historical task's Planned date. History retains
 current task records, not every past edit or status change.
 
-Recurrence, reminders, subtasks, priorities, synchronization, and an event
-log are not included. Permanent deletion is available only in the terminal
+Recurrence, reminders, subtasks, priorities, and an event log are not
+included. Permanent deletion is available only in the terminal
 interface. No command or MCP tool deletes a task forever.
 
 ## Work on the project

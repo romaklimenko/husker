@@ -6,7 +6,7 @@ The client starts Husker as a local process and communicates over standard input
 
 ## Install or update Husker
 
-This guide describes Husker 0.14.0 and its task tools.
+This guide describes Husker 0.15.0 and its task tools.
 Close running Husker instances before updating the executable.
 Disconnect MCP clients that already use Husker, then run this command from the source directory:
 
@@ -206,6 +206,54 @@ Check that profile's list names with `husker --profile "C:\Tasks\Husker" lists`.
 
 To give a connection access to every list in the selected profile, omit `--list`.
 For example, `husker mcp --read-only` can read every list in the default profile.
+
+## Run an agent on another computer
+
+An agent on another computer, such as a virtual machine, can work on the
+same tasks as your own computer when both sync with the same sync file.
+Set up sync first by following [Sync tasks between computers](sync.md).
+For an Azure VM, use
+[a managed identity](sync.md#sync-from-an-azure-vm-with-a-managed-identity),
+so the VM stores no secret.
+
+On the agent's computer, install Husker and put `sync.toml` in the profile
+directory the server uses. That is `~/.husker/sync.toml`, or the directory
+you pass with `--profile`. The profile does not need to hold tasks yet. A
+directory that contains only `sync.toml` is enough.
+
+Register the server in the client as on any other computer, for example
+`husker mcp --list Work`. A writable server then syncs by itself:
+
+- The server syncs before it looks up `--list`. A list that so far exists
+  only in the sync file, such as `Work` created on your laptop, can
+  therefore be selected on a new computer.
+- A change the agent makes is uploaded about 2 seconds after the change.
+  For example, after the agent calls `add_task`, your laptop receives the
+  task at its next sync.
+- Every 60 seconds, the server fetches changes from your other computers.
+- When the client stops the server, the server first sends changes that are
+  still unsent.
+
+A server started with `--read-only` never syncs. It neither fetches nor
+sends, and it makes no network request. It shows the tasks that are in the
+local database of that computer. Run `husker sync` on that computer to
+update them. A read-only server also cannot create the database, so run
+`husker sync` once before the first start.
+
+If a sync fails, the server writes one line that starts with `Sync failed:`
+to standard error and keeps serving the local tasks. Look for that line in
+the client's MCP log. If the first sync on a new computer fails, the list
+named by `--list` is not there yet and the server does not start.
+
+Sync copies every list to every computer. `--list Work` limits what the
+agent's tools can reach. It does not limit what is stored on the agent's
+computer. An agent that can run shell commands or read files there can read
+`tasks.db`, with all your lists.
+
+Task IDs can differ between computers. An ID that you read on your laptop
+can belong to another task on the agent's computer. Let the agent find a
+task by searching for its title. See
+[Task IDs on different computers](sync.md#task-ids-on-different-computers).
 
 ## Change a saved connection
 

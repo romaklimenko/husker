@@ -1,4 +1,4 @@
-use std::{io::IsTerminal, path::PathBuf, process::ExitCode};
+use std::{io::IsTerminal, path::PathBuf, process::ExitCode, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use chrono::{Local, NaiveDate};
@@ -9,6 +9,11 @@ use husker::{
     model::{Status, Task, TaskInput, TaskList},
     query::{Query, visible_tasks},
     store::Store,
+    sync::{
+        self, SETTINGS_FILE, Settings,
+        remote::BlobRemote,
+        worker::{Cadence, SyncWorker},
+    },
     ui,
 };
 use serde::Serialize;
@@ -90,6 +95,8 @@ enum Command {
     ListAdd { name: String },
     /// Rename a list without moving its tasks.
     ListRename { id: i64, name: String },
+    /// Sync this profile with its sync file now. Needs sync.toml in the profile.
+    Sync,
     /// Print settings without opening a database.
     Config {
         /// Print a complete default configuration.
@@ -105,6 +112,9 @@ struct Target {
     #[arg(long)]
     if_version: Option<i64>,
 }
+
+/// How long an MCP server waits at exit to upload unsent changes.
+const EXIT_SYNC_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn parse_date(value: &str) -> Result<NaiveDate, String> {
     husker::query::parse_date(value).map_err(|error| error.to_string())
@@ -143,17 +153,53 @@ fn run(cli: Cli) -> Result<()> {
         .clone()
         .unwrap_or_else(|| profile.join("config.toml"));
     let config = Config::load(&config_path, cli.config.is_some())?;
+    let database = profile.join("tasks.db");
     if let Some(Command::Mcp { list, read_only }) = &cli.command {
+        let mut worker = None;
         if !read_only {
             std::fs::create_dir_all(&profile)
                 .with_context(|| format!("Cannot create profile {}", profile.display()))?;
+            // A read-only server never syncs, so it never writes to the profile.
+            if let Some(settings) = Settings::load(&profile)? {
+                let remote = BlobRemote::new(&settings);
+                // Sync first, so --list can name a list that another device created.
+                let mut store = Store::open(&database)?;
+                if let Err(failure) = sync::sync_once(&mut store, &remote) {
+                    eprintln!("Sync failed: {failure} Serving the local tasks.");
+                }
+                drop(store);
+                worker = Some(SyncWorker::spawn(
+                    database.clone(),
+                    Box::new(remote),
+                    Cadence::MCP,
+                    false,
+                    true,
+                ));
+            }
         }
-        let store = Store::open_for_mcp(&profile.join("tasks.db"), list.as_deref(), *read_only)?;
-        return tokio::runtime::Builder::new_multi_thread()
+        let store = Store::open_for_mcp(&database, list.as_deref(), *read_only)?;
+        let served = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?
             .block_on(mcp::serve(store));
+        if let Some(worker) = worker
+            && let Some(failure) = worker.finish(EXIT_SYNC_TIMEOUT)
+        {
+            eprintln!("Sync failed: {failure} The changes stay on this computer.");
+        }
+        return served;
     }
+    // Check the settings before creating a profile so a missing file has no side effects.
+    let sync_settings = if matches!(cli.command, Some(Command::Sync)) {
+        Some(Settings::load(&profile)?.with_context(|| {
+            format!(
+                "Sync is not set up. Create {} first. See docs/sync.md.",
+                profile.join(SETTINGS_FILE).display()
+            )
+        })?)
+    } else {
+        None
+    };
     // Parse queries before creating a profile so invalid input has no side effects.
     let query = if let Some(Command::Tasks { query, .. }) = &cli.command {
         Some(Query::parse(query)?)
@@ -162,9 +208,18 @@ fn run(cli: Cli) -> Result<()> {
     };
     std::fs::create_dir_all(&profile)
         .with_context(|| format!("Cannot create profile {}", profile.display()))?;
-    let mut store = Store::open(&profile.join("tasks.db"))?;
+    let mut store = Store::open(&database)?;
     let Some(command) = cli.command else {
-        return ui::run(&mut store, &config, &config_path);
+        let worker = Settings::load(&profile)?.map(|settings| {
+            SyncWorker::spawn(
+                database,
+                Box::new(BlobRemote::new(&settings)),
+                Cadence::TERMINAL,
+                true,
+                false,
+            )
+        });
+        return ui::run(&mut store, &config, &config_path, worker);
     };
     match command {
         Command::Mcp { .. } => unreachable!("MCP handled before ordinary commands"),
@@ -274,6 +329,22 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::ListAdd { name } => print_list(&store.create_list(&name)?, cli.json)?,
         Command::ListRename { id, name } => print_list(&store.rename_list(id, &name)?, cli.json)?,
+        Command::Sync => {
+            let settings = sync_settings.expect("sync settings loaded");
+            let report = sync::sync_once(&mut store, &BlobRemote::new(&settings))?;
+            if cli.json {
+                print_json(&report)?;
+            } else {
+                print!(
+                    "Synced. Received {}, sent {}.",
+                    report.received, report.sent
+                );
+                if report.conflicts > 0 {
+                    print!(" Kept both versions of {}.", report.conflicts);
+                }
+                println!();
+            }
+        }
         Command::Config { .. } => unreachable!("configuration handled before opening a profile"),
     }
     Ok(())

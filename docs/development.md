@@ -35,12 +35,13 @@ The installed copy does not lock the repository's build executable.
 Close installed Husker processes and disconnect MCP clients before replacing
 the installed copy with `cargo install --path . --locked`.
 
-Use only temporary profiles for migration tests. Versions 0.9.0 through
-0.14.0 use schema version 4. Updating between them requires no migration.
-Starting the current version against a schema version 1, 2, or 3 profile
-migrates it to version 4 on writable
-access. Versions 0.4.0 through 0.8.0 use schema version 3 and cannot open an
-upgraded profile. Read-only connections require the writable upgrade first.
+Use only temporary profiles for migration tests. Version 0.15.0 uses schema
+version 5. Versions 0.9.0 through 0.14.0 use schema version 4. Updating
+between those versions requires no migration. Versions 0.4.0 through 0.8.0
+use schema version 3.
+Starting the current version against a schema version 1, 2, 3, or 4 profile
+migrates it to version 5 on writable access. An older version cannot open
+the upgraded profile. Read-only connections require the writable upgrade first.
 Follow the [upgrade instructions](usage.md#update-an-existing-profile) for a real profile.
 
 ## Delete tasks permanently in the store
@@ -68,8 +69,100 @@ fails with `This store is read-only.` Only the terminal interface calls
 these operations. No CLI command or MCP tool calls them.
 
 Task IDs come from an `AUTOINCREMENT` column, so a deleted ID is never
-reused. Permanent deletion needs no schema change. The schema stays at
-version 4.
+reused. Permanent deletion needed no schema change.
+
+## How sync is built
+
+Sync keeps the lists and tasks of several profiles the same through one
+JSON file in Azure Blob Storage, the sync file. The
+[sync guide](sync.md) describes the behavior for users. The `device-sync`
+capability spec under `openspec/` holds the rules.
+
+One sync is one call to `sync_once` in `src/sync.rs`. It runs these steps:
+
+1. `Remote::download` fetches the sync file, unless the file still has the
+   ETag stored at the last sync.
+2. `Store::sync_merge` merges the download into the database in one
+   immediate SQLite write transaction. It calls the pure `merge` function
+   and stores the new sync state in the same transaction.
+3. `Remote::upload` sends the merged snapshot if it differs from the
+   download. The upload is conditional on the downloaded ETag.
+4. `Store::sync_uploaded` records the uploaded snapshot as the new base.
+   The base is the snapshot that the database and the sync file agreed on.
+
+If another device replaced the sync file between steps 1 and 3, the upload
+is refused and `sync_once` starts again from step 1. It gives up after five
+rounds and reports the `Busy` failure kind.
+
+Two cases need more than the base:
+
+- An upload can reach the storage while its answer is lost. Step 2
+  therefore stores the snapshot it is about to upload under the `sent` key,
+  and every upload adds a random identifier to the `uploads` list in the
+  sync file. When a later download lists that identifier, `sync_merge` uses
+  the `sent` snapshot as the base. Without this, the device would treat its
+  own upload as another device's change and undo edits made since.
+- The sync file can be deleted and written again, or replaced by a file
+  from another profile. The file then carries another `collection` than the
+  base. `sync_merge` passes `rejoin = true` to `merge`, which then deletes
+  nothing and keeps a conflict copy of every local text the file replaces.
+
+| Module | What it holds |
+| --- | --- |
+| `src/sync.rs` | The `sync.toml` settings (`Settings`, `Auth`), the failure kinds, the `Report`, and `sync_once`. |
+| `src/sync/snapshot.rs` | The JSON form of the sync file, its validation, and the `FORMAT` number. |
+| `src/sync/merge.rs` | The three-way merge of the base, the local snapshot, and the downloaded snapshot. It is a pure function. It does no I/O and reads no clock. |
+| `src/sync/remote.rs` | The `Remote` trait and `BlobRemote`, the HTTPS client for the blob. It also holds `MemoryRemote`, an in-memory sync file for unit tests. |
+| `src/sync/worker.rs` | `SyncWorker`, the background thread, and its `Schedule`. `Cadence::TERMINAL` and `Cadence::MCP` hold the delays for the two kinds of process. |
+| `src/store/sync.rs` | The store side: the snapshot export, the merge transaction, the sync state in the `sync_state` table, and the counters the terminal reads. |
+| `tests/support/mod.rs` | `FakeBlob`, a local HTTP test double for the blob and the managed identity token endpoint. `tests/sync.rs` uses it. |
+
+The worker thread opens its own database connection. It notices changes
+from other connections through SQLite's `data_version`, so no store call
+has to report its writes. The terminal reads the `commits` counter to tell
+a sync commit from a commit by another process. A sync commit shows a sync
+message. Any other external commit shows the external-update notice.
+
+Follow these rules when you change sync:
+
+- Test with `MemoryRemote` in unit tests and with `FakeBlob` in
+  `tests/sync.rs`. `FakeBlob` listens on `127.0.0.1` and `tests/sync.rs`
+  starts real `husker` processes against it. No test contacts a real
+  storage account.
+- Never print or log the sync URL. Its query string can hold a SAS token.
+  `BlobRemote::scrub` removes the URL and the token from failure messages.
+  The tests assert that neither appears in a failure.
+- Give the sync file a new `format` number when you add a field to it.
+  The snapshot types use `deny_unknown_fields`. An older Husker therefore
+  rejects a file that has a field it does not know. With a new `format`
+  number, the older Husker reports `The sync file needs a newer Husker.`
+  Without one, it reports `The sync file is not valid.`
+- Keep `merge` free of clocks and I/O. Every device must compute the same
+  result from the same three snapshots.
+
+## Checks for version 0.15.0
+
+The sync update completed these checks on November 13, 2026:
+
+| Check | Result |
+| --- | --- |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Unit tests | 285 passed. New tests cover the three-way merge, conflict copies, list merging, position renumbering, the schema 5 migration, the sync transaction, two and three simulated devices against an in-memory sync file, the worker schedule and thread, and the terminal's sync messages and notice rule. |
+| CLI integration tests | 9 passed against isolated profiles. |
+| MCP integration tests | 8 passed through child processes. |
+| Sync integration tests | 8 passed. Real `husker` processes sync through the real HTTP client against a local test double: two profiles, a title conflict, a new profile whose `--list` exists only in the sync file, an agent's `add_task`, a read-only server, managed identity with a token double, refused uploads, and failures that must not show the URL. |
+| Review | An independent review ran a randomized test of three devices over 750 seeds and found no lost task, no diverging device, and no ID that changed its task. It reported three defects, all fixed and covered by tests: an upload whose answer is lost made the next sync undo newer edits, a sync file written again after deletion overrode unsent changes, and a script that adds and syncs within one second hid the external-update notice. It also led to the named default list in the sync file, the range check on IDs and positions, and the rule that a reorder does not keep a task another device deleted. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.15.0. |
+| Live terminal | The release executable ran in a 100 by 24 Windows pseudo-terminal against a local stand-in for the blob, with a second profile driven by commands. All 19 checks passed: the start sync showed the other profile's task and `Synced changes from another device.` without the external-update notice, F5 fetched a new task, a task typed in the terminal was uploaded by the exit sync after `Syncing...`, an exit without changes made no request, a failing storage showed the Danish failure message once, and the exit then printed the Danish warning on stderr. No output showed the token. Typing 43 characters took 0.3 seconds with sync on, the same as the installed 0.14.0 in the same harness. |
+| Azure Blob Storage | Two temporary profiles synced through a real storage account with a SAS URL for one blob. The first sync created the blob, an unchanged sync transferred nothing, the second profile received the lists and tasks with the same IDs, and a title conflict produced one `#conflict` copy on both. A wrong token reported `HTTP 403, AuthenticationFailed` without the URL. The blob answered 409 `BlobAlreadyExists` and 412 `ConditionNotMet` to uploads whose precondition did not hold. Blob versioning kept each upload. The `az` commands in `docs/sync.md` for the resource group, storage account, versioning, lifecycle rule, container, access policy, and SAS URL were run as written, with `northeurope` as the region. |
+| OpenSpec | The change validated strictly, and all seven capability specs passed strict validation after archiving. |
+
+Not verified: managed identity on a real Azure VM. The token request and
+the bearer header were tested against a local double only, and the
+`az vm identity assign` and `az role assignment create` commands in
+`docs/sync.md` were not run. Linux and macOS were not tested in this
+session. Mouse input was not driven in the pseudo-terminal.
 
 ## Checks for version 0.14.0
 

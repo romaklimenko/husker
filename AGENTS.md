@@ -78,6 +78,10 @@ are legacy notes. Do not import or delete their contents unless the user asks.
   grouping tests. Do not infer elapsed hours from a date.
 - Keep UI strings in English and Danish catalogs. Stable CLI tokens and JSON
   fields stay in English.
+- Test sync with the in-memory remote (`MemoryRemote`) or the local test
+  double in `tests/support/mod.rs`. Never use a real storage account in tests.
+- Never print or log the sync URL. Its query string can hold a SAS token.
+- Give the sync file a new `format` number whenever you add a field to it.
 - Run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and
   `cargo test` after implementation. Run the relevant OpenSpec validation too.
 - Exercise the CLI against a temporary profile and inspect the terminal UI.
