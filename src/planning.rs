@@ -146,7 +146,7 @@ pub fn suggested_list_id(tasks: &[Task], lists: &[TaskList]) -> Option<i64> {
         .iter()
         .filter(|task| !task.deleted && lists.iter().any(|list| list.id == task.list_id))
         .collect();
-    recent.sort_unstable_by(|left, right| right.id.cmp(&left.id));
+    recent.sort_unstable_by_key(|task| std::cmp::Reverse(task.id));
     recent.truncate(LIST_SUGGESTION_WINDOW);
     // Lists appear in the order of their newest task, so the first highest count wins ties.
     let mut counts: Vec<(i64, usize)> = Vec::new();

@@ -128,8 +128,7 @@ impl TextLayout {
             .is_some_and(|next| next.start == line.end);
         line.boundaries
             .iter()
-            .filter(|(byte, cell)| *cell <= column && (!wraps_to_next || *byte < line.end))
-            .next_back()
+            .rfind(|(byte, cell)| *cell <= column && (!wraps_to_next || *byte < line.end))
             .map_or(line.start, |(byte, _)| *byte)
     }
 

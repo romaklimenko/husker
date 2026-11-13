@@ -856,7 +856,7 @@ impl App {
                 }
                 let current = store.preview_list_deletion(preview.list_id)?;
                 if current != **preview {
-                    *preview = Box::new(current);
+                    **preview = current;
                     *delete = false;
                     *changed = true;
                 }
@@ -876,7 +876,7 @@ impl App {
                     return Ok(true);
                 };
                 if current.version != task.version {
-                    *task = Box::new(current.clone());
+                    **task = current.clone();
                     *delete = false;
                     *changed = true;
                 }
