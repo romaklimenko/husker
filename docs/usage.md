@@ -74,32 +74,47 @@ the list, and press `n`. For example, in `All tasks > Private`, a new task
 always starts in Private.
 
 All tasks shows every list, so when you press `n` there, Husker suggests a
-list. It looks at the 10 most recently created tasks outside Trash and
-picks the list that holds the most of them. For example, if 6 of those
-tasks are in Work, 3 in Private, and 1 in Inbox, the new task starts in
-Work. The List field shows the suggested list as soon as the editor opens.
+list. The suggestion is the list of the newest task outside Trash. For
+example, if 9 of your 10 newest tasks are in Work and the newest one is
+`Call the dentist` in Private, the new task starts in Private. It doesn't
+matter that Work holds more of them. The List field shows the suggested
+list as soon as the editor opens.
 
-Husker counts the tasks this way:
+Husker finds the newest task this way:
 
-- Done and cancelled tasks count. Tasks in Trash don't.
-- Tasks created with `husker add` or by an agent count too.
-- Each task counts for the list it's in now. If you created a task in Inbox
-  and later moved it to Work, it counts for Work.
-- Editing or moving an older task doesn't make it one of the newest.
-- If two lists have the same count, the list with the newest of those tasks
-  wins. For example, if your newest tasks are in Private, Work, Private,
-  and Work, from newest to oldest, the new task starts in Private.
+- The newest task is the one with the highest ID. Each task you create
+  gets a higher ID than every task before it. The editor heading shows a
+  task's ID, such as `#42`.
+- Done and cancelled tasks count. Tasks in Trash don't. If you create a
+  task by mistake and move it to Trash, the suggestion goes back to the
+  list of the newest task that's still outside Trash.
+- A task counts for the list it's in now. If you created your newest task
+  in Inbox and later moved it to Work, the new task starts in Work.
+- Editing or moving an older task doesn't make it the newest.
 - If every task is in Trash, or you have no tasks yet, the new task starts
   in the default list. In a new profile, that's Inbox.
+
+Tasks created with `husker add` or by an agent count too, because Husker
+doesn't record who created a task. If an agent adds a task after your last
+one, the suggestion follows the agent. For example, you create
+`Call the dentist` in Private, and then an agent adds a task to Labs. When
+you press `n` in All tasks, the List field shows Labs.
 
 To use another list, press Tab from Title to focus List, press Enter or
 `l`, and choose the list. Ctrl+Z with List focused undoes your choice and
 brings back the suggested list. See [Choose a task's list in the editor](#choose-a-tasks-list-in-the-editor).
+To avoid the suggestion, open the list with `l` before you press `n`.
+
+If you set up [sync between computers](sync.md), tasks that sync brings in
+from another computer count too. Each task that arrives gets a higher ID
+than every task already on this computer, so it becomes the newest task,
+even if it was created before your last task. See
+[Task IDs on different computers](sync.md#task-ids-on-different-computers).
 
 A filter doesn't change the suggestion. For example, if you filter All
-tasks with `l:Work` and press `n`, the new task still starts in the
-suggested list, which can be Private. Open Work with `l` when you want new
-tasks to start there.
+tasks with `l:Work` and press `n`, the new task still starts in the list
+of the newest task, which can be Private. Open Work with `l` when you want
+new tasks to start there.
 
 The suggestion is only for the terminal interface. `husker add` without
 `--list` puts the task in the default list. An agent connected through MCP
@@ -1120,6 +1135,13 @@ Install the current version from the repository:
 cargo install --path . --locked
 ```
 
+Version 0.16.0 changes the list a new task starts in when you press `n` in
+All tasks. Husker now suggests the list of the newest task outside Trash.
+Before 0.16.0, it suggested the list that held the most of your 10 newest
+tasks. See [Start a new task in the right list](#start-a-new-task-in-the-right-list).
+Version 0.16.0 doesn't change the database, so updating from 0.15.0 or
+0.15.1 needs no migration.
+
 Version 0.15.0 changes the database format. The first time you start
 `husker` or run a command such as `husker lists`, Husker migrates the
 profile's database to schema version 5. The migration keeps every list,
@@ -1152,9 +1174,9 @@ Version 0.14.0 changes how you create tasks in the terminal:
   press Tab once for List and twice for Planned date. If you press Tab a
   fixed number of times out of habit, or a terminal macro does, update
   that count. See [Capture your first task](#capture-your-first-task).
-- A new task you create in All tasks starts in the list that holds most of
-  your 10 newest tasks outside Trash, instead of always the default list. See
-  [Start a new task in the right list](#start-a-new-task-in-the-right-list).
+- A new task you create in All tasks starts in a suggested list instead of
+  always the default list. Version 0.16.0 changes how Husker picks that
+  list. See [Start a new task in the right list](#start-a-new-task-in-the-right-list).
 - An empty Planned date shows `Sometime`, or `Engang` in Danish, instead
   of `YYYY-MM-DD`. Leaving it empty still saves no planned date.
 

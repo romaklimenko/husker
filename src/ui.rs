@@ -9505,7 +9505,7 @@ mod tests {
     }
 
     #[test]
-    fn new_tasks_from_all_tasks_start_in_the_most_common_recent_list() {
+    fn new_tasks_from_all_tasks_start_in_the_newest_task_list() {
         let (_directory, mut store, config) = fixture();
         let work = store.create_list("Work").unwrap();
         let private = store.create_list("Private").unwrap();
@@ -9516,10 +9516,10 @@ mod tests {
         );
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         assert!(matches!(app.screen, Screen::Navigation));
-        for list_id in [private.id, work.id, work.id, 1] {
+        for list_id in [private.id, private.id, private.id, work.id] {
             store.create_task(&input(list_id, "Task")).unwrap();
         }
-        // Trash does not count, so Private has one vote and Work has two.
+        // Private holds more tasks, but the newest task outside Trash is in Work.
         for _ in 0..2 {
             let trashed = store.create_task(&input(private.id, "Mistake")).unwrap();
             store

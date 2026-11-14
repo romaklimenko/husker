@@ -1666,11 +1666,12 @@ A failed write preserves data and shows an error without reporting deletion.
 
 ### Requirement: Suggest a list for a new task
 
-Husker SHALL select a suggested list for a new task created from All tasks. The suggested list is the most common list among the 10 most recently created counted tasks.
+Husker SHALL select a suggested list for a new task created from All tasks. The suggested list is the current list of the newest counted task, which is the counted task with the highest task ID.
 
 A counted task is outside Trash and belongs to an accessible ordinary list. Open, done, and cancelled tasks count.
-A higher task ID means a more recently created task. A task counts with its current list, even when it moved after creation.
-When two or more lists share the highest count, the tied list whose newest counted task has the highest ID wins.
+A task counts with its current list, even when it moved after creation.
+How many counted tasks each list holds does not affect the suggestion. A filter applied to All tasks does not change which tasks are counted.
+A task that another device created before a local task can get a higher ID when a sync inserts it, as the `device-sync` requirement Local IDs are never reused for another record defines. The suggestion still uses the highest task ID.
 When no task is counted, the suggested list is the lowest-ID ordinary list.
 The suggestion only sets the draft's initial List value. Choosing another list, undo, redo, and Save follow the requirement Choose a list for a draft by stable identity.
 List views, the CLI `add` command, and the MCP `add_task` tool do not use the suggestion.
@@ -1678,30 +1679,34 @@ List views, the CLI `add` command, and the MCP `add_task` tool do not use the su
 | Case | Suggested list |
 | --- | --- |
 | No task outside Trash | The lowest-ID ordinary list |
-| One list has the highest count among the 10 newest counted tasks | That list |
-| Several lists share the highest count | The tied list with the newest counted task |
-| More than 10 counted tasks | Only the 10 with the highest IDs count |
+| The highest-ID task is in Trash | The list of the highest-ID counted task |
+| The highest-ID counted task moved after creation | The list it is in now |
+| Another list holds more counted tasks | The list of the highest-ID counted task |
 
-#### Scenario: Suggest the most common recent list
+#### Scenario: Suggest the list of the newest task
 
-- **WHEN** the 10 newest tasks outside Trash are 6 in Work, 3 in Private, and 1 in Inbox, and the user presses `n` in All tasks
-- **THEN** the editor opens with Work in List and empty Title, Description, and Planned date
+- **WHEN** 9 of the 10 newest tasks are in Labs, the newest task is in Private, and the user presses `n` in All tasks
+- **THEN** the editor opens with Private in List and empty Title, Description, and Planned date
 
-#### Scenario: Break a tie with the newest task
+#### Scenario: Follow a newer task in another list
 
-- **WHEN** the newest tasks are, from newest to oldest, one in Private, one in Work, one in Private, and one in Work, and the user presses `n` in All tasks
+- **WHEN** the newest task is in Private, an agent then adds a task to Labs with the MCP `add_task` tool, and the user presses `n` in All tasks
+- **THEN** the editor opens with Labs in List
+
+#### Scenario: Ignore tasks in Trash
+
+- **WHEN** task 13 is the highest-ID task and is in Errands and in Trash, task 12 is in Private and outside Trash, and the user presses `n` in All tasks
 - **THEN** the editor opens with Private in List
 
-#### Scenario: Ignore Trash and older tasks
+#### Scenario: Count a closed task
 
-- **WHEN** tasks 1 to 6 are in Private, tasks 7 to 10 are in Work, and tasks 11 to 13 are in Errands and in Trash
-- **THEN** a new task from All tasks starts in Private
-- **AND** Work would win if the Trash tasks used 3 of the 10 places
+- **WHEN** the newest task is a done task in Work and the user presses `n` in All tasks
+- **THEN** the editor opens with Work in List
 
-#### Scenario: Count closed tasks
+#### Scenario: Count a moved task by its current list
 
-- **WHEN** tasks 1 to 3 are done tasks in Work and tasks 4 and 5 are open tasks in Private
-- **THEN** a new task from All tasks starts in Work
+- **WHEN** the newest task was created in Inbox and later moved to Work, and the user presses `n` in All tasks
+- **THEN** the editor opens with Work in List
 
 #### Scenario: Fall back to the default list
 
@@ -1710,7 +1715,7 @@ List views, the CLI `add` command, and the MCP `add_task` tool do not use the su
 
 #### Scenario: Keep the list of a list view
 
-- **WHEN** most recent tasks belong to Work and the user presses `n` while viewing Private
+- **WHEN** the newest task is in Work and the user presses `n` while viewing Private
 - **THEN** the editor opens with Private in List
 
 ### Requirement: Sync in the background

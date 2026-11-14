@@ -140,6 +140,26 @@ Follow these rules when you change sync:
 - Keep `merge` free of clocks and I/O. Every device must compute the same
   result from the same three snapshots.
 
+## Checks for version 0.16.0
+
+The suggested-list update completed these checks on November 14, 2026:
+
+| Check | Result |
+| --- | --- |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Unit tests | 286 passed. The suggested-list tests cover the newest task winning over a list with 9 of the 10 newest tasks, input order, Trash, done, cancelled, and moved tasks, inaccessible lists, and the default-list fallback. The editor test gives Private more tasks and Work the newest task, and `n` in All tasks opens Work. |
+| Review | An independent review found no code defects. It found that the inaccessible-list test also passed when the list check ran after picking the newest task, and an ambiguous spec sentence about synced task IDs. Both were fixed. |
+| CLI integration tests | 9 passed against isolated profiles. |
+| MCP integration tests | 8 passed through child processes. |
+| Sync integration tests | `two_profiles_show_the_same_tasks_after_husker_sync` and `an_agent_on_a_new_machine_reads_and_writes_a_synced_list` failed in 2 of 3 runs. They failed the same way in 3 of 4 runs of the unchanged 0.15.1 source, so the failures don't come from this change. The third run passed all 8. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.16.0. |
+| Live terminal | The release executable ran in an 80 by 24 Windows pseudo-terminal against a temporary profile with 9 Labs tasks and a newer Private task. `n` showed Private in List, and Enter saved the task to Private. After `husker add --list Labs`, `n` showed Labs. After that task went to Trash, `n` showed Private again. All 7 checks passed. The installed 0.15.1 failed 3 of them, because it suggested Labs. |
+| OpenSpec | The change validated strictly before archiving. |
+
+The Danish interface and mouse input were not driven, because no labels
+changed. Linux and macOS were not tested in this session.
+
 ## Checks for version 0.15.0
 
 The sync update completed these checks on November 13, 2026:

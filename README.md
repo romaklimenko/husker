@@ -14,10 +14,12 @@ husker
 ```
 
 Husker opens All tasks. Press `n`, type a title, and press Enter to save.
-The new task starts in the list that holds the most of your 10 newest tasks
-outside Trash, or in Inbox in a new profile. Before you save, press Tab
-once to reach List, or twice to reach Planned date. For example, press `n`,
-type `Pay rent`, press Tab twice, then press `t` and Enter to plan it for today.
+The new task starts in the same list as the newest task outside Trash,
+even if an agent or `husker add` created that task. In a new profile, it
+starts in Inbox. See [Start a new task in the right list](docs/usage.md#start-a-new-task-in-the-right-list).
+Before you save, press Tab once to reach List, or twice to reach Planned
+date. For example, press `n`, type `Pay rent`, press Tab twice, then press
+`t` and Enter to plan it for today.
 The footer shows the most useful keys for the current screen. Press `?` to
 see every shortcut grouped by screen, or `q` to quit.
 With a task selected, press Space to mark it done, `t` for today, `T` for
