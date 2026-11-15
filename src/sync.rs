@@ -134,7 +134,27 @@ impl Settings {
                 error.message()
             )
         })?;
-        let url = file.url.trim().to_owned();
+        let auth = match file.auth.as_deref() {
+            None | Some("sas") => {
+                ensure!(
+                    file.client_id.is_none(),
+                    "client_id needs auth = \"managed-identity\"."
+                );
+                Auth::Sas
+            }
+            Some("managed-identity") => Auth::ManagedIdentity {
+                client_id: file.client_id,
+            },
+            Some(_) => bail!("auth must be \"sas\" or \"managed-identity\"."),
+        };
+        Self::new(&file.url, auth)
+    }
+
+    /// Checks a sync file URL and builds the settings.
+    ///
+    /// The errors never repeat the URL, because its query string is a secret.
+    pub fn new(url: &str, auth: Auth) -> Result<Self> {
+        let url = url.trim().to_owned();
         let (scheme, rest) = url
             .split_once("://")
             .context("url must start with https://")?;
@@ -155,19 +175,6 @@ impl Settings {
             ),
             _ => bail!("url must start with https://"),
         }
-        let auth = match file.auth.as_deref() {
-            None | Some("sas") => {
-                ensure!(
-                    file.client_id.is_none(),
-                    "client_id needs auth = \"managed-identity\"."
-                );
-                Auth::Sas
-            }
-            Some("managed-identity") => Auth::ManagedIdentity {
-                client_id: file.client_id,
-            },
-            Some(_) => bail!("auth must be \"sas\" or \"managed-identity\"."),
-        };
         Ok(Self { url, auth })
     }
 }

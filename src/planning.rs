@@ -212,6 +212,124 @@ pub fn date_label(date: NaiveDate, language: Language) -> String {
     }
 }
 
+/// How a view arranges its rows under headings.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GroupLayout {
+    /// Open tasks by planned date, then closed tasks by status. All tasks and list views use it.
+    Planned,
+    /// Closed tasks by the day they were closed.
+    History,
+    /// Trash, which has no headings.
+    Trash,
+}
+
+/// One row under a heading.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GroupedRow {
+    /// The position of the task in the visible list.
+    pub index: usize,
+    /// A just-closed task that keeps its row. It shows under the heading it had while open.
+    pub held: bool,
+    /// Whether the row shows the planned date, because its heading does not.
+    pub show_date: bool,
+}
+
+/// Adjacent rows that share one heading.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RowGroup {
+    /// A stable English key: a planned group key, a `YYYY-MM-DD` date, `unknown`, or `trash`.
+    pub key: String,
+    /// The heading without its count, or `None` in Trash.
+    pub label: Option<String>,
+    pub rows: Vec<GroupedRow>,
+}
+
+/// Arranges the visible tasks of a view under headings.
+///
+/// `visible` is already filtered and ordered. A new group starts where the
+/// heading text changes, so a held row can repeat a heading further down. The
+/// count of a heading is the number of its rows, held rows included.
+pub fn group_rows(
+    visible: &[Task],
+    is_held: &dyn Fn(&Task) -> bool,
+    layout: GroupLayout,
+    today: NaiveDate,
+    language: Language,
+) -> Vec<RowGroup> {
+    let mut groups: Vec<RowGroup> = Vec::new();
+    for (index, task) in visible.iter().enumerate() {
+        let held = is_held(task);
+        let dated_key = |bucket: Bucket| match (bucket, task.due) {
+            (Bucket::Soon | Bucket::Next, Some(date)) => date.to_string(),
+            _ => bucket.key().to_owned(),
+        };
+        let (key, label, show_date) = match layout {
+            GroupLayout::History => (
+                task.status_changed_on
+                    .map_or_else(|| "unknown".to_owned(), |date| date.to_string()),
+                history_group_label(task.status_changed_on, today, language),
+                false,
+            ),
+            _ if held => {
+                let bucket = Bucket::for_task(task, today);
+                (
+                    dated_key(bucket),
+                    open_group_label(task, today, language),
+                    bucket == Bucket::Overdue,
+                )
+            }
+            _ => {
+                let group = planned_group(task, today);
+                let key = match group {
+                    PlannedGroup::Due(bucket) => dated_key(bucket),
+                    closed => closed.key().to_owned(),
+                };
+                // Headings from Today to Sometime already tell the date. The others do not.
+                let dated_heading = matches!(
+                    group,
+                    PlannedGroup::Due(
+                        Bucket::Today
+                            | Bucket::Tomorrow
+                            | Bucket::Soon
+                            | Bucket::Next
+                            | Bucket::Undated
+                    )
+                );
+                (
+                    key,
+                    ordinary_group_label(task, today, language),
+                    layout == GroupLayout::Trash || !dated_heading,
+                )
+            }
+        };
+        let row = GroupedRow {
+            index,
+            held,
+            show_date,
+        };
+        if layout == GroupLayout::Trash {
+            match groups.first_mut() {
+                Some(group) => group.rows.push(row),
+                None => groups.push(RowGroup {
+                    key: "trash".to_owned(),
+                    label: None,
+                    rows: vec![row],
+                }),
+            }
+            continue;
+        }
+        match groups.last_mut() {
+            Some(group) if group.label.as_deref() == Some(label.as_str()) => group.rows.push(row),
+            _ => groups.push(RowGroup {
+                key,
+                label: Some(label),
+                rows: vec![row],
+            }),
+        }
+    }
+    groups
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -663,5 +781,224 @@ mod tests {
         }
         assert_eq!(suggested_list_id(&trashed, &all), Some(INBOX));
         assert_eq!(suggested_list_id(&trashed, &[]), None);
+    }
+}
+
+#[cfg(test)]
+mod group_tests {
+    use super::*;
+
+    fn day(day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 11, day).unwrap()
+    }
+
+    fn task(id: i64, due: Option<NaiveDate>, status: Status, changed: Option<NaiveDate>) -> Task {
+        Task {
+            id,
+            list_id: 1,
+            title: format!("Task {id}"),
+            description: String::new(),
+            due,
+            status,
+            status_changed_on: changed,
+            status_changed_at: None,
+            deleted: false,
+            position: id,
+            version: 1,
+        }
+    }
+
+    type Summary = Vec<(String, Option<String>, Vec<(usize, bool, bool)>)>;
+
+    fn summary(groups: &[RowGroup]) -> Summary {
+        groups
+            .iter()
+            .map(|group| {
+                (
+                    group.key.clone(),
+                    group.label.clone(),
+                    group
+                        .rows
+                        .iter()
+                        .map(|row| (row.index, row.held, row.show_date))
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn planned_rows_group_under_the_terminal_headings() {
+        let today = day(15);
+        let mut tasks = vec![
+            task(1, Some(day(10)), Status::Open, None),
+            task(2, Some(day(15)), Status::Open, None),
+            task(3, Some(day(16)), Status::Open, None),
+            task(4, Some(day(18)), Status::Open, None),
+            task(5, Some(day(18)), Status::Open, None),
+            task(6, Some(day(30)), Status::Open, None),
+            task(7, None, Status::Open, None),
+            task(8, Some(day(12)), Status::Done, Some(today)),
+            task(9, None, Status::Cancelled, Some(today)),
+            task(10, None, Status::Done, Some(day(1))),
+            task(11, None, Status::Cancelled, Some(day(1))),
+        ];
+        sort_tasks(&mut tasks, today);
+        let groups = group_rows(
+            &tasks,
+            &|_| false,
+            GroupLayout::Planned,
+            today,
+            Language::En,
+        );
+        let expected = [
+            ("overdue", "Earlier", vec![(0, false, true)]),
+            (
+                "today",
+                "Today - 2026-11-15 Sun W46",
+                vec![(1, false, false)],
+            ),
+            (
+                "tomorrow",
+                "Tomorrow - 2026-11-16 Mon W47",
+                vec![(2, false, false)],
+            ),
+            (
+                "2026-11-18",
+                "2026-11-18 Wed W47",
+                vec![(3, false, false), (4, false, false)],
+            ),
+            ("2026-11-30", "2026-11-30 Mon W49", vec![(5, false, false)]),
+            ("undated", "Sometime", vec![(6, false, false)]),
+            (
+                "done_today",
+                "Done today - 2026-11-15 Sun W46",
+                vec![(7, false, true)],
+            ),
+            (
+                "cancelled_today",
+                "Cancelled today - 2026-11-15 Sun W46",
+                vec![(8, false, true)],
+            ),
+            ("done", "Done", vec![(9, false, true)]),
+            ("cancelled", "Cancelled", vec![(10, false, true)]),
+        ];
+        let expected: Summary = expected
+            .into_iter()
+            .map(|(key, label, rows)| (key.to_owned(), Some(label.to_owned()), rows))
+            .collect();
+        assert_eq!(summary(&groups), expected);
+
+        let danish = group_rows(
+            &tasks,
+            &|_| false,
+            GroupLayout::Planned,
+            today,
+            Language::Da,
+        );
+        let labels: Vec<&str> = danish
+            .iter()
+            .map(|group| group.label.as_deref().unwrap())
+            .collect();
+        assert_eq!(labels[0], "Tidligere");
+        assert_eq!(labels[1], "I dag - 2026-11-15 søn W46");
+        assert_eq!(labels[5], "Engang");
+        assert_eq!(
+            danish.iter().map(|group| &group.key).collect::<Vec<_>>(),
+            groups.iter().map(|group| &group.key).collect::<Vec<_>>(),
+            "keys do not depend on the language"
+        );
+    }
+
+    #[test]
+    fn a_held_row_keeps_the_heading_it_had_while_open() {
+        let today = day(15);
+        // Task 2 was just closed and keeps its row between two open tasks planned for today.
+        let tasks = vec![
+            task(1, Some(day(15)), Status::Open, None),
+            task(2, Some(day(15)), Status::Done, Some(today)),
+            task(3, Some(day(15)), Status::Open, None),
+            task(4, Some(day(10)), Status::Done, Some(today)),
+        ];
+        let held = |task: &Task| task.id == 2 || task.id == 4;
+        let groups = group_rows(&tasks, &held, GroupLayout::Planned, today, Language::En);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].key, "today");
+        assert_eq!(
+            groups[0]
+                .rows
+                .iter()
+                .map(|row| (row.index, row.held, row.show_date))
+                .collect::<Vec<_>>(),
+            [(0, false, false), (1, true, false), (2, false, false)],
+            "the heading counts the held row"
+        );
+        assert_eq!(groups[1].label.as_deref(), Some("Earlier"));
+        assert_eq!(
+            (groups[1].rows[0].held, groups[1].rows[0].show_date),
+            (true, true),
+            "a held row under Earlier shows its date"
+        );
+    }
+
+    #[test]
+    fn history_groups_by_the_day_a_task_was_closed() {
+        let today = day(15);
+        let tasks = vec![
+            task(1, Some(day(20)), Status::Done, Some(day(15))),
+            task(2, None, Status::Cancelled, Some(day(15))),
+            task(3, None, Status::Done, Some(day(14))),
+            task(4, None, Status::Done, Some(day(2))),
+            task(5, None, Status::Done, None),
+        ];
+        let groups = group_rows(
+            &tasks,
+            &|_| false,
+            GroupLayout::History,
+            today,
+            Language::En,
+        );
+        let labels: Vec<(&str, &str, usize)> = groups
+            .iter()
+            .map(|group| {
+                (
+                    group.key.as_str(),
+                    group.label.as_deref().unwrap(),
+                    group.rows.len(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                ("2026-11-15", "Today - 2026-11-15 Sun W46", 2),
+                ("2026-11-14", "Yesterday - 2026-11-14 Sat W46", 1),
+                ("2026-11-02", "2026-11-02 Mon W45", 1),
+                ("unknown", "Unknown date", 1),
+            ]
+        );
+        assert!(
+            groups
+                .iter()
+                .flat_map(|group| &group.rows)
+                .all(|row| !row.show_date),
+            "History rows show no planned date"
+        );
+    }
+
+    #[test]
+    fn trash_is_one_group_without_a_heading() {
+        let today = day(15);
+        let tasks = vec![
+            task(1, Some(day(15)), Status::Open, None),
+            task(2, None, Status::Done, Some(day(1))),
+        ];
+        let groups = group_rows(&tasks, &|_| false, GroupLayout::Trash, today, Language::En);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].key, "trash");
+        assert_eq!(groups[0].label, None);
+        assert_eq!(groups[0].rows.len(), 2);
+        assert!(groups[0].rows.iter().all(|row| row.show_date));
+        assert!(group_rows(&[], &|_| false, GroupLayout::Trash, today, Language::En).is_empty());
     }
 }

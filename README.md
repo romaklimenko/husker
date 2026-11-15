@@ -39,6 +39,8 @@ On Windows, you can select that copy explicitly:
 
 The installed copy leaves the repository's build executable free to replace.
 Close Husker and disconnect its MCP clients before running `cargo install` again.
+An agent that connects through the [online server](#use-husker-online) starts
+no local Husker process, so it can stay connected.
 For an existing profile, follow [Update an existing profile](docs/usage.md#update-an-existing-profile).
 
 Your tasks stay on your computer in `~/.husker/tasks.db`, unless you set up
@@ -78,6 +80,9 @@ Configure Codex through the project's `.codex/config.toml`.
 Read [Connect an agent to Husker](docs/mcp.md#use-one-installation-across-projects)
 for project setup, custom profiles, and access settings.
 
+An agent can also reach your tasks over HTTPS, without a Husker process on
+its computer. See [Use Husker online](#use-husker-online).
+
 ## Sync between computers
 
 Husker can keep the same lists and tasks on several computers. It stores
@@ -99,6 +104,37 @@ after them.
 Read [Sync tasks between computers](docs/sync.md) to create the storage,
 add a second computer, and see what happens when two computers change the
 same task. The URL is a password, so keep `sync.toml` out of repositories.
+
+## Use Husker online
+
+Husker can run as a server in your own Azure subscription, the online
+server. An agent then connects to an HTTPS address and starts no Husker
+process on your computer. On Windows, a running `husker mcp` process locks
+`husker.exe`, so `cargo install` fails while an agent is connected. With
+the online server, the agent stays connected while you install a new build.
+
+The online server reads and writes the sync file, so set up
+[sync between computers](#sync-between-computers) first. Your computers
+keep their own `tasks.db` and receive the agent's changes at their next
+sync.
+
+Deploy the server from PowerShell on Windows, then create an access token
+for the agent:
+
+```text
+./deploy/azure/deploy.ps1 -Subscription <subscription> -ResourceGroup husker -SyncAccount <account> -App <app>
+husker token --name claude-code --url https://<app>.azurewebsites.net
+```
+
+The first deployment is read-only. Run the script again with `-AllowWrites`
+after you checked what the agent reads. An access token reaches every list,
+or one list with `--list NAME`. It stops working after 365 days, or after
+the number of days you give with `--days`.
+
+Read [Use Husker online](docs/online.md) to deploy the server, connect
+Claude Code or Codex, limit an agent to one list, and revoke access. The
+access token is a password, and `online.toml` in your profile directory
+holds the key that creates access tokens. Keep both out of repositories.
 
 ## Configure the interface
 
@@ -168,6 +204,9 @@ configurable action keys, JSON commands, and local MCP tools.
 Optional sync keeps the lists and tasks of several computers the same
 through one file in Azure Blob Storage. Azure Blob Storage is the only
 storage that sync supports. Settings in `config.toml` are not synced.
+The optional online server gives agents the same MCP tools over HTTPS. It
+needs sync, and its deployment script supports Azure Functions only. The
+online server serves agents. It has no page for a phone or a browser.
 Write `#words` in titles or descriptions when useful.
 Search treats those words as ordinary text.
 Concurrent task edits use version checks so an older edit cannot silently

@@ -1,12 +1,21 @@
-use std::{io::IsTerminal, path::PathBuf, process::ExitCode, time::Duration};
+use std::{
+    io::IsTerminal,
+    path::{Path, PathBuf},
+    process::ExitCode,
+    time::Duration,
+};
 
 use anyhow::{Context, Result, bail};
-use chrono::{Local, NaiveDate};
+use chrono::{DateTime, Local, NaiveDate, Utc};
 use clap::{Args, Parser, Subcommand};
 use husker::{
     config::Config,
     mcp,
     model::{Status, Task, TaskInput, TaskList},
+    online::{
+        self,
+        access::{KEY_FILE, OnlineProfile},
+    },
     query::{Query, visible_tasks},
     store::Store,
     sync::{
@@ -97,6 +106,33 @@ enum Command {
     ListRename { id: i64, name: String },
     /// Sync this profile with its sync file now. Needs sync.toml in the profile.
     Sync,
+    /// Run the online server. Its settings come from environment variables.
+    Serve {
+        /// Listen on this port instead of FUNCTIONS_CUSTOMHANDLER_PORT or 8787.
+        #[arg(long)]
+        port: Option<u16>,
+    },
+    /// Sign an access token for the online server.
+    Token {
+        /// A label for the token, such as the device or agent that uses it.
+        #[arg(long)]
+        name: Option<String>,
+        /// Limit the token to this list. Without it the token covers every list.
+        #[arg(long)]
+        list: Option<String>,
+        /// Sign a token that cannot change tasks.
+        #[arg(long)]
+        read_only: bool,
+        /// The lifetime in days, from 1 through 400.
+        #[arg(long, default_value_t = 365)]
+        days: u32,
+        /// The public address of the online server. Husker remembers it.
+        #[arg(long)]
+        url: Option<String>,
+        /// Print the public key for the server settings instead of a token.
+        #[arg(long, conflicts_with_all = ["name", "list", "read_only", "days"])]
+        public_key: bool,
+    },
     /// Print settings without opening a database.
     Config {
         /// Print a complete default configuration.
@@ -135,6 +171,10 @@ fn run(cli: Cli) -> Result<()> {
         print!("{}", Config::example());
         return Ok(());
     }
+    if let Some(Command::Serve { port }) = &cli.command {
+        // The online server reads no profile, no settings file, and no database.
+        return online::serve(*port);
+    }
     if cli.command.is_none()
         && (!std::io::stdin().is_terminal() || !std::io::stdout().is_terminal())
     {
@@ -148,6 +188,28 @@ fn run(cli: Cli) -> Result<()> {
             .context("Cannot find your home directory. Set --profile DIRECTORY.")?
             .join(".husker"),
     };
+    if let Some(Command::Token {
+        name,
+        list,
+        read_only,
+        days,
+        url,
+        public_key,
+    }) = &cli.command
+    {
+        return token(
+            &profile,
+            cli.json,
+            TokenRequest {
+                name: name.as_deref(),
+                list: list.as_deref(),
+                read_only: *read_only,
+                days: *days,
+                url: url.as_deref(),
+                public_key: *public_key,
+            },
+        );
+    }
     let config_path = cli
         .config
         .clone()
@@ -346,8 +408,78 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
         Command::Config { .. } => unreachable!("configuration handled before opening a profile"),
+        Command::Serve { .. } | Command::Token { .. } => {
+            unreachable!("online commands handled before opening a profile")
+        }
     }
     Ok(())
+}
+
+struct TokenRequest<'a> {
+    name: Option<&'a str>,
+    list: Option<&'a str>,
+    read_only: bool,
+    days: u32,
+    url: Option<&'a str>,
+    public_key: bool,
+}
+
+/// Signs an access token with the profile's key, or prints the public key.
+fn token(profile: &Path, json: bool, request: TokenRequest<'_>) -> Result<()> {
+    std::fs::create_dir_all(profile)
+        .with_context(|| format!("Cannot create profile {}", profile.display()))?;
+    let mut online = OnlineProfile::open(profile)?;
+    if let Some(url) = request.url {
+        online.set_url(profile, url)?;
+    }
+    if request.public_key {
+        println!("{}", online.signer().public_key());
+        return Ok(());
+    }
+    let name = request
+        .name
+        .context("Name the token with --name NAME, for example --name phone.")?;
+    let origin = online.url.clone().with_context(|| {
+        format!(
+            "Give the address of the online server once with --url URL. Husker stores it in {KEY_FILE}."
+        )
+    })?;
+    let list = match request.list {
+        Some(list) => {
+            // A token names a list by its sync identifier, which is equal on every device.
+            let store = Store::open_for_mcp(&profile.join("tasks.db"), None, true)?;
+            let id = find_list(&store, Some(list))?.id;
+            Some(store.list_uid(id)?.with_context(|| {
+                format!("List '{list}' has no sync identifier yet. Run 'husker sync' first.")
+            })?)
+        }
+        None => None,
+    };
+    let (claims, token) = online.signer().mint(
+        &origin,
+        name,
+        list,
+        !request.read_only,
+        i64::from(request.days),
+        Utc::now().timestamp(),
+    )?;
+    let expires = DateTime::from_timestamp(claims.exp, 0)
+        .map(|time| time.date_naive().to_string())
+        .unwrap_or_default();
+    if json {
+        print_json(&serde_json::json!({
+            "id": claims.id,
+            "name": claims.name,
+            "list": claims.list,
+            "write": claims.write,
+            "expires": expires,
+            "token": token,
+        }))
+    } else {
+        println!("{token}");
+        eprintln!("Token {} expires on {expires}.", claims.id);
+        Ok(())
+    }
 }
 
 fn find_list(store: &Store, name: Option<&str>) -> Result<TaskList> {

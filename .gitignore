@@ -4,6 +4,8 @@
 /target/
 /.scratch/
 /.claude/settings.local.json
+sync.toml
+online.toml
 .env
 .env.*
 !.env.example

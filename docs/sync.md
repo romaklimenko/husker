@@ -281,6 +281,43 @@ another computer adds a task to that list, the list is removed everywhere
 and the task moves to the default list. If two computers each create a list
 named `Work`, you get one `Work` list with the tasks from both.
 
+## Changes from the online server
+
+From Husker 0.17.0, you can run the [online server](online.md). It lets an
+agent read and change your tasks over HTTPS. The online server also writes
+the sync file. It keeps no database. For each change, it edits one list or
+one task in the sync file.
+
+Your computers need no setting for the online server, and they never
+contact it. A change from the online server arrives like a change from
+another computer, at the next sync:
+
+- The terminal interface receives it within about a minute, or at once
+  when you press F5. It shows `Synced changes from another device.`
+- A writable `husker mcp` server receives it within about a minute.
+- If you only run commands, run `husker sync` to receive it.
+
+The online server puts each change into the sync file at once. If an agent
+and one of your computers change the same task before that computer has
+synced, the agent's change is therefore the one that reached the sync file
+first. The rules from
+[What happens when two computers change the same task](#what-happens-when-two-computers-change-the-same-task)
+apply:
+
+- Changes to different fields combine.
+- For the same field, the agent's value stays. For example, the agent
+  plans a task for Monday and you plan it for Friday on your laptop. After
+  the laptop syncs, the task is planned for Monday.
+- For a title or a description, Husker keeps both texts. The task keeps
+  the agent's text, and your text becomes a new task whose title ends with
+  `#conflict`.
+
+The online server reaches the sync file through its own stored access
+policy, `husker-online`. Deleting the `husker-sync` policy does not stop
+the online server, and deleting `husker-online` does not stop your
+computers. See
+[Cut the server off from the sync file](online.md#cut-the-server-off-from-the-sync-file).
+
 ## Task IDs on different computers
 
 A task normally has the same ID on every computer. If you create task 61 on
@@ -300,6 +337,10 @@ the output of `husker tasks`.
 
 A task's `version`, which `--if-version` checks, also belongs to one
 computer. Read the version on the computer where you run the edit.
+
+An agent on the [online server](online.md) gets neither of these numbers.
+There, IDs and versions are text. See
+[Use the IDs and versions from the online server](online.md#use-the-ids-and-versions-from-the-online-server).
 
 ## Read the sync messages in the terminal
 

@@ -39,7 +39,7 @@ pub enum Stored {
 }
 
 /// The place the sync file lives.
-pub trait Remote: Send {
+pub trait Remote: Send + Sync {
     /// Downloads the file unless it still has the ETag `since`.
     fn download(&self, since: Option<&str>) -> Result<Downloaded, Failure>;
 
@@ -62,16 +62,23 @@ impl BlobRemote {
 
     /// Uses another token endpoint. Tests point this at a local server.
     pub fn with_metadata_endpoint(settings: &Settings, endpoint: &str) -> Self {
+        Self::build(settings, endpoint, RootCerts::PlatformVerifier)
+    }
+
+    /// Checks certificates against the bundled Mozilla roots instead of the system's.
+    ///
+    /// The online server runs in images whose certificate store is not documented.
+    pub fn with_bundled_roots(settings: &Settings) -> Self {
+        Self::build(settings, METADATA_ENDPOINT, RootCerts::WebPki)
+    }
+
+    fn build(settings: &Settings, endpoint: &str, roots: RootCerts) -> Self {
         let agent = Agent::config_builder()
             .timeout_global(Some(TIMEOUT))
             .http_status_as_error(false)
             // A redirect would send the SAS token or bearer token to another host.
             .max_redirects(0)
-            .tls_config(
-                TlsConfig::builder()
-                    .root_certs(RootCerts::PlatformVerifier)
-                    .build(),
-            )
+            .tls_config(TlsConfig::builder().root_certs(roots).build())
             .build()
             .into();
         Self {
@@ -291,6 +298,8 @@ pub(crate) mod testing {
         pub failure: Mutex<Option<Failure>>,
         /// The next upload is stored, but the device gets a failure instead of the answer.
         pub lose_next_answer: Mutex<bool>,
+        /// Runs once after an upload whose answer is lost, before the failure is returned.
+        pub after_lost_answer: Mutex<Option<Hook>>,
         /// Every upload is refused as if another device had just replaced the file.
         pub always_refuse: Mutex<bool>,
         pub downloads: Mutex<usize>,
@@ -374,7 +383,12 @@ pub(crate) mod testing {
             *self.uploads.lock().unwrap() += 1;
             let next = file.as_ref().map_or(1, |(_, version)| version + 1);
             *file = Some((body.to_vec(), next));
+            drop(file);
             if std::mem::take(&mut *self.lose_next_answer.lock().unwrap()) {
+                let hook = self.after_lost_answer.lock().unwrap().take();
+                if let Some(hook) = hook {
+                    hook();
+                }
                 return Err(Failure::new(FailureKind::Offline, "the answer was lost"));
             }
             Ok(Stored::Done {

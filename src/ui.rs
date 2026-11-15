@@ -28,10 +28,7 @@ use crate::config::{Action, Config, Mode};
 use crate::editor_date::parse_editor_date;
 use crate::i18n::{Language, error_message, sync_failure_message, tr};
 use crate::model::{Status, Task, TaskInput, TaskList};
-use crate::planning::{
-    Bucket, DuePreset, PlannedGroup, date_label, history_group_label, open_group_label,
-    ordinary_group_label, planned_group, suggested_list_id,
-};
+use crate::planning::{DuePreset, GroupLayout, date_label, group_rows, suggested_list_id};
 use crate::query::{Query, visible_history, visible_tasks};
 use crate::store::{
     EmptyTrashOutcome, ListDeletionOutcome, ListDeletionPreview, Store, SyncCounters,
@@ -3120,92 +3117,66 @@ impl App {
             frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
             return;
         }
-        let trash = self.view == View::Trash;
-        let labels: Vec<(String, bool)> = self
-            .visible
-            .iter()
-            .map(|task| {
-                let held = self.is_held(task.id);
-                if history {
-                    (
-                        history_group_label(task.status_changed_on, self.today, language),
-                        false,
-                    )
-                } else if held {
-                    (
-                        open_group_label(task, self.today, language),
-                        Bucket::for_task(task, self.today) == Bucket::Overdue,
-                    )
-                } else {
-                    let dated_heading = matches!(
-                        planned_group(task, self.today),
-                        PlannedGroup::Due(
-                            Bucket::Today
-                                | Bucket::Tomorrow
-                                | Bucket::Soon
-                                | Bucket::Next
-                                | Bucket::Undated
-                        )
-                    );
-                    (
-                        ordinary_group_label(task, self.today, language),
-                        trash || !dated_heading,
-                    )
-                }
-            })
-            .collect();
+        let layout = match self.view {
+            View::History(_) => GroupLayout::History,
+            View::Trash => GroupLayout::Trash,
+            View::Planned | View::List(_) => GroupLayout::Planned,
+        };
+        let groups = group_rows(
+            &self.visible,
+            &|task| self.is_held(task.id),
+            layout,
+            self.today,
+            language,
+        );
         let mut rows = Vec::new();
         let mut row_tasks = Vec::new();
-        for (index, task) in self.visible.iter().enumerate() {
-            let held = self.is_held(task.id);
-            let (group, show_date) = &labels[index];
-            let starts_group = index == 0 || labels[index - 1].0 != *group;
-            if !trash && starts_group {
+        for group in &groups {
+            if let Some(label) = &group.label {
                 // The heading counts the rows displayed under it, held rows included.
-                let count = labels[index..]
-                    .iter()
-                    .take_while(|(label, _)| label == group)
-                    .count();
                 rows.push(ListItem::new(Line::from(Span::styled(
-                    format!("{group} ({count})"),
+                    format!("{label} ({})", group.rows.len()),
                     Style::default().fg(Color::Yellow),
                 ))));
                 row_tasks.push(None);
             }
-            let show_date = *show_date;
-            if index == self.selection {
-                self.list_state.select(Some(rows.len()));
+            for row in &group.rows {
+                let index = row.index;
+                let task = &self.visible[index];
+                if index == self.selection {
+                    self.list_state.select(Some(rows.len()));
+                }
+                let marker = match task.status {
+                    Status::Open => "[ ]",
+                    Status::Done => "[x]",
+                    Status::Cancelled => "[-]",
+                };
+                let date = task
+                    .due
+                    .filter(|_| row.show_date)
+                    .map(|date| format!("  {}", date_label(date, language)))
+                    .unwrap_or_default();
+                let title = task.title.replace(['\r', '\n'], " ");
+                let list_label = if matches!(self.view, View::Planned | View::History(None)) {
+                    let name = self
+                        .lists
+                        .iter()
+                        .find(|list| list.id == task.list_id)
+                        .map(|list| list.name.replace(['\r', '\n'], " "))
+                        .unwrap_or_else(|| format!("#{}", task.list_id));
+                    format!("[{name}] ")
+                } else {
+                    String::new()
+                };
+                let text = format!("{marker} {list_label}{title}{date}");
+                let line = if row.held {
+                    Line::from(Span::styled(text, Style::default().fg(Color::DarkGray)))
+                } else {
+                    Line::from(text)
+                };
+                rows.push(ListItem::new(line));
+                row_tasks.push(Some(index));
             }
-            let marker = match task.status {
-                Status::Open => "[ ]",
-                Status::Done => "[x]",
-                Status::Cancelled => "[-]",
-            };
-            let date = task
-                .due
-                .filter(|_| show_date)
-                .map(|date| format!("  {}", date_label(date, language)))
-                .unwrap_or_default();
-            let title = task.title.replace(['\r', '\n'], " ");
-            let list_label = if matches!(self.view, View::Planned | View::History(None)) {
-                let name = self
-                    .lists
-                    .iter()
-                    .find(|list| list.id == task.list_id)
-                    .map(|list| list.name.replace(['\r', '\n'], " "))
-                    .unwrap_or_else(|| format!("#{}", task.list_id));
-                format!("[{name}] ")
-            } else {
-                String::new()
-            };
-            let text = format!("{marker} {list_label}{title}{date}");
-            let line = if held {
-                Line::from(Span::styled(text, Style::default().fg(Color::DarkGray)))
-            } else {
-                Line::from(text)
-            };
-            rows.push(ListItem::new(line));
-            row_tasks.push(Some(index));
         }
         let viewport =
             navigation_viewport(&row_tasks, &mut self.list_state, usize::from(area.height));
@@ -4015,7 +3986,7 @@ fn draw_help(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::planning::Bucket;
+    use crate::planning::{Bucket, history_group_label, ordinary_group_label};
     use crate::query::parse_date;
     use crate::sync::remote::testing::MemoryRemote;
     use crate::sync::worker::Cadence;

@@ -211,6 +211,14 @@ pub fn tr(language: Language, key: &str) -> &'static str {
             "The database could not be updated.",
             "Databasen kunne ikke opdateres.",
         ),
+        "online_missing" => (
+            "The sync file does not exist. Sync a computer first.",
+            "Synkroniseringsfilen findes ikke. Synkronisér en computer først.",
+        ),
+        "online_unknown" => (
+            "The change may not have been saved. Read the task again before you repeat it.",
+            "Ændringen er måske ikke gemt. Læs opgaven igen, før du gentager den.",
+        ),
         "mouse_on" => ("Mouse navigation on", "Musenavigation til"),
         "mouse_off" => (
             "Mouse navigation off. Select text with your terminal.",

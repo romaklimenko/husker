@@ -140,6 +140,132 @@ Follow these rules when you change sync:
 - Keep `merge` free of clocks and I/O. Every device must compute the same
   result from the same three snapshots.
 
+## How the online server is built
+
+The online server is `husker serve`. It answers MCP requests over HTTP and
+works on the sync file directly. It keeps no database and is not a device:
+it never merges, and it holds no base. The [online guide](online.md)
+describes the behavior for users. The `online-server` and `online-mcp`
+capability specs under `openspec/` hold the rules.
+
+One change is one call to `Engine::write` in `src/online/engine.rs`. It
+runs these steps:
+
+1. `fetch` downloads the sync file, unless the file still has the ETag of
+   the cached download.
+2. `apply` in `src/online/doc.rs` changes one list or task in a copy of the
+   downloaded snapshot.
+3. If the copy equals the download, `write` returns without an upload.
+4. `write` serializes the copy, reads it back with `Snapshot::parse`, and
+   calls `guard` to compare it with the download.
+5. `Remote::upload` sends the copy with `If-Match` set to the downloaded
+   ETag.
+
+If a device replaced the sync file between steps 1 and 5, the upload is
+refused and `write` starts again from step 1. It gives up after five
+attempts and reports the `Busy` failure kind. If an upload gets no answer,
+`write` downloads once more. A file that equals the upload counts as
+success.
+
+`apply` is a pure function. It does no I/O and reads no clock and no random
+source. The MCP handler creates the `uid` of a new record and the `Stamp`,
+the date and time of the request, once per tool call. A retry therefore
+applies exactly the same change.
+
+`guard` is the last check before an upload. It limits a mistake in `apply`
+to one record. It refuses the upload unless all of these hold:
+
+- `format`, `collection`, `default_list`, and `uploads` equal the download.
+- Every list and task of the download is still there, with the same `id`
+  and `position`.
+- At most one list or task is new or changed.
+- The request has write access, and the new or changed record is inside
+  its list scope.
+
+Two rules protect the devices:
+
+- The online server never creates the sync file. A missing file is
+  `EngineError::Missing`. Every upload is conditional on an existing ETag.
+  A server with a wrong URL therefore cannot start a new `collection`.
+- The online server never adds to `uploads`. A device finds its own upload
+  in that list after a lost answer. The list holds 20 identifiers, so
+  uploads by the server would push a device's identifier out.
+
+| Module | What it holds |
+| --- | --- |
+| `src/online.rs` | `ServerSettings`, read from the environment variables, and `serve`, which listens on `127.0.0.1`. |
+| `src/online/doc.rs` | The write side: `Access`, `Stamp`, `Op`, `apply`, `guard`, the content `version` of a task, and `resolve_list` for the list in a path. |
+| `src/online/view.rs` | The read side. It gives the accessible records temporary integer IDs, calls the shared query and planning functions, and maps the results back to each `uid`. The numbers never leave the server. |
+| `src/online/engine.rs` | `Engine`: the cached read, the write loop above, and one mutex that serializes the writes of a process. |
+| `src/online/access.rs` | Access tokens: `Signer`, `Verifier`, the `Claims` in a token, the key file `online.toml` (`OnlineProfile`), and the address check `normalize_origin`. |
+| `src/online/mcp.rs` | `OnlineServer`, the MCP handler for one request. It takes the tool names and descriptions from `available_tools` in `src/mcp.rs` and uses text IDs and versions. |
+| `src/online/http.rs` | The routes `/api/health`, `/mcp`, and `/mcp/list/{name}`. It checks the `Origin` and `X-Forwarded-Host` headers, then the access token, then the list in the path. It builds one rmcp service per request and keeps no session. |
+| `src/rules.rs` | The title rule, the list name rule, and the status stamp rule. `Store` and `apply` both call them, so a change gives the same result and the same error sentence through every interface. |
+| `deploy/azure/` | The deployment: `host.json` and `serve/function.json` for the Azure Functions custom handler, `main.bicep` for the function app, `code.bicep` for one code package, and `deploy.ps1`, which runs it all. |
+
+The tests never contact a real storage account or a deployed server:
+
+| Test or tool | What it does |
+| --- | --- |
+| `src/online/tests.rs` | Unit tests against hand-built snapshots and `MemoryRemote`, the in-memory sync file. They cover every operation, the guard, a randomized check that any operation changes at most one record, the views, the engine next to devices that sync through the same file, the settings, and the routes. The parity tests run each change through `Store` and through `apply` and compare the record and the error sentence. |
+| `tests/online.rs` | Starts real `husker serve` processes against `FakeBlob`, the local test double in `tests/support/mod.rs`, next to a profile that syncs through the same file. An MCP client connects over HTTP in both lifecycles, with and without `initialize`. |
+| `examples/fake_blob.rs` | Runs `FakeBlob` until you stop it and prints the URL of its sync file. Use it for manual checks with `husker sync` and `husker serve`. The [online guide](online.md#try-the-online-server-on-your-own-computer) shows the steps. |
+| `examples/package.rs` | Builds the code package for Azure Functions. It writes the zip itself, because the Linux executable must be stored with the Unix mode 0755 and zip tools on Windows store no mode. `deploy.ps1` calls it. |
+
+Follow these rules when you change the online server:
+
+- Change one list or task per upload. When you add an operation, extend
+  `guard` and the randomized test with it.
+- Keep `apply` free of clocks, random sources, and I/O. Pass new
+  identifiers and the `Stamp` in.
+- Never create the sync file from the online server, and never change
+  `uploads`.
+- Put a rule that the store and the online server share in `src/rules.rs`,
+  and add a parity test for it. `i18n` translates the error sentences by
+  their exact text, so keep the sentences as they are.
+- Give the sync file a new `format` number when you add a field to it, and
+  tell users to deploy the online server before they update their
+  computers. An older server refuses a newer file and changes nothing.
+- Never print or log an access token, the private key in `online.toml`,
+  or the sync URL. A refused token always gets the same 401 answer, which
+  does not say why.
+- Use only `MemoryRemote`, `FakeBlob`, and temporary profiles in tests and
+  manual checks.
+
+## Checks for version 0.17.0
+
+The online server update completed these checks on November 15, 2026:
+
+| Check | Result |
+| --- | --- |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Unit tests | 352 passed. 59 of them cover the online server: every change to a list or task, the upload guard, a property test of 600 random changes, parity with the store for results and error sentences, the engine next to devices on the in-memory sync file, access tokens, the MCP tools, and the HTTP routes. |
+| Online integration tests | 7 passed. They start a real `husker serve` process next to a laptop profile and the local test double, and connect the rmcp HTTP client in the `initialize` and the discover lifecycle. |
+| Package tests | 2 passed for the zip writer in `examples/package.rs`. |
+| CLI integration tests | 9 passed against isolated profiles. |
+| MCP integration tests | 8 passed through child processes. |
+| Sync integration tests | `two_profiles_show_the_same_tasks_after_husker_sync` failed in 4 of 9 runs, and `an_agent_on_a_new_machine_reads_and_writes_a_synced_list` in 1 of 9. On the unchanged 0.16.0 source the same two tests failed in 5 of 6 runs, so the failures don't come from this change. The other runs passed all 8. |
+| Review | An independent code and security review found no critical or high defect. It found three medium ones: a stored access policy created again under an old name would revive a leaked SAS, a misspelled revocation list revoked nothing, and text had no size limit. All three were fixed, with the smaller findings: one rule for tasks whose list is missing, a stricter upload guard, the outcome of an upload without an answer, and the token check before the path check. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.17.0. |
+| Linux build | `cargo zigbuild --release --locked --target x86_64-unknown-linux-musl` produced a statically linked executable of 14.6 MB on Windows. |
+| Package | `cargo run --example package` wrote the zip. Python's `zipfile` read it back without errors and showed `husker` with mode 0755 and the Unix host marker. |
+| Templates | `az bicep build` accepted `main.bicep` and `code.bicep`, with one type warning for the `onedeploy` resource. |
+| OpenSpec | `openspec validate add-online-server --strict` passed. |
+
+Not verified in this session:
+
+- The deployment to Azure. The agent session was not allowed to run
+  `deploy.ps1`, so nothing ran against Azure: the script itself, the
+  request proxy of Azure Functions, the headers that reach the server, and
+  the cold start time are untested.
+- Claude Code and Codex against a deployed server. The rmcp client covered
+  both protocol lifecycles against a local server.
+- A manual run with `examples/fake_blob.rs`, two profiles, and `curl`. The
+  online integration tests cover the same path with real processes.
+- Linux and macOS as places to run the terminal. The Linux executable was
+  built, not started.
+
 ## Checks for version 0.16.0
 
 The suggested-list update completed these checks on November 14, 2026:

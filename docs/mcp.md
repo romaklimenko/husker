@@ -2,13 +2,40 @@
 
 This guide is for people who want an AI agent to read or manage their Husker tasks.
 Husker uses MCP, the Model Context Protocol, to give the agent task tools.
-The client starts Husker as a local process and communicates over standard input and output.
+With a local server, the client starts Husker as a local process and communicates over standard input and output.
+
+## Choose a local server or the online server
+
+An agent can reach your tasks in two ways. This guide covers the first.
+
+- A local server. The agent's client starts `husker mcp` on the computer
+  where the agent runs. This needs no Azure and no network, and your tasks
+  can stay on that computer.
+- The online server. The agent's client sends its requests to an HTTPS
+  address in your own Azure subscription. The client starts no Husker
+  process.
+
+The online server removes one problem of the local server. A local server
+keeps `husker.exe` running for as long as the agent is connected. On
+Windows, a running program locks its file. The command
+`cargo install --path . --locked` then fails until you disconnect the
+agent. An agent on the online server holds no file open, so installing a
+new build no longer fails while the agent is connected.
+
+The online server needs [sync through Azure](sync.md) and a deployment that
+you run once. Task IDs and versions are text there, and an access token
+decides which lists the agent reaches. Read [Use Husker online](online.md)
+to set it up.
+
+The local server still works as this guide describes. You can use both at
+the same time, for example the online server for one project and a local
+server for another.
 
 ## Install or update Husker
 
-This guide describes Husker 0.15.0 and its task tools.
+This guide describes Husker 0.17.0 and its task tools.
 Close running Husker instances before updating the executable.
-Disconnect MCP clients that already use Husker, then run this command from the source directory:
+Disconnect MCP clients that already use a local Husker server, then run this command from the source directory:
 
 ```text
 cargo install --path . --locked
@@ -250,6 +277,11 @@ agent's tools can reach. It does not limit what is stored on the agent's
 computer. An agent that can run shell commands or read files there can read
 `tasks.db`, with all your lists.
 
+To keep your other lists off the agent's computer, connect the agent
+through the online server with an access token for one list. That computer
+then stores no tasks. See
+[Limit an agent to one list](online.md#limit-an-agent-to-one-list).
+
 Task IDs can differ between computers. An ID that you read on your laptop
 can belong to another task on the agent's computer. Let the agent find a
 task by searching for its title. See
@@ -358,3 +390,6 @@ After renaming a list, update the client's saved `--list` argument before reconn
 Starting `husker mcp` directly in a terminal does not display the task interface or a ready message.
 The process waits for MCP messages from a client.
 Startup errors go to standard error so they do not mix with protocol messages.
+
+For a connection through the online server, see
+[Check a failed connection](online.md#check-a-failed-connection) in the online guide.

@@ -6,7 +6,10 @@ use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Row, TransactionBehavior, params, types::Type,
 };
 
-use crate::model::{Status, Task, TaskInput, TaskList};
+use crate::{
+    model::{Status, Task, TaskInput, TaskList},
+    rules::{self, normalize_list_name},
+};
 
 mod sync;
 
@@ -266,6 +269,18 @@ impl Store {
 
     pub fn task(&self, id: i64) -> Result<Task> {
         find_task(&self.connection, id, self.list_scope)
+    }
+
+    /// The sync identifier of an accessible list, or `None` before the list has one.
+    pub fn list_uid(&self, id: i64) -> Result<Option<String>> {
+        self.connection
+            .query_row(
+                "SELECT uid FROM lists WHERE id = ?1 AND (?2 IS NULL OR id = ?2)",
+                params![id, self.list_scope],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .with_context(|| format!("List {id} does not exist."))
     }
 
     pub fn create_list(&mut self, name: &str) -> Result<TaskList> {
@@ -555,11 +570,13 @@ impl Store {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let stored = find_task(&transaction, id, self.list_scope)?;
         require_version(&stored, version)?;
-        let (status_changed_on, status_changed_at) = match status {
-            Status::Open => (None, None),
-            _ if status == stored.status => (stored.status_changed_on, stored.status_changed_at),
-            _ => (Some(today), Some(now)),
-        };
+        let (status_changed_on, status_changed_at) = rules::status_stamp(
+            stored.status,
+            (stored.status_changed_on, stored.status_changed_at),
+            status,
+            today,
+            now,
+        );
         transaction.execute(
             "UPDATE tasks SET status = ?1, status_changed_on = ?2, status_changed_at = ?3,
                  version = version + 1 WHERE id = ?4 AND version = ?5",
@@ -828,17 +845,6 @@ fn migrate_schema_four(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn normalize_list_name(name: &str) -> Result<(String, String)> {
-    let name = name.trim().to_owned();
-    ensure!(!name.is_empty(), "A list name cannot be empty.");
-    let name_key = name.to_lowercase();
-    ensure!(
-        name_key != "trash" && name_key != "papirkurv",
-        "Trash and Papirkurv are reserved list names."
-    );
-    Ok((name, name_key))
-}
-
 fn require_unique_list_name(
     connection: &Connection,
     name_key: &str,
@@ -878,8 +884,7 @@ fn require_destination(list_scope: Option<i64>, list_id: i64) -> Result<()> {
 
 fn normalize_input(input: &TaskInput) -> Result<TaskInput> {
     let mut input = input.clone();
-    input.title = input.title.trim().to_owned();
-    ensure!(!input.title.is_empty(), "A task title cannot be empty.");
+    input.title = rules::normalize_title(&input.title)?;
     Ok(input)
 }
 
