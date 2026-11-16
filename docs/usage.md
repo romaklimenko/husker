@@ -445,6 +445,8 @@ Done and cancelled tasks use their recorded status dates and times and cannot
 be reordered manually.
 Reordering never changes a planned date or moves a task between lists.
 With a filter active, reordering uses neighboring tasks in the visible results.
+In macOS Terminal.app, [set up Option+Up and Option+Down](#use-optionarrows-in-macos-terminal)
+if those keys do not move tasks. `K` and `J` work without that setup.
 
 ## Find tasks
 
@@ -871,6 +873,37 @@ In the discard prompt and in the confirmations for deleting a list,
 deleting a task forever, and emptying Trash, `y` chooses Yes and `n`
 chooses No without pressing Enter.
 Backspace edits text in an input field. It does not delete a task.
+
+### Use Option+arrows in macOS Terminal
+
+On a Mac, Alt is the Option key. If Option+Up and Option+Down do not
+reorder tasks, configure Terminal.app to send those shortcuts to Husker.
+You can also use `K` and `J` (Shift+K and Shift+J).
+
+1. In Terminal.app, open Settings, choose Profiles, select the profile
+   you use for Husker, then choose Keyboard.
+2. Click `+` to add a key mapping. If Option+Up already appears, edit it.
+   Set Key to Up Arrow, Modifier to Option, and Action to Send Text.
+3. In the text field, press Esc once, then type `[1;3A`.
+   The field should show `\033[1;3A`. Click OK.
+4. Add or edit Option+Down in the same way. Choose Down Arrow and send
+   Esc followed by `[1;3B`, shown as `\033[1;3B`.
+
+Leave Use Option as Meta key unchecked if you use Option to type
+characters on a Danish keyboard. These two mappings affect only the arrow
+shortcuts. They apply to every program using the selected Terminal profile.
+Apple describes the controls in [Create custom function keys](https://support.apple.com/en-ca/guide/terminal/trml108/mac).
+
+To check the mappings, run `cat -v` at a shell prompt. Press Option+Up
+and Option+Down. You should see `^[[1;3A` and `^[[1;3B`. Press Ctrl+C
+to leave `cat`. If you see `^[[A` and `^[[B`, Terminal sent ordinary
+Up and Down without Option. Check the selected profile and both mappings.
+If the settings have not taken effect, finish your work in existing
+Terminal windows and restart Terminal when convenient.
+
+In Husker, select an open task with a neighbor on the same
+planned date. Option+Up moves it before that neighbor; Option+Down moves
+it after the neighbor. The selected task stays selected.
 
 ## Set the language and shortcuts
 

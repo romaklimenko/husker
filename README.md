@@ -203,6 +203,9 @@ All tasks and all-list History prefix task titles with their list, such as
 Press `n` in the picker to create a list and `r` to rename the selected one.
 Use Alt+Up and Alt+Down, or `K` and `J`, to arrange ordinary lists.
 The default list stays first among them and is marked as the default. Husker remembers their order.
+On a Mac, Alt is the Option key. If Option+Up and Option+Down do not work
+in Terminal.app, [set up those two shortcuts](docs/usage.md#use-optionarrows-in-macos-terminal).
+`K` and `J` work without Terminal settings changes.
 Press Delete on a list to review its removal, then `y` to confirm.
 After confirmation, every task moves to the default list and only the list is removed.
 
