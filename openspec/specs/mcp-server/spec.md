@@ -196,6 +196,9 @@ A profile has sync settings when its directory contains `sync.toml`, as the devi
 | Timer | 60 seconds after the previous sync ended. |
 | Exit | After the input stream closes, only when the local database holds unsent changes. |
 
+A local change includes a commit made after the start sync and before the server's sync thread is ready.
+When the sync thread starts, it checks whether the local database holds unsent changes.
+When it does, or when the check fails, the next sync starts 2 seconds later. A failed check therefore surfaces as a failed sync.
 Because the server syncs before it resolves `--list`, a client on a new device can select a list that exists only in the sync file.
 A failed sync writes one diagnostic line to stderr and the server continues with local data. Stdout contains only MCP messages.
 Sync covers every list of the profile. The `--list` restriction applies to tools only.
@@ -211,6 +214,11 @@ Sync adds no tool and changes no tool schema or tool result.
 
 - **WHEN** an agent calls `add_task` and no process commits to the database for 2 seconds
 - **THEN** the task is uploaded to the sync file
+
+#### Scenario: Send a task added right after the start
+
+- **WHEN** an agent calls `add_task` as its first request, before the server's sync thread is ready
+- **THEN** the task is uploaded to the sync file about 2 seconds later, not after the 60-second timer
 
 #### Scenario: Start without a network
 
