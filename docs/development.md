@@ -924,6 +924,11 @@ Not verified:
 - Claude Code and Codex as clients of the deployed server. The checks above
   sent the MCP requests directly, not through either client.
 
+Later on November 16, 2026, the owner confirmed on an iPhone that the
+page added to the home screen stays paired (task 7.1) and that the page
+works and does what it should (task 7.2). No timing or result per step
+was recorded.
+
 ## Checks for version 0.17.0
 
 The online server update completed these checks on November 15, 2026:
