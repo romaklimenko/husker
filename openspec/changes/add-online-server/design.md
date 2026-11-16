@@ -16,7 +16,7 @@ Facts this design rests on:
 | `uploads` is read only for lost-answer recovery. A device looks for its last upload identifier among at most 20. | Read from `Snapshot::includes_upload` and `Store::sync_merge`. |
 | A device that finds no sync file uploads its database under a new `collection`. | Read from `Store::sync_merge`. |
 | `Snapshot::parse` does not check that a task's list exists, that list names are unique, or that positions are unique. | Read from `Snapshot::validate`. |
-| The Azure Functions host forwards a proxied request with `Host` set to the loopback address and the address the client used in `X-Forwarded-Host`. | Read from the azure-functions-host and YARP sources. Measured on a computer with Core Tools 4.16.0 and host 4.1054.250 by `deploy/azure/check-local.mjs`. Not measured in Azure, where a front end sits before the host. |
+| The Azure Functions host forwards a proxied request with `Host` set to the loopback address and the address the client used in `X-Forwarded-Host`. | Read from the azure-functions-host and YARP sources. Measured on a computer with Core Tools 4.16.0 and host 4.1054.250 by `deploy/azure/check-local.mjs`. In Azure, behind the front end, the first deployment on 2026-11-16 accepted bearer tokens, the phone pairing, and the forwarded host check. |
 | A custom handler on the Flex Consumption plan starts in a few seconds. | Assumed. The first deployment measures the start time. |
 
 ## Goals / Non-Goals
@@ -165,7 +165,7 @@ Reason: the project's checks run with default features. Code behind a feature wo
 
 ## Risks / Trade-offs
 
-- [The Azure Functions proxy changes a header or the route] → `deploy/azure/check-local.mjs` runs the host on a computer and checks the route, the headers, the cookie, and MCP through it. The Azure front end before the host stays unmeasured, so the first deployment checks `/api/health`, the MCP headers, and the bearer token before anything else. The online server is a plain HTTP program, so another host needs only new deployment files.
+- [The Azure Functions proxy changes a header or the route] → `deploy/azure/check-local.mjs` runs the host on a computer and checks the route, the headers, the cookie, and MCP through it. The first deployment checked `/api/health`, the MCP headers, and the bearer token through the Azure front end before it allowed writes. The online server is a plain HTTP program, so another host needs only new deployment files.
 - [A bug in the online server damages the sync file] → One record per upload, the guard, `If-Match`, tests against test doubles only, a read-only first deployment, and blob versions on the storage account.
 - [The sync file wins a conflict] → A change through the online server beats a device's unsent change to the same field. For a title or description, the device keeps a conflict copy. This is the existing rule for any two writers.
 - [The rules drift between the store and the online server] → Shared rule functions, and parity tests that run each operation through both.

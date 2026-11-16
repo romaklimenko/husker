@@ -902,21 +902,27 @@ The phone page update completed these checks on November 16, 2026, on Windows 11
 | Linux build | `cargo zigbuild --release --locked --target x86_64-unknown-linux-musl` produced a statically linked executable of 14.5 MB. Under WSL 2 it reported version 0.18.0, added and listed a task in a temporary profile, and printed a public key. |
 | OpenSpec | `openspec validate add-phone-page --strict` and `openspec validate add-online-server --strict` passed. |
 
-Not verified in this session:
+### Deployment of version 0.18.0
 
-- The deployment to Azure. The agent session was not allowed to run
-  `deploy.ps1`, also not through a syntax check. Nothing ran against Azure:
-  the script, the Azure front end before the Functions host, the Linux
-  build as a server, and the cold start time are untested. The last edit
-  of the script, which prints the server's last answer when the health
-  check fails, was read by a reviewer and has not run.
-- A real phone. Safari, the home screen, the phone's keyboard over a panel,
-  the date picker, and a camera on the QR code are untested. Chrome on a
-  computer stood in for the phone.
-- `husker pair` in a terminal window. The tests cover redirected output and
-  `--json`, and a test reads the drawn QR code back. Nobody has looked at
-  the code in a terminal.
-- Claude Code and Codex against a deployed server, as under version 0.17.0.
+Version 0.18.0 was deployed to Azure Functions on the Flex Consumption plan on November 16, 2026. `deploy/azure/deploy.ps1` ran twice: first with `-CreatePolicy` and read-only, then with `-AllowWrites`. Both runs passed their health check. The checks below ran from a computer with Node's `fetch` and with the installed `husker` 0.18.0 on the same sync file:
+
+| Check | Result |
+| --- | --- |
+| Health | `/api/health` answered `{"format":1,"name":"husker","version":"0.18.0"}`. |
+| Page files | `/`, `/app.js`, `/sw.js`, `/strings.json`, and `/manifest.webmanifest` answered 200 with their content types. `/` carried the content security policy, `nosniff`, `no-referrer`, and `no-cache`. |
+| Refusals | Without an access token, `GET /api/view`, `POST /api/tasks`, `GET /mcp`, and `POST /mcp` answered 401. A forged access token got 401 too. |
+| Read-only server | The All tasks view of a read-only access token held 28 tasks. They matched the 28 of `husker tasks` on the computer by title, status, date, and list, and the counts per list matched. The online MCP at `/mcp/list/Husker` offered the 3 read tools, and `list_tasks` returned the same 3 tasks as the computer's Husker list. `add_task` was refused as an unknown tool. |
+| Writes | With writes allowed, the online MCP offered 8 tools. `add_task` answered in 81 ms and `set_task_status` in 51 ms. A change with the version from before the status change was refused as stale. The computer's next `husker sync` printed `Received 1, sent 0` and showed the task done in the Husker list. |
+| Phone | The owner paired a phone with the QR code of `husker pair` from a terminal window. The page opened All tasks in the read-only deployment. Pairing proves that `Origin`, `X-Husker`, and `X-Forwarded-Host` reach the server in Azure and that `Set-Cookie` reaches the browser. |
+| Cold start | The first request after 25 idle minutes took 3.4 seconds. The next two took 124 ms and 33 ms. The local Functions host took about 4 seconds to start `husker serve`. |
+
+Not verified:
+
+- The phone checklist, tasks 7.1 and 7.2 of `add-phone-page`: the page
+  added to the home screen, Safari's keyboard over a panel, the date
+  picker, changes while the phone is offline, and Danish on the phone.
+- Claude Code and Codex as clients of the deployed server. The checks above
+  sent the MCP requests directly, not through either client.
 
 ## Checks for version 0.17.0
 
