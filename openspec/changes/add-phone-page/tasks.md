@@ -44,6 +44,6 @@
 
 ## 7. Phone check
 
-- [ ] 7.1 Deploy, run `husker pair`, and scan the code with the phone. Add the page to the home screen and check that the installed page is paired, or pair it with a typed code.
+- [x] 7.1 Deploy, run `husker pair`, and scan the code with the phone. Add the page to the home screen and check that the installed page is paired, or pair it with a typed code.
 - [ ] 7.2 On the phone: reopen the page after the server stopped, and time the first refresh. Add five tasks in a row. Tap five checkboxes quickly. Use each sheet action. Type a description and check that Save stays above the keyboard. Choose a date in the date field and check that the sheet stays open until Save. Undo a move to Trash. Turn on airplane mode, add a task, turn it off, and check that the task goes out. Check dark mode and Danish.
 - [ ] 7.3 Archive the change and strictly validate all canonical capabilities.

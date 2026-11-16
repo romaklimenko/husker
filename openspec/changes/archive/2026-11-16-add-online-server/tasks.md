@@ -53,4 +53,4 @@
 - [x] 11.1 Create the stored access policy `husker-online` and deploy with `HUSKER_ONLINE_READ_ONLY=true`. Check `/api/health`, the headers that reach the handler, and the cold start time. Record the measurements in `docs/development.md`.
 - [x] 11.2 Read the Husker list through the online MCP and compare it with a computer. Deploy without the read-only setting. Close a task through the online MCP and see the change on a computer after its sync.
 - [x] 11.3 Switch `.mcp.json` to the online server with `${HUSKER_ONLINE_URL}` and `${HUSKER_ONLINE_TOKEN}`, and update the task inbox section of `AGENTS.md`.
-- [ ] 11.4 Archive the change and strictly validate all canonical capabilities.
+- [x] 11.4 Archive the change and strictly validate all canonical capabilities.
