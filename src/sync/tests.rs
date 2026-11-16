@@ -329,10 +329,8 @@ fn a_text_conflict_keeps_both_versions_on_every_device() {
         assert_eq!(device.task("Buy oat milk").due, day(14));
         let copy = device.task("Buy whole milk #conflict");
         assert_eq!(copy.due, day(14));
-        assert_eq!(
-            (copy.position - device.task("Buy oat milk").position).abs(),
-            1
-        );
+        assert_eq!(copy.position, device.task("Buy oat milk").position + 1);
+        assert_eq!(device.task("Buy oat milk").position, milk.position);
     }
     assert_eq!(first.visible(), second.visible());
     assert_eq!(second.store.sync_counters().unwrap().conflicts, 1);

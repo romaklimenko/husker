@@ -217,6 +217,12 @@ pub fn merge(
                     &status_of(remote),
                 )
                 .0;
+                let position = pick(
+                    base.map(|task| &task.position),
+                    &local.position,
+                    &remote.position,
+                )
+                .0;
                 tasks.push(TaskRecord {
                     uid: uid.clone(),
                     id: remote.id,
@@ -233,16 +239,14 @@ pub fn merge(
                         &remote.deleted,
                     )
                     .0,
-                    position: pick(
-                        base.map(|task| &task.position),
-                        &local.position,
-                        &remote.position,
-                    )
-                    .0,
+                    position,
                 });
                 if text_conflict || (rejoin && text_replaced) {
+                    // The copy takes the merged position, so step 6 can place it
+                    // directly after the original even when the original moved.
                     let mut copy = local.clone();
                     copy.id = 0;
+                    copy.position = position;
                     if !copy.title.ends_with(CONFLICT_TAG) {
                         copy.title = format!("{} {CONFLICT_TAG}", copy.title);
                     }
@@ -263,13 +267,16 @@ pub fn merge(
     // Each copy gets an identifier derived from its content. A copy that already
     // exists with the same text is not added again.
     let mut conflicts = 0;
+    // Each conflict copy this merge created, mapped to the `uid` of its original.
+    let mut created_copies: HashMap<String, String> = HashMap::new();
     for mut copy in copies {
         let original = std::mem::take(&mut copy.uid);
         for attempt in 0.. {
             let uid = copy_uid(&original, &copy.title, &copy.description, attempt);
             match tasks.iter().find(|task| task.uid == uid) {
                 None => {
-                    copy.uid = uid;
+                    copy.uid = uid.clone();
+                    created_copies.insert(uid, original.clone());
                     tasks.push(copy);
                     conflicts += 1;
                     break;
@@ -328,9 +335,19 @@ pub fn merge(
         }
         previous = Some(lists[index].position);
     }
-    let mut order: BTreeMap<(i64, String), usize> = BTreeMap::new();
+    // A conflict copy made by this merge has its original's position. It sorts by
+    // the original's `uid` and right after the original, so the original keeps its
+    // place and the copy follows it directly, whatever the identifiers.
+    let mut order: BTreeMap<(i64, String, bool, String), usize> = BTreeMap::new();
     for (index, task) in tasks.iter().enumerate() {
-        order.insert((task.position, task.uid.clone()), index);
+        let (sort_uid, created_copy) = match created_copies.get(&task.uid) {
+            Some(original) => (original.clone(), true),
+            None => (task.uid.clone(), false),
+        };
+        order.insert(
+            (task.position, sort_uid, created_copy, task.uid.clone()),
+            index,
+        );
     }
     let mut previous: Option<i64> = None;
     for index in order.into_values() {
@@ -510,8 +527,8 @@ mod tests {
         assert_eq!(copy.due, date(14));
         assert_eq!(copy.id, 0);
         assert_eq!(copy.uid.len(), 32);
-        // The copy sits next to the original after positions are made unique.
-        assert_eq!((original.position - copy.position).abs(), 1);
+        // The original keeps its position and the copy sits directly after it.
+        assert_eq!((original.position, copy.position), (7, 8));
         // A second merge of the result against the file creates no further copy.
         let merged_snapshot = snapshot(merged.lists.clone(), merged.tasks.clone());
         let again = run(Some(&remote), &merged_snapshot, Some(&remote));
@@ -742,6 +759,72 @@ mod tests {
             [("a".into(), 60), ("b".into(), 61), ("z".into(), 62)]
         );
         assert_eq!(positions(&here), positions(&there));
+    }
+
+    #[test]
+    fn a_new_conflict_copy_follows_its_original_whatever_the_identifiers() {
+        let mut copy_sorted_first = false;
+        for number in 0..32 {
+            // The first digit varies, so copies sort both before and after their originals.
+            let uid = format!("{:x}{number:031x}", number % 16);
+            let base = snapshot(
+                vec![list("inbox", 1, "Inbox")],
+                vec![
+                    task(&uid, 7, "inbox", "Call the bank"),
+                    task("next", 8, "inbox", "Next task"),
+                ],
+            );
+            let mut local = base.clone();
+            local.tasks[0].title = "Email the bank".into();
+            let mut remote = base.clone();
+            remote.tasks[0].title = "Call the bank today".into();
+            let merged = run(Some(&base), &local, Some(&remote));
+            let copy = copies(&merged)[0];
+            copy_sorted_first |= copy.uid < uid;
+            assert_eq!(find(&merged, &uid).position, 7, "{uid}");
+            assert_eq!(copy.position, 8, "{uid}");
+            assert_eq!(find(&merged, "next").position, 9, "{uid}");
+        }
+        assert!(copy_sorted_first, "no copy identifier sorted first");
+    }
+
+    #[test]
+    fn a_new_conflict_copy_follows_its_original_after_a_move() {
+        let base = snapshot(
+            vec![list("inbox", 1, "Inbox")],
+            vec![
+                task("t", 7, "inbox", "Call the bank"),
+                task("u", 8, "inbox", "Other"),
+            ],
+        );
+        // The file renamed task t and moved it below task u.
+        let mut remote = base.clone();
+        remote.tasks[0].title = "Call the bank today".into();
+        (remote.tasks[0].position, remote.tasks[1].position) = (8, 7);
+        let mut local = base.clone();
+        local.tasks[0].title = "Email the bank".into();
+        let merged = run(Some(&base), &local, Some(&remote));
+        assert_eq!(find(&merged, "u").position, 7);
+        assert_eq!(find(&merged, "t").position, 8);
+        assert_eq!(copies(&merged)[0].position, 9);
+
+        // This device moved task t to 9, where the file added a task of its own.
+        // The copy follows t whether the other task sorts before or after it.
+        for other in ["0", "z"] {
+            let mut local = base.clone();
+            local.tasks[0].title = "Email the bank".into();
+            local.tasks[0].position = 9;
+            let mut remote = base.clone();
+            remote.tasks[0].title = "Call the bank today".into();
+            remote
+                .tasks
+                .push(task(other, 9, "inbox", "Added elsewhere"));
+            let merged = run(Some(&base), &local, Some(&remote));
+            let original = find(&merged, "t").position;
+            assert_eq!(copies(&merged)[0].position, original + 1, "{other}");
+            let added = find(&merged, other).position;
+            assert!(added < original || added > original + 1, "{other}");
+        }
     }
 
     #[test]

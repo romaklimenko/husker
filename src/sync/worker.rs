@@ -222,6 +222,12 @@ fn run(
     };
     let mut schedule = Schedule::new(cadence, Instant::now(), sync_at_start);
     let mut seen = store.data_version().ok();
+    // A commit made before the line above never moves the data version. Compare
+    // the database with the last synced file instead. A failed check syncs, so
+    // the sync reports the problem.
+    if !sync_at_start && store.sync_pending().unwrap_or(true) {
+        schedule.local_change(Instant::now());
+    }
     let mut failing = false;
     loop {
         match commands.recv_timeout(cadence.tick) {
@@ -365,6 +371,79 @@ mod tests {
         wait_for(|| remote.counts().0 > downloads);
         assert_eq!(worker.take_failure(), None);
         assert_eq!(worker.finish(Duration::from_secs(5)), None);
+    }
+
+    #[test]
+    fn worker_sends_a_change_committed_before_it_started() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("tasks.db");
+        let mut store = Store::open(&database).unwrap();
+        let remote = MemoryRemote::shared();
+        sync_once(&mut store, &remote).unwrap();
+        store.create_task(&task("Made before the worker")).unwrap();
+
+        // No sync at start and a one-hour timer: only the start check can send the task.
+        let worker = SyncWorker::spawn(
+            database,
+            Box::new(Arc::clone(&remote)),
+            fast(),
+            false,
+            false,
+        );
+        wait_for(|| remote.snapshot().unwrap().tasks.len() == 1);
+        assert_eq!(worker.take_failure(), None);
+    }
+
+    #[test]
+    fn worker_reports_a_failed_start_check_through_a_sync() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("tasks.db");
+        let mut store = Store::open(&database).unwrap();
+        let remote = MemoryRemote::shared();
+        sync_once(&mut store, &remote).unwrap();
+        rusqlite::Connection::open(&database)
+            .unwrap()
+            .execute(
+                "UPDATE sync_state SET value = 'not a snapshot' WHERE key = 'base'",
+                [],
+            )
+            .unwrap();
+
+        // The start check cannot read the base, so a sync runs and reports the problem.
+        let worker = SyncWorker::spawn(
+            database,
+            Box::new(Arc::clone(&remote)),
+            fast(),
+            false,
+            false,
+        );
+        let mut failure = None;
+        wait_for(|| {
+            failure = worker.take_failure();
+            failure.is_some()
+        });
+        assert_eq!(failure.unwrap().kind, FailureKind::Local);
+    }
+
+    #[test]
+    fn worker_without_unsent_changes_waits_at_start() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("tasks.db");
+        let mut store = Store::open(&database).unwrap();
+        let remote = MemoryRemote::shared();
+        sync_once(&mut store, &remote).unwrap();
+        let before = remote.counts();
+
+        let worker = SyncWorker::spawn(
+            database,
+            Box::new(Arc::clone(&remote)),
+            fast(),
+            false,
+            false,
+        );
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(remote.counts(), before);
+        drop(worker);
     }
 
     #[test]

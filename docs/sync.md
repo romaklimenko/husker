@@ -255,8 +255,9 @@ clocks, so a wrong clock on one computer changes nothing.
 
 If both computers changed the title or the description, Husker keeps both
 texts. The task keeps the text that reached the sync file first. The second
-text becomes a new task whose title ends with `#conflict`, placed next to
-the original. For example, you rename task 7 to `Buy oat milk` on your
+text becomes a new task whose title ends with `#conflict`, placed directly
+after the original. If the copy has a different planned date or status,
+it appears under its own date or status instead. For example, you rename task 7 to `Buy oat milk` on your
 laptop and to `Buy whole milk` on your desktop, and the laptop syncs first.
 After the desktop syncs, task 7 is `Buy oat milk` and a new task is named
 `Buy whole milk #conflict`. The new task holds everything the desktop had

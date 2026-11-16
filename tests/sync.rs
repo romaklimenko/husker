@@ -316,25 +316,28 @@ fn two_profiles_show_the_same_tasks_after_husker_sync() {
     );
 
     // Both computers rename one task before syncing: both titles survive.
+    let position = json_output(laptop.path(), &["show", "3"])["position"].clone();
     ok(
         laptop.path(),
         &["edit", "3", "--title", "Call the bank today"],
     );
     ok(desktop.path(), &["edit", "3", "--title", "Email the bank"]);
     ok(laptop.path(), &["sync"]);
+    // The desktop takes the laptop's title and sends only the copy, because
+    // task 3 keeps its position.
     assert_eq!(
         ok(desktop.path(), &["sync"]),
-        "Synced. Received 2, sent 2. Kept both versions of 1.\n"
+        "Synced. Received 2, sent 1. Kept both versions of 1.\n"
     );
     ok(laptop.path(), &["sync"]);
     for computer in [&laptop, &desktop] {
-        assert_eq!(
-            json_output(computer.path(), &["show", "3"])["title"],
-            "Call the bank today"
-        );
+        let original = json_output(computer.path(), &["show", "3"]);
+        assert_eq!(original["title"], "Call the bank today");
+        assert_eq!(original["position"], position);
         let copies = json_output(computer.path(), &["tasks", "#conflict"]);
         assert_eq!(copies.as_array().unwrap().len(), 1);
         assert_eq!(copies[0]["title"], "Email the bank #conflict");
+        assert_eq!(copies[0]["position"], position.as_i64().unwrap() + 1);
     }
 }
 

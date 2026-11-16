@@ -880,6 +880,27 @@ The script never contacts Azure. The host check in
 the Azure Functions host on your computer. The Azure front end before
 the host and a cold start in Azure stay untested.
 
+## Checks for version 0.18.1
+
+The sync fix completed these checks on November 16, 2026, on Windows 11 with Rust 1.91.1:
+
+| Check | Result |
+| --- | --- |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Unit tests | 371 passed. Five new tests cover the fix. A conflict copy follows its original for 32 task identifiers, half of which sort after the copy's identifier. A copy follows an original that the other device moved, and no task the other device added at the same position comes between them. A worker sends a task committed before it started, reports a failed start check through a sync, and makes no request at start when nothing is unsent. Each of the five fails without its fix, except the last, which guards against a sync at start. |
+| Integration tests | CLI 9, MCP 8, online 9, and package 2 passed. |
+| Sync integration tests | `cargo test --test sync` passed all 8 tests in 40 of 40 runs: 20 before and 20 after the review fixes. On 0.18.0 it failed in 4 of 6 runs. `two_profiles_show_the_same_tasks_after_husker_sync` now expects `Received 2, sent 1` and checks that the copy sits directly after task 3. |
+| Cause of the timeout | Temporary logging in the worker showed that in each failed run the worker's first data version already held the agent's task, so no change was ever seen. In each passing run the data version moved once and the sync followed 2 seconds later. |
+| Review | An independent review found one medium defect: a conflict copy kept the local position, so it could land before an original that the other device moved. It also found that a task at the same position could come between the original and its copy, that the spec did not name a failed start check, and that one error branch had no test. All four were fixed with tests and spec text, and the checks above were run again. |
+| OpenSpec | `openspec validate fix-flaky-sync --strict` passed. `openspec validate --specs --strict` passed all 10 capabilities after `add-phone-page` was archived. |
+
+Not verified:
+
+- A real MCP client, such as Claude Code, against a writable server with
+  sync. The integration test drives `husker mcp` through the rmcp client.
+- Linux and macOS.
+
 ## Checks for version 0.18.0
 
 The phone page update completed these checks on November 16, 2026, on Windows 11 with Rust 1.91.1, Node 24.11.1, Chrome 157, and Azure Functions Core Tools 4.16.0:
