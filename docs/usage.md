@@ -889,9 +889,10 @@ You can also use `K` and `J` (Shift+K and Shift+J).
 4. Add or edit Option+Down in the same way. Choose Down Arrow and send
    Esc followed by `[1;3B`, shown as `\033[1;3B`.
 
-Leave Use Option as Meta key unchecked if you use Option to type
-characters on a Danish keyboard. These two mappings affect only the arrow
-shortcuts. They apply to every program using the selected Terminal profile.
+Keep Use Option as Meta key off if you use Option to type characters on
+a Danish keyboard. If Terminal shows a menu, choose None (Ingen in Danish).
+If it shows a checkbox, leave it unchecked. These two mappings affect only
+the arrow shortcuts. They apply to every program using the selected Terminal profile.
 Apple describes the controls in [Create custom function keys](https://support.apple.com/en-ca/guide/terminal/trml108/mac).
 
 To check the mappings, run `cat -v` at a shell prompt. Press Option+Up
