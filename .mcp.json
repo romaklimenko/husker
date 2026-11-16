@@ -1,9 +1,11 @@
 {
   "mcpServers": {
     "husker-husker": {
-      "type": "stdio",
-      "command": "husker",
-      "args": ["mcp", "--list", "Husker"]
+      "type": "http",
+      "url": "${HUSKER_ONLINE_URL}/mcp/list/Husker",
+      "headers": {
+        "Authorization": "Bearer ${HUSKER_ONLINE_TOKEN}"
+      }
     }
   }
 }
