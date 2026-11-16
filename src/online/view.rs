@@ -167,11 +167,11 @@ impl<'a> Projection<'a> {
         self.task_records[(task.id - 1) as usize]
     }
 
-    /// The `uid` of the list a projected task belongs to.
-    pub fn list_uid(&self, task: &Task) -> Option<&'a str> {
+    /// The `uid` of the accessible list with the projected number `number`.
+    pub fn list_uid(&self, number: i64) -> Option<&'a str> {
         self.lists
             .iter()
-            .position(|list| list.id == task.list_id)
+            .position(|list| list.id == number)
             .map(|index| self.list_records[index].uid.as_str())
     }
 
@@ -179,7 +179,7 @@ impl<'a> Projection<'a> {
     pub fn task_view(&self, task: &Task) -> TaskView {
         let record = self.record(task);
         let mut view = TaskView::from(record);
-        if let Some(list) = self.list_uid(task) {
+        if let Some(list) = self.list_uid(task.list_id) {
             view.list_id = list.to_owned();
         }
         view

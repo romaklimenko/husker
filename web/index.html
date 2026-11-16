@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#111827">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Husker">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon-192.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="stylesheet" href="/app.css">
+  <title>Husker</title>
+</head>
+<body>
+  <div id="app" hidden>
+    <header class="bar">
+      <select id="filter"></select>
+      <button id="refresh" type="button" class="icon"><span>&#8635;</span></button>
+      <button id="menu-open" type="button" class="icon">&#9776;</button>
+    </header>
+    <form id="add" class="add" autocomplete="off">
+      <input id="add-title" type="text" enterkeyhint="done" maxlength="1000">
+      <select id="add-list"></select>
+      <button id="add-submit" type="submit" class="primary">+</button>
+    </form>
+    <p id="notice" class="notice" role="status" hidden></p>
+    <main id="rows"></main>
+    <button id="more" type="button" class="more" hidden></button>
+  </div>
+
+  <section id="pairing" class="pairing" hidden>
+    <h1 id="pair-title">Husker</h1>
+    <p id="pair-hint"></p>
+    <form id="pair-form" autocomplete="off">
+      <input id="pair-code" type="text" autocapitalize="characters" spellcheck="false" maxlength="200">
+      <button id="pair-submit" type="submit" class="primary"></button>
+    </form>
+    <p id="pair-error" class="notice" role="status" hidden></p>
+  </section>
+
+  <dialog id="sheet">
+    <form id="sheet-form" method="dialog" autocomplete="off" tabindex="-1" autofocus>
+      <label><span id="label-title"></span>
+        <input id="task-title" type="text" maxlength="1000"></label>
+      <label><span id="label-description"></span>
+        <textarea id="task-description" rows="4"></textarea></label>
+      <fieldset id="plan">
+        <legend id="label-due"></legend>
+        <div class="chips">
+          <button type="button" data-preset="today"></button>
+          <button type="button" data-preset="tomorrow"></button>
+          <button type="button" data-preset="next_monday"></button>
+          <button type="button" data-preset="clear"></button>
+        </div>
+        <input id="task-due" type="date" aria-labelledby="label-due">
+      </fieldset>
+      <label id="move"><span id="label-list"></span>
+        <select id="task-list"></select></label>
+      <p id="sheet-error" class="notice" role="status" hidden></p>
+      <div class="actions">
+        <button id="task-save" type="submit" class="primary"></button>
+        <button id="task-toggle" type="button"></button>
+        <button id="task-cancel" type="button"></button>
+        <button id="task-trash" type="button" class="danger"></button>
+        <button id="sheet-close" type="button"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="menu">
+    <p id="session" class="notice" hidden></p>
+    <div class="actions column">
+      <button type="button" data-view="all"></button>
+      <button type="button" data-view="history"></button>
+      <button type="button" data-view="trash"></button>
+      <button type="button" data-lang="en"></button>
+      <button type="button" data-lang="da"></button>
+      <button id="sign-out" type="button"></button>
+      <button id="menu-close" type="button"></button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden>
+    <span id="toast-text"></span>
+    <button id="toast-undo" type="button"></button>
+  </div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

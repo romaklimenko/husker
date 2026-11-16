@@ -219,6 +219,82 @@ pub fn tr(language: Language, key: &str) -> &'static str {
             "The change may not have been saved. Read the task again before you repeat it.",
             "Ændringen er måske ikke gemt. Læs opgaven igen, før du gentager den.",
         ),
+        "online_wrong_date" => (
+            "The date on this device is not today's date. Check its date and time.",
+            "Datoen på denne enhed er ikke dags dato. Kontrollér dato og klokkeslæt.",
+        ),
+        // The phone page. `online::assets::WEB_KEYS` lists the keys the page receives.
+        "web_mark_done" => ("Mark done", "Markér som udført"),
+        "web_cancel_task" => ("Cancel task", "Annullér opgave"),
+        "web_save" => ("Save", "Gem"),
+        "web_close" => ("Close", "Luk"),
+        "web_add" => ("Add", "Tilføj"),
+        "web_add_list" => ("List for the new task", "Liste til den nye opgave"),
+        "web_filter" => ("Show the tasks of a list", "Vis opgaverne på en liste"),
+        "web_menu" => ("Menu", "Menu"),
+        "web_show_more" => ("Show more", "Vis flere"),
+        "web_read_only" => ("Read only", "Kun læsning"),
+        "web_offline" => (
+            "No connection to the server.",
+            "Ingen forbindelse til serveren.",
+        ),
+        "web_saved_view" => ("Showing saved tasks.", "Viser gemte opgaver."),
+        "web_loading" => ("Loading tasks...", "Henter opgaver..."),
+        "web_not_saved" => (
+            "No answer from the server. The change may not be saved.",
+            "Intet svar fra serveren. Ændringen er måske ikke gemt.",
+        ),
+        "web_not_sent" => (
+            "Not sent. Tap to send again.",
+            "Ikke sendt. Tryk for at sende igen.",
+        ),
+        "web_server_error" => (
+            "The server answered with an error ({status}). Try again in a moment.",
+            "Serveren svarede med en fejl ({status}). Prøv igen om lidt.",
+        ),
+        "web_stale" => (
+            "This task changed elsewhere. Save again to use your changes, or discard them.",
+            "Opgaven er ændret et andet sted. Gem igen for at bruge dine ændringer, eller kassér dem.",
+        ),
+        "web_discard" => ("Discard changes", "Kassér ændringer"),
+        "web_task_missing" => (
+            "This task was deleted elsewhere.",
+            "Opgaven blev slettet et andet sted.",
+        ),
+        "web_task_left" => (
+            "This task is no longer in this view. Your changes may not be saved.",
+            "Opgaven er ikke længere i denne visning. Dine ændringer er måske ikke gemt.",
+        ),
+        "web_pair_title" => ("Pair this phone", "Tilknyt denne telefon"),
+        "web_pair_hint" => (
+            "Run husker pair on your computer. Scan the QR code, or type the code here.",
+            "Kør husker pair på din computer. Scan QR-koden, eller skriv koden her.",
+        ),
+        "web_pair_code" => ("Pairing code", "Tilknytningskode"),
+        "web_pair_button" => ("Pair", "Tilknyt"),
+        "web_pair_failed" => (
+            "The code is wrong, used, or expired. Run husker pair again.",
+            "Koden er forkert, brugt eller udløbet. Kør husker pair igen.",
+        ),
+        "web_unauthorized" => (
+            "This phone is no longer paired.",
+            "Telefonen er ikke længere tilknyttet.",
+        ),
+        "web_sign_out" => ("Sign out", "Log ud"),
+        "web_lang_en" => ("English", "English"),
+        "web_lang_da" => ("Dansk", "Dansk"),
+        "web_sign_out_later" => (
+            "No connection to the server. The sign-out finishes when this phone reaches the server again.",
+            "Ingen forbindelse til serveren. Du bliver logget helt ud, når telefonen får forbindelse til serveren igen.",
+        ),
+        "web_pair_replace" => (
+            "This phone is paired already. Pair it again with this code?",
+            "Telefonen er allerede tilknyttet. Vil du tilknytte den igen med denne kode?",
+        ),
+        "web_paired_as" => (
+            "Paired as {name} until {date} (token {id})",
+            "Tilknyttet som {name} indtil {date} (token {id})",
+        ),
         "mouse_on" => ("Mouse navigation on", "Musenavigation til"),
         "mouse_off" => (
             "Mouse navigation off. Select text with your terminal.",

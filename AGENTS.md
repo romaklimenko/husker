@@ -93,8 +93,26 @@ are legacy notes. Do not import or delete their contents unless the user asks.
   local test double. Never use a real deployment in tests.
 - Deploy the online server with `deploy/azure/deploy.ps1`. The first run is
   read-only. `docs/online.md` describes the steps.
+- The phone page is plain HTML, CSS, and JavaScript in `web/`, with no build
+  step. `src/online/assets.rs` compiles the files into `husker`, so a page
+  change needs a new build and a deployment.
+- Take every text of the page from `src/i18n.rs`, served as `/strings.json`.
+  Write task text into the page as text. Never use `innerHTML`.
+- The service worker keeps page files only. It never stores an `/api` answer.
+- A change through the session cookie needs the `X-Husker` header. The cookie
+  works under `/api` only, never under `/mcp`.
 - Run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and
   `cargo test` after implementation. Run the relevant OpenSpec validation too.
+- Run `node --test web/logic.test.mjs` and `node --test web/app.test.mjs`
+  after a change to the phone page. Then run `node web/browser-check.mjs`,
+  which drives the page in headless Chrome, and look at its screenshots in
+  `target/browser-check`.
+- Run `node deploy/azure/check-local.mjs` after a change to the files in
+  `deploy/azure/` or to the request checks in `src/online/http.rs`. It runs
+  the Azure Functions host on this computer and needs Core Tools 4.
+- The phone page must never drop text that the user typed without a visible
+  sign. A new control in a task's sheet is a field that Save sends, or a
+  button that acts at once and sends the changed fields with it.
 - Exercise the CLI against a temporary profile and inspect the terminal UI.
   Report any platform or interaction that was not verified.
 - Before reporting completion, delegate a review, address its findings, and

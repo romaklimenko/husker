@@ -284,9 +284,11 @@ named `Work`, you get one `Work` list with the tasks from both.
 ## Changes from the online server
 
 From Husker 0.17.0, you can run the [online server](online.md). It lets an
-agent read and change your tasks over HTTPS. The online server also writes
-the sync file. It keeps no database. For each change, it edits one list or
-one task in the sync file.
+agent read and change your tasks over HTTPS. From Husker 0.18.0, it also
+serves the phone page, a page for your phone where you read and change
+tasks yourself. Like your computers, the online server writes the sync
+file. It keeps no database. For each change, it edits one list or one
+task in the sync file.
 
 Your computers need no setting for the online server, and they never
 contact it. A change from the online server arrives like a change from
@@ -311,6 +313,9 @@ apply:
 - For a title or a description, Husker keeps both texts. The task keeps
   the agent's text, and your text becomes a new task whose title ends with
   `#conflict`.
+
+A change that you make on the phone page counts like an agent's change in
+all three cases.
 
 The online server reaches the sync file through its own stored access
 policy, `husker-online`. Deleting the `husker-sync` policy does not stop

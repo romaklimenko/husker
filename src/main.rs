@@ -8,13 +8,14 @@ use std::{
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Local, NaiveDate, Utc};
 use clap::{Args, Parser, Subcommand};
+use crossterm::style::{Color, Colors, Print, ResetColor, SetColors};
 use husker::{
     config::Config,
     mcp,
     model::{Status, Task, TaskInput, TaskList},
     online::{
         self,
-        access::{KEY_FILE, OnlineProfile},
+        access::{Claims, KEY_FILE, OnlineProfile, normalize_origin},
     },
     query::{Query, visible_tasks},
     store::Store,
@@ -133,6 +134,24 @@ enum Command {
         #[arg(long, conflicts_with_all = ["name", "list", "read_only", "days"])]
         public_key: bool,
     },
+    /// Pair a phone with the online server: show a QR code with a pairing code that works once.
+    Pair {
+        /// A label for the phone's access token.
+        #[arg(long, default_value = "phone")]
+        name: String,
+        /// Limit the phone to this list. Without it the phone reaches every list.
+        #[arg(long)]
+        list: Option<String>,
+        /// Sign an access token that cannot change tasks.
+        #[arg(long)]
+        read_only: bool,
+        /// The lifetime of the access token in days, from 1 through 400.
+        #[arg(long, default_value_t = 365)]
+        days: u32,
+        /// The public address of the online server. Husker remembers it.
+        #[arg(long)]
+        url: Option<String>,
+    },
     /// Print settings without opening a database.
     Config {
         /// Print a complete default configuration.
@@ -207,6 +226,27 @@ fn run(cli: Cli) -> Result<()> {
                 days: *days,
                 url: url.as_deref(),
                 public_key: *public_key,
+            },
+        );
+    }
+    if let Some(Command::Pair {
+        name,
+        list,
+        read_only,
+        days,
+        url,
+    }) = &cli.command
+    {
+        return pair(
+            &profile,
+            cli.json,
+            TokenRequest {
+                name: Some(name),
+                list: list.as_deref(),
+                read_only: *read_only,
+                days: *days,
+                url: url.as_deref(),
+                public_key: false,
             },
         );
     }
@@ -408,7 +448,7 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
         Command::Config { .. } => unreachable!("configuration handled before opening a profile"),
-        Command::Serve { .. } | Command::Token { .. } => {
+        Command::Serve { .. } | Command::Token { .. } | Command::Pair { .. } => {
             unreachable!("online commands handled before opening a profile")
         }
     }
@@ -436,6 +476,36 @@ fn token(profile: &Path, json: bool, request: TokenRequest<'_>) -> Result<()> {
         println!("{}", online.signer().public_key());
         return Ok(());
     }
+    let (_, claims, token) = sign(profile, &online, &request)?;
+    let expires = expiry_date(&claims);
+    if json {
+        print_json(&serde_json::json!({
+            "id": claims.id,
+            "name": claims.name,
+            "list": claims.list,
+            "write": claims.write,
+            "expires": expires,
+            "token": token,
+        }))
+    } else {
+        println!("{token}");
+        eprintln!("Token {} expires on {expires}.", claims.id);
+        Ok(())
+    }
+}
+
+fn expiry_date(claims: &Claims) -> String {
+    DateTime::from_timestamp(claims.exp, 0)
+        .map(|time| time.date_naive().to_string())
+        .unwrap_or_default()
+}
+
+/// Signs an access token for the server address of the profile. Returns the address with it.
+fn sign(
+    profile: &Path,
+    online: &OnlineProfile,
+    request: &TokenRequest<'_>,
+) -> Result<(String, Claims, String)> {
     let name = request
         .name
         .context("Name the token with --name NAME, for example --name phone.")?;
@@ -463,23 +533,122 @@ fn token(profile: &Path, json: bool, request: TokenRequest<'_>) -> Result<()> {
         i64::from(request.days),
         Utc::now().timestamp(),
     )?;
-    let expires = DateTime::from_timestamp(claims.exp, 0)
-        .map(|time| time.date_naive().to_string())
-        .unwrap_or_default();
-    if json {
-        print_json(&serde_json::json!({
-            "id": claims.id,
-            "name": claims.name,
-            "list": claims.list,
-            "write": claims.write,
-            "expires": expires,
-            "token": token,
-        }))
-    } else {
-        println!("{token}");
-        eprintln!("Token {} expires on {expires}.", claims.id);
-        Ok(())
+    Ok((origin, claims, token))
+}
+
+/// How long `husker pair` waits for the online server, which may have to start first.
+const PAIR_TIMEOUT: Duration = Duration::from_secs(40);
+
+/// Signs an access token for a phone and hands it to the online server under a pairing code.
+///
+/// The access token never reaches the screen. The phone gets it from the
+/// server in exchange for the code, once and within five minutes.
+fn pair(profile: &Path, json: bool, request: TokenRequest<'_>) -> Result<()> {
+    std::fs::create_dir_all(profile)
+        .with_context(|| format!("Cannot create profile {}", profile.display()))?;
+    let mut online = OnlineProfile::open(profile)?;
+    // A new address is stored after the server answered, so a typing mistake does not stay.
+    let stored = online.url.clone();
+    if let Some(url) = request.url {
+        online.url = Some(normalize_origin(url)?);
     }
+    let (origin, claims, token) = sign(profile, &online, &request)?;
+
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(PAIR_TIMEOUT))
+        .http_status_as_error(false)
+        // A redirect would send the access token to another address.
+        .max_redirects(0)
+        // The certificate store of this computer, as `husker sync` uses it.
+        .tls_config(
+            ureq::tls::TlsConfig::builder()
+                .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+                .build(),
+        )
+        .build()
+        .into();
+    let mut response = agent
+        .post(format!("{origin}/api/pairings"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send_empty()
+        .map_err(|error| anyhow::anyhow!("Cannot reach the online server at {origin}: {error}."))?;
+    match response.status().as_u16() {
+        200 => {}
+        401 => bail!(
+            "The online server at {origin} refused the access token. \
+             The server may hold another public key than this profile's. \
+             Deploy the server from this computer, or copy {KEY_FILE} from the computer that deployed it."
+        ),
+        status => bail!("The online server at {origin} answered with status {status}."),
+    }
+    let answer: serde_json::Value = response
+        .body_mut()
+        .read_to_vec()
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .context("The online server sent an answer that Husker cannot read.")?;
+    let code = answer["code"]
+        .as_str()
+        .filter(|code| code.len() == 12 && code.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+        .context("The online server sent no pairing code.")?;
+    let seconds = answer["expires_in"].as_u64().unwrap_or(300);
+    let link = format!("{origin}/#code={code}");
+    if online.url != stored {
+        online.url = stored;
+        online.set_url(profile, &origin)?;
+    }
+
+    if json {
+        return print_json(&serde_json::json!({
+            "code": code,
+            "link": link,
+            "expires_in": seconds,
+            "id": claims.id,
+            "expires": expiry_date(&claims),
+        }));
+    }
+    if !std::io::stdout().is_terminal() {
+        // The link alone goes to the output. The token ID, which revokes the phone later,
+        // goes to the error stream, as `husker token` writes it.
+        println!("{link}");
+        eprintln!("Token {} expires on {}.", claims.id, expiry_date(&claims));
+        return Ok(());
+    }
+    let mut out = std::io::stdout();
+    for line in qr_lines(&link)? {
+        // Black on white on every terminal theme: a camera needs dark squares on a light ground.
+        crossterm::execute!(
+            out,
+            SetColors(Colors::new(Color::Black, Color::White)),
+            Print(line),
+            ResetColor,
+            Print("\n"),
+        )?;
+    }
+    let grouped = [&code[..4], &code[4..8], &code[8..]].join("-");
+    println!("Scan the code with the phone, or open {origin} and type {grouped}.");
+    println!(
+        "The code works once, for {} minutes. Token {} expires on {}.",
+        seconds / 60,
+        claims.id,
+        expiry_date(&claims)
+    );
+    Ok(())
+}
+
+/// The QR code of a link as lines of half-block characters, with its empty border.
+///
+/// One character is one square wide and two squares high. A filled half is a
+/// dark square, so the lines must be printed dark on light.
+fn qr_lines(link: &str) -> Result<Vec<String>> {
+    // The lowest error correction keeps the code small. A screen has no dirt to correct.
+    let code = qrcode::QrCode::with_error_correction_level(link.as_bytes(), qrcode::EcLevel::L)
+        .context("Cannot draw the QR code.")?;
+    let drawing = code
+        .render::<qrcode::render::unicode::Dense1x2>()
+        .quiet_zone(true)
+        .build();
+    Ok(drawing.lines().map(str::to_owned).collect())
 }
 
 fn find_list(store: &Store, name: Option<&str>) -> Result<TaskList> {
@@ -532,4 +701,72 @@ fn print_list(list: &TaskList, json: bool) -> Result<()> {
 fn print_json(value: &impl Serialize) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::qr_lines;
+
+    /// Reads the printed QR code as a camera sees it when the lines are printed dark on light.
+    fn read_back(lines: &[String]) -> String {
+        // A camera needs several pixels for one square of the code.
+        const SCALE: usize = 4;
+        let width = lines[0].chars().count();
+        let mut dark = vec![vec![false; width]; lines.len() * 2];
+        for (row, line) in lines.iter().enumerate() {
+            assert_eq!(line.chars().count(), width, "every line has the same width");
+            for (column, character) in line.chars().enumerate() {
+                let (top, bottom) = match character {
+                    ' ' => (false, false),
+                    '\u{2580}' => (true, false),
+                    '\u{2584}' => (false, true),
+                    '\u{2588}' => (true, true),
+                    other => panic!("unexpected character {other:?}"),
+                };
+                dark[row * 2][column] = top;
+                dark[row * 2 + 1][column] = bottom;
+            }
+        }
+        let mut image = rqrr::PreparedImage::prepare_from_greyscale(
+            width * SCALE,
+            dark.len() * SCALE,
+            |x, y| if dark[y / SCALE][x / SCALE] { 0 } else { 255 },
+        );
+        let grids = image.detect_grids();
+        assert_eq!(grids.len(), 1, "one QR code is found");
+        grids[0].decode().expect("the code can be read").1
+    }
+
+    #[test]
+    fn the_printed_qr_code_reads_back_as_the_link() {
+        let link = "https://husker-online-0a1b2c3d.azurewebsites.net/#code=K7QF2M9XTB4H";
+        let lines = qr_lines(link).unwrap();
+        assert_eq!(read_back(&lines), link);
+
+        // The code and the two lines under it fit a terminal of 24 rows and 80 columns.
+        assert!(lines.len() + 2 <= 24, "{} lines", lines.len());
+        assert!(lines[0].chars().count() <= 80);
+
+        // The border is empty. Printed dark on light, it is the light frame a camera needs.
+        assert!(lines[0].chars().all(|character| character == ' '));
+        assert!(
+            lines
+                .iter()
+                .all(|line| line.starts_with("    ") && line.ends_with("    "))
+        );
+
+        // A local address reads back too.
+        let local = "http://127.0.0.1:8787/#code=0123456789AB";
+        assert_eq!(read_back(&qr_lines(local).unwrap()), local);
+
+        // The longest link of that size has 78 characters. One more needs a larger code.
+        let long = format!(
+            "https://{}.azurewebsites.net/#code=K7QF2M9XTB4H",
+            "h".repeat(33)
+        );
+        assert_eq!(long.len(), 78);
+        let lines = qr_lines(&long).unwrap();
+        assert_eq!(read_back(&lines), long);
+        assert!(lines.len() + 2 <= 24, "{} lines", lines.len());
+    }
 }

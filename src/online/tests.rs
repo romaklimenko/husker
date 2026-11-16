@@ -2107,6 +2107,11 @@ impl Server {
     fn new() -> Self {
         let remote = MemoryRemote::shared();
         let device = Device::seeded(&remote);
+        Self::with(remote, device)
+    }
+
+    /// A server for a sync file that `device` wrote to `remote`.
+    fn with(remote: Arc<MemoryRemote>, device: Device) -> Self {
         let signer = Signer::generate().unwrap().0;
         let state = AppState {
             engine: Arc::new(engine(&remote)),
@@ -2116,6 +2121,7 @@ impl Server {
             origin: ORIGIN.into(),
             zone: chrono_tz::Tz::UTC,
             read_only: false,
+            pairings: Arc::default(),
         };
         Self {
             remote,
@@ -2262,8 +2268,13 @@ async fn requests_from_another_origin_or_host_are_refused() {
     let (status, _, body) = server.send(post("origin", "https://evil.example")).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(body["error"]["code"], "forbidden");
-    let (status, _, _) = server.send(post("x-forwarded-host", "evil.example")).await;
+    let (status, _, body) = server.send(post("x-forwarded-host", "evil.example")).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+    // The answer names the host, so a wrong name behind a new proxy is found at once.
+    assert_eq!(
+        body["error"]["message"],
+        "This address does not accept requests for the host 'evil.example'."
+    );
 
     let (status, _, _) = server.send(post("origin", ORIGIN)).await;
     assert_eq!(status, StatusCode::OK);
@@ -2271,6 +2282,28 @@ async fn requests_from_another_origin_or_host_are_refused() {
         .send(post("x-forwarded-host", "Tasks.example.net:443"))
         .await;
     assert_eq!(status, StatusCode::OK);
+
+    // With several names, the last one counts: the proxy next to the server added it.
+    // A client can put any name in front of it.
+    let (status, _, _) = server
+        .send(post("x-forwarded-host", "evil.example, tasks.example.net"))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = server
+        .send(post("x-forwarded-host", "tasks.example.net, evil.example"))
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let two_lines = Request::post("/mcp")
+        .header("host", "127.0.0.1")
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .header("authorization", format!("Bearer {token}"))
+        .header("x-forwarded-host", "tasks.example.net")
+        .header("x-forwarded-host", "evil.example")
+        .body(Body::from(initialize().to_string()))
+        .unwrap();
+    let (status, _, _) = server.send(two_lines).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -2772,4 +2805,1517 @@ async fn large_bodies_and_malformed_paths_are_refused_early() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["result"]["isError"], true);
     assert_eq!(file(&server.remote), before);
+}
+
+// The phone page: its files, the JSON API, the session cookie, and pairing codes.
+
+use std::time::{Duration, Instant};
+
+use super::{
+    api::{PAIRING_SECONDS, Pairings, Params, SESSION_COOKIE, normalize_code},
+    assets::{ASSETS, WEB_KEYS, page_version, strings_json},
+};
+use crate::{
+    i18n::Language,
+    planning::{GroupLayout, group_rows},
+    query::visible_tasks,
+};
+
+/// How a page request signs in.
+enum Login<'a> {
+    None,
+    Bearer(&'a str),
+    Cookie(&'a str),
+}
+
+impl Server {
+    /// Sends an API request the way the page does: JSON, the cookie, and the X-Husker header.
+    async fn api(
+        &self,
+        method: &str,
+        path: &str,
+        login: Login<'_>,
+        body: Option<Value>,
+    ) -> (StatusCode, axum::http::HeaderMap, Value) {
+        self.api_with(method, path, login, body, true).await
+    }
+
+    async fn api_with(
+        &self,
+        method: &str,
+        path: &str,
+        login: Login<'_>,
+        body: Option<Value>,
+        page_header: bool,
+    ) -> (StatusCode, axum::http::HeaderMap, Value) {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("host", "127.0.0.1")
+            .header("content-type", "application/json");
+        if page_header {
+            request = request.header("x-husker", "1");
+        }
+        match login {
+            Login::None => {}
+            Login::Bearer(token) => {
+                request = request.header("authorization", format!("Bearer {token}"));
+            }
+            Login::Cookie(token) => {
+                request = request.header("cookie", format!("other=1; {SESSION_COOKIE}={token}"));
+            }
+        }
+        let body = body.map_or_else(Body::empty, |body| Body::from(body.to_string()));
+        self.send(request.body(body).unwrap()).await
+    }
+
+    /// The date the phone tests send as `today`: the local date, as a phone sends it and as
+    /// the store stamps a closed task. It is read once, so a test run that crosses midnight
+    /// still compares one date with itself.
+    fn today(&self) -> NaiveDate {
+        static TODAY: std::sync::OnceLock<NaiveDate> = std::sync::OnceLock::new();
+        *TODAY.get_or_init(|| chrono::Local::now().date_naive())
+    }
+
+    /// The path of a view for today's date.
+    fn view_path(&self, view: &str, language: &str) -> String {
+        format!(
+            "/api/view?view={view}&today={}&lang={language}",
+            self.today()
+        )
+    }
+}
+
+fn labels(view: &Value) -> Vec<String> {
+    view["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|group| {
+            format!(
+                "{} ({})",
+                group["label"].as_str().unwrap_or("-"),
+                group["count"]
+            )
+        })
+        .collect()
+}
+
+fn row_titles(view: &Value) -> Vec<String> {
+    view["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|group| group["rows"].as_array().unwrap())
+        .map(|row| row["title"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+fn row<'a>(view: &'a Value, title: &str) -> &'a Value {
+    view["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|group| group["rows"].as_array().unwrap())
+        .find(|row| row["title"] == title)
+        .unwrap_or_else(|| panic!("no row titled {title}"))
+}
+
+#[tokio::test]
+async fn the_page_files_need_no_token_and_no_storage() {
+    let server = Server::new();
+    let downloads = server.remote.counts().0;
+    for asset in ASSETS {
+        let request = Request::get(asset.path).body(Body::empty()).unwrap();
+        let response = router(server.state.clone()).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{}", asset.path);
+        let headers = response.headers().clone();
+        assert_eq!(
+            headers["content-type"], asset.content_type,
+            "{}",
+            asset.path
+        );
+        assert_eq!(headers["cache-control"], "no-cache", "{}", asset.path);
+        assert_eq!(headers["x-content-type-options"], "nosniff");
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        if asset.path == "/sw.js" {
+            // The service worker carries the version of the page files in place of its mark.
+            let worker = String::from_utf8(bytes.to_vec()).unwrap();
+            let version = page_version();
+            assert_eq!(version.len(), 16);
+            assert!(version.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            assert!(
+                worker.contains(&format!("const VERSION = \"{version}\";")),
+                "{worker}"
+            );
+            assert!(!worker.contains("__PAGE_VERSION__"));
+            let source = std::str::from_utf8(asset.body).unwrap();
+            assert_eq!(source.matches("__PAGE_VERSION__").count(), 1);
+            assert_eq!(worker, source.replace("__PAGE_VERSION__", version));
+        } else {
+            assert_eq!(&bytes[..], asset.body, "{}", asset.path);
+        }
+        if asset.path == "/" {
+            let policy = headers["content-security-policy"].to_str().unwrap();
+            assert!(policy.contains("default-src 'self'"), "{policy}");
+            assert!(policy.contains("frame-ancestors 'none'"), "{policy}");
+            assert!(!policy.contains("unsafe"), "{policy}");
+        }
+    }
+    let (status, headers, strings) = server.api("GET", "/strings.json", Login::None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        headers["content-type"]
+            .to_str()
+            .unwrap()
+            .starts_with("application/json")
+    );
+    for language in ["en", "da"] {
+        for key in WEB_KEYS {
+            let text = strings[language][key].as_str().unwrap_or_default();
+            assert!(!text.is_empty(), "{language} {key}");
+            assert!(
+                text != "Unknown label" && text != "Ukendt tekst",
+                "{key} is missing from the catalog"
+            );
+        }
+    }
+    assert_eq!(strings["da"]["today"], "I dag");
+    assert_eq!(server.remote.counts().0, downloads, "no storage request");
+}
+
+#[test]
+fn the_page_shows_only_catalog_text_and_never_writes_markup() {
+    let script = include_str!("../../web/app.js");
+    let logic = include_str!("../../web/logic.js");
+    let worker = include_str!("../../web/sw.js");
+    let page = include_str!("../../web/index.html");
+
+    // Every key the page asks for is one the server sends.
+    let mut rest = script;
+    let mut used = 0;
+    while let Some(start) = rest.find("t(\"") {
+        // `t` is the lookup function only when it is a word of its own, not the end of a name.
+        let is_lookup = rest[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|before| !before.is_ascii_alphanumeric() && before != '_' && before != '.');
+        let tail = &rest[start + 3..];
+        let end = tail.find('"').unwrap();
+        let key = &tail[..end];
+        if is_lookup
+            && key
+                .chars()
+                .all(|character| character.is_ascii_lowercase() || character == '_')
+        {
+            assert!(
+                WEB_KEYS.contains(&key),
+                "the page uses the unknown key {key}"
+            );
+            used += 1;
+        }
+        rest = &tail[end..];
+    }
+    assert!(used > 30, "only {used} keys found");
+    // Every key the server sends is used by the page.
+    for key in WEB_KEYS {
+        let quoted = format!("\"{key}\"");
+        let dynamic = key.starts_with("web_lang_") && script.contains("`web_lang_${");
+        assert!(
+            script.contains(&quoted) || dynamic,
+            "the page never uses {key}"
+        );
+    }
+    let strings: Value = serde_json::from_str(&strings_json()).unwrap();
+    assert_eq!(strings["en"].as_object().unwrap().len(), WEB_KEYS.len());
+
+    for (name, source) in [("app.js", script), ("logic.js", logic), ("sw.js", worker)] {
+        for forbidden in [
+            "innerHTML",
+            "outerHTML",
+            "insertAdjacentHTML",
+            "document.write",
+            "eval(",
+            "new Function",
+            "http://",
+            "https://",
+        ] {
+            assert!(!source.contains(forbidden), "{name} contains {forbidden}");
+        }
+    }
+    // Every file the service worker keeps is one the server serves, and none is task data.
+    // One missing file would fail the worker's installation, and the page would not open
+    // while the server is away.
+    let files = worker
+        .split("const FILES = [")
+        .nth(1)
+        .and_then(|rest| rest.split("];").next())
+        .expect("sw.js lists its files in FILES");
+    let kept: Vec<&str> = files.split('"').skip(1).step_by(2).collect();
+    for needed in ["/", "/app.css", "/app.js", "/logic.js", "/strings.json"] {
+        assert!(kept.contains(&needed), "the worker does not keep {needed}");
+    }
+    for path in kept {
+        assert!(
+            path == "/strings.json" || ASSETS.iter().any(|asset| asset.path == path),
+            "the worker keeps the unknown file {path}"
+        );
+        assert!(!path.starts_with("/api") && !path.starts_with("/mcp"));
+    }
+
+    // The page has no inline script, no inline handler, and loads nothing from elsewhere.
+    assert_eq!(page.matches("<script").count(), 1);
+    assert!(page.contains("<script type=\"module\" src=\"/app.js\"></script>"));
+    for forbidden in [
+        "onclick",
+        "onload",
+        "onerror",
+        "style=",
+        "http://",
+        "https://",
+        "javascript:",
+    ] {
+        assert!(!page.contains(forbidden), "index.html contains {forbidden}");
+    }
+    let total: usize = ASSETS
+        .iter()
+        .filter(|asset| !asset.path.ends_with(".png"))
+        .map(|asset| asset.body.len())
+        .sum();
+    assert!(total < 60 * 1024, "the page files have {total} bytes");
+}
+
+#[tokio::test]
+async fn a_view_has_the_groups_of_the_terminal() {
+    let remote = MemoryRemote::shared();
+    let mut device = Device::new();
+    let today = Server::new().today();
+    let day = |offset: i64| today + chrono::Duration::days(offset);
+    let inbox = device.store.default_list_id().unwrap();
+    let work = device.store.create_list("Work").unwrap().id;
+    for (title, list_id, due) in [
+        ("Overdue report", work, Some(day(-3))),
+        ("Buy milk", inbox, Some(day(0))),
+        ("Call Ann", work, Some(day(0))),
+        ("Tomorrow task", inbox, Some(day(1))),
+        ("In four days", inbox, Some(day(4))),
+        ("Also in four days", work, Some(day(4))),
+        ("Next month", inbox, Some(day(30))),
+        ("Sometime", inbox, None),
+        ("Done now", inbox, Some(day(-1))),
+        ("Cancelled now", work, None),
+        ("In Trash", inbox, None),
+    ] {
+        device
+            .store
+            .create_task(&TaskInput {
+                list_id,
+                title: title.into(),
+                description: String::new(),
+                due,
+            })
+            .unwrap();
+    }
+    let done = device.task("Done now");
+    device
+        .store
+        .set_status_on(done.id, done.version, Status::Done, today)
+        .unwrap();
+    let cancelled = device.task("Cancelled now");
+    device
+        .store
+        .set_status_on(cancelled.id, cancelled.version, Status::Cancelled, today)
+        .unwrap();
+    let trashed = device.task("In Trash");
+    device
+        .store
+        .set_deleted(trashed.id, trashed.version, true)
+        .unwrap();
+    device.sync(&remote);
+
+    let signer = Signer::generate().unwrap().0;
+    let server = Server {
+        state: AppState {
+            engine: Arc::new(engine(&remote)),
+            verifier: Arc::new(
+                Verifier::new(&signer.public_key(), ORIGIN, Default::default()).unwrap(),
+            ),
+            origin: ORIGIN.into(),
+            zone: chrono_tz::Tz::UTC,
+            read_only: false,
+            pairings: Arc::default(),
+        },
+        remote: Arc::clone(&remote),
+        signer,
+        _device: Device::new(),
+    };
+    let token = server.token(None, true);
+
+    for (language, code) in [(Language::En, "en"), (Language::Da, "da")] {
+        let (status, _, view) = server
+            .api(
+                "GET",
+                &server.view_path("all", code),
+                Login::Bearer(&token),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+
+        // The same functions on the device's own database give the terminal's rows.
+        let lists = device.store.lists().unwrap();
+        let visible = visible_tasks(
+            &device.store.tasks().unwrap(),
+            &lists,
+            &Query::default(),
+            None,
+            false,
+            today,
+        );
+        let expected = group_rows(&visible, &|_| false, GroupLayout::Planned, today, language);
+        let expected_labels: Vec<String> = expected
+            .iter()
+            .map(|group| format!("{} ({})", group.label.clone().unwrap(), group.rows.len()))
+            .collect();
+        let expected_titles: Vec<String> = expected
+            .iter()
+            .flat_map(|group| &group.rows)
+            .map(|row| visible[row.index].title.clone())
+            .collect();
+        assert_eq!(labels(&view), expected_labels);
+        assert_eq!(row_titles(&view), expected_titles);
+        assert_eq!(labels(&view).len(), 8, "{:?}", labels(&view));
+        for group in &expected {
+            for expected_row in &group.rows {
+                let task = &visible[expected_row.index];
+                let shown = row(&view, &task.title);
+                assert_eq!(shown["show_due"], expected_row.show_date, "{}", task.title);
+                let list = lists.iter().find(|list| list.id == task.list_id).unwrap();
+                assert_eq!(shown["list_name"], list.name.as_str());
+            }
+        }
+        assert_eq!(view["view"], "all");
+        assert_eq!(view["write"], true);
+        assert_eq!(view["trash_count"], 1);
+        assert_eq!(view["total"], 10);
+        assert_eq!(view["next_offset"], Value::Null);
+        let names: Vec<(&str, u64, bool)> = view["lists"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|list| {
+                (
+                    list["name"].as_str().unwrap(),
+                    list["count"].as_u64().unwrap(),
+                    list["default"].as_bool().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(names, [("Inbox", 5, true), ("Work", 3, false)]);
+    }
+
+    let (_, _, english) = server
+        .api(
+            "GET",
+            &server.view_path("all", "en"),
+            Login::Bearer(&token),
+            None,
+        )
+        .await;
+    assert_eq!(english["groups"][0]["key"], "overdue");
+    assert_eq!(english["groups"][0]["label"], "Earlier");
+    assert_eq!(english["groups"][1]["key"], "today");
+    assert!(
+        english["groups"][1]["label"]
+            .as_str()
+            .unwrap()
+            .starts_with("Today - ")
+    );
+    let overdue = row(&english, "Overdue report");
+    assert_eq!(overdue["show_due"], true);
+    assert!(
+        overdue["due_label"]
+            .as_str()
+            .unwrap()
+            .starts_with(&day(-3).to_string())
+    );
+    assert_eq!(overdue["id"].as_str().unwrap().len(), 32);
+    assert_eq!(overdue["version"].as_str().unwrap().len(), 16);
+    // The newest task outside Trash is in Work, so a new task starts there.
+    let work_uid = english["lists"][1]["id"].as_str().unwrap();
+    assert_eq!(english["suggested_list"], work_uid);
+
+    // History and Trash.
+    let (_, _, history) = server
+        .api(
+            "GET",
+            &server.view_path("history", "en"),
+            Login::Bearer(&token),
+            None,
+        )
+        .await;
+    assert_eq!(row_titles(&history).len(), 2);
+    assert!(
+        history["groups"][0]["label"]
+            .as_str()
+            .unwrap()
+            .starts_with("Today - ")
+    );
+    assert_eq!(history["groups"][0]["key"], today.to_string());
+    let (_, _, trash) = server
+        .api(
+            "GET",
+            &server.view_path("trash", "en"),
+            Login::Bearer(&token),
+            None,
+        )
+        .await;
+    assert_eq!(row_titles(&trash), ["In Trash"]);
+    assert_eq!(trash["groups"][0]["label"], Value::Null);
+    assert_eq!(trash["groups"][0]["key"], "trash");
+
+    // A page of History.
+    let path = format!("{}&limit=1", server.view_path("history", "en"));
+    let (_, _, first) = server.api("GET", &path, Login::Bearer(&token), None).await;
+    assert_eq!(row_titles(&first).len(), 1);
+    assert_eq!(
+        (first["total"].clone(), first["next_offset"].clone()),
+        (json!(2), json!(1))
+    );
+    let (_, _, second) = server
+        .api(
+            "GET",
+            &format!("{path}&offset=1"),
+            Login::Bearer(&token),
+            None,
+        )
+        .await;
+    assert_eq!(second["next_offset"], Value::Null);
+    assert_ne!(row_titles(&first), row_titles(&second));
+
+    // A token for one list sees that list only.
+    let scoped = server.token(Some("Work"), true);
+    let (_, _, view) = server
+        .api(
+            "GET",
+            &server.view_path("all", "en"),
+            Login::Bearer(&scoped),
+            None,
+        )
+        .await;
+    assert_eq!(view["lists"].as_array().unwrap().len(), 1);
+    assert_eq!(view["total"], 4);
+    assert_eq!(view["trash_count"], 0);
+}
+
+#[tokio::test]
+async fn the_page_adds_and_changes_tasks() {
+    let server = Server::new();
+    let token = server.token(None, true);
+    let login = || Login::Bearer(&token);
+    let view_path = server.view_path("all", "en");
+    let tasks = format!("/api/tasks?today={}&lang=en", server.today());
+    let task_path = |id: &str| format!("/api/tasks/{id}?today={}&lang=en", server.today());
+
+    // Add a task for tomorrow. A repeat with the same id returns the same task.
+    let body = json!({ "id": uid(77), "title": " Call Ann ", "preset": "tomorrow" });
+    let uploads = server.remote.counts().2;
+    let (status, _, added) = server
+        .api("POST", &tasks, login(), Some(body.clone()))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{added}");
+    assert_eq!(added["task"]["title"], "Call Ann");
+    assert_eq!(
+        added["task"]["due"],
+        (server.today() + chrono::Duration::days(1)).to_string()
+    );
+    assert_eq!(added["task"]["id"], uid(77));
+    assert!(row_titles(&added["view"]).contains(&"Call Ann".to_owned()));
+    let (status, _, again) = server.api("POST", &tasks, login(), Some(body)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(again["task"], added["task"]);
+    assert_eq!(
+        server.remote.counts().2 - uploads,
+        1,
+        "the repeat uploads nothing"
+    );
+    let (status, _, taken) = server
+        .api(
+            "POST",
+            &tasks,
+            login(),
+            Some(json!({ "id": uid(77), "title": "Another" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(taken["error"]["code"], "task_exists");
+
+    // Move and plan in one request: one upload.
+    let (_, _, view) = server.api("GET", &view_path, login(), None).await;
+    let work = view["lists"][1]["id"].as_str().unwrap().to_owned();
+    let milk = row(&view, "Buy milk").clone();
+    let id = milk["id"].as_str().unwrap().to_owned();
+    let uploads = server.remote.counts().2;
+    let (status, _, moved) = server
+        .api(
+            "PATCH",
+            &task_path(&id),
+            login(),
+            Some(json!({ "list_id": work, "preset": "today" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{moved}");
+    assert_eq!(moved["task"]["list_id"], work.as_str());
+    assert_eq!(moved["task"]["due"], server.today().to_string());
+    assert_eq!(server.remote.counts().2 - uploads, 1);
+
+    // A status change needs no version, and stamps the phone's date.
+    let (status, _, closed) = server
+        .api(
+            "PATCH",
+            &task_path(&id),
+            login(),
+            Some(json!({ "status": "done" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(closed["task"]["status"], "done");
+    assert_eq!(
+        closed["task"]["status_changed_on"],
+        server.today().to_string()
+    );
+
+    // Text needs the version, and a stale one changes nothing.
+    let (status, _, missing) = server
+        .api(
+            "PATCH",
+            &task_path(&id),
+            login(),
+            Some(json!({ "title": "New" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(missing["error"]["code"], "version_required");
+    let (status, _, stale) = server
+        .api(
+            "PATCH",
+            &task_path(&id),
+            login(),
+            Some(json!({ "title": "New", "version": milk["version"] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(stale["error"]["code"], "stale_version");
+    let (status, _, renamed) = server
+        .api(
+            "PATCH",
+            &task_path(&id),
+            login(),
+            Some(json!({
+                "title": "Buy oat milk",
+                "description": "2 litres",
+                "version": closed["task"]["version"],
+                "clear_due": true,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{renamed}");
+    assert_eq!(renamed["task"]["title"], "Buy oat milk");
+    assert_eq!(renamed["task"]["due"], Value::Null);
+
+    // Trash and back.
+    let (_, _, trashed) = server
+        .api(
+            "PATCH",
+            &task_path(&id),
+            login(),
+            Some(json!({ "deleted": true })),
+        )
+        .await;
+    assert_eq!(trashed["task"]["deleted"], true);
+    assert!(!row_titles(&trashed["view"]).contains(&"Buy oat milk".to_owned()));
+    let (_, _, restored) = server
+        .api(
+            "PATCH",
+            &task_path(&id),
+            login(),
+            Some(json!({ "deleted": false })),
+        )
+        .await;
+    assert_eq!(restored["task"]["deleted"], false);
+}
+
+#[tokio::test]
+async fn api_failures_have_a_code_and_a_message() {
+    let server = Server::new();
+    let token = server.token(None, true);
+    let reader = server.token(None, false);
+    let scoped = server.token(Some("Work"), true);
+    let today = server.today();
+    let tasks = |language: &str| format!("/api/tasks?today={today}&lang={language}");
+    let (_, _, view) = server
+        .api(
+            "GET",
+            &server.view_path("all", "en"),
+            Login::Bearer(&token),
+            None,
+        )
+        .await;
+    let milk = row(&view, "Buy milk")["id"].as_str().unwrap().to_owned();
+    let inbox = view["lists"][0]["id"].as_str().unwrap().to_owned();
+    let task = format!("/api/tasks/{milk}?today={today}&lang=en");
+    let before = file(&server.remote);
+
+    let cases: Vec<(&str, String, &str, Value, StatusCode, &str)> = vec![
+        (
+            "POST",
+            tasks("en"),
+            &token,
+            json!({ "id": uid(80), "title": "  " }),
+            StatusCode::BAD_REQUEST,
+            "empty_title",
+        ),
+        (
+            "POST",
+            tasks("en"),
+            &token,
+            json!({ "id": "short", "title": "x" }),
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+        ),
+        (
+            "POST",
+            tasks("en"),
+            &token,
+            json!({ "id": uid(80), "title": "x", "tags": [] }),
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+        ),
+        (
+            "POST",
+            tasks("en"),
+            &token,
+            json!({ "id": uid(80), "title": "x", "due": "2026-02-30" }),
+            StatusCode::BAD_REQUEST,
+            "invalid_date",
+        ),
+        (
+            "POST",
+            tasks("en"),
+            &token,
+            json!({ "id": uid(80), "title": "x", "preset": "someday" }),
+            StatusCode::BAD_REQUEST,
+            "invalid_date",
+        ),
+        (
+            "POST",
+            tasks("en"),
+            &token,
+            json!({ "id": uid(80), "title": "x", "list_id": uid(99) }),
+            StatusCode::NOT_FOUND,
+            "unknown_list",
+        ),
+        (
+            "POST",
+            tasks("en"),
+            &token,
+            json!({ "id": uid(80), "title": "t".repeat(1001) }),
+            StatusCode::BAD_REQUEST,
+            "too_long",
+        ),
+        (
+            "POST",
+            tasks("en"),
+            &reader,
+            json!({ "id": uid(80), "title": "x" }),
+            StatusCode::FORBIDDEN,
+            "read_only",
+        ),
+        (
+            "POST",
+            tasks("en"),
+            &scoped,
+            json!({ "id": uid(80), "title": "x", "list_id": inbox }),
+            StatusCode::FORBIDDEN,
+            "restricted",
+        ),
+        (
+            "PATCH",
+            task.clone(),
+            &scoped,
+            json!({ "status": "done" }),
+            StatusCode::NOT_FOUND,
+            "task_not_found",
+        ),
+        (
+            "PATCH",
+            task.clone(),
+            &token,
+            json!({}),
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+        ),
+        (
+            "PATCH",
+            task.clone(),
+            &token,
+            json!({ "due": "2026-11-20", "clear_due": true }),
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+        ),
+        (
+            "PATCH",
+            format!("/api/tasks/{}?today={today}", uid(99)),
+            &token,
+            json!({ "status": "done" }),
+            StatusCode::NOT_FOUND,
+            "task_not_found",
+        ),
+        (
+            "PATCH",
+            format!("/api/tasks/{milk}?today=2020-01-01"),
+            &token,
+            json!({ "status": "done" }),
+            StatusCode::BAD_REQUEST,
+            "invalid_today",
+        ),
+        (
+            "PATCH",
+            format!("/api/tasks/{milk}?today=yesterday"),
+            &token,
+            json!({ "status": "done" }),
+            StatusCode::BAD_REQUEST,
+            "invalid_today",
+        ),
+        (
+            "GET",
+            "/api/view?view=everything".to_owned(),
+            &token,
+            Value::Null,
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+        ),
+        (
+            "GET",
+            "/api/view?view=history&limit=500".to_owned(),
+            &token,
+            Value::Null,
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+        ),
+    ];
+    for (method, path, token, body, status, code) in cases {
+        let body = (!body.is_null()).then_some(body);
+        let (answered, _, error) = server.api(method, &path, Login::Bearer(token), body).await;
+        assert_eq!(answered, status, "{method} {path}: {error}");
+        assert_eq!(error["error"]["code"], code, "{method} {path}");
+        assert!(!error["error"]["message"].as_str().unwrap().is_empty());
+    }
+    assert_eq!(
+        file(&server.remote),
+        before,
+        "no failed request changed the file"
+    );
+
+    // The message follows the language of the request.
+    let (_, _, danish) = server
+        .api(
+            "POST",
+            &tasks("da"),
+            Login::Bearer(&token),
+            Some(json!({ "id": uid(80), "title": " " })),
+        )
+        .await;
+    assert_eq!(danish["error"]["code"], "empty_title");
+    assert_ne!(danish["error"]["message"], "A task title cannot be empty.");
+
+    // The phone's date within one day of the server's date is accepted.
+    let tomorrow = Utc::now().date_naive() + chrono::Duration::days(1);
+    let (status, _, closed) = server
+        .api(
+            "PATCH",
+            &format!("/api/tasks/{milk}?today={tomorrow}"),
+            Login::Bearer(&token),
+            Some(json!({ "status": "done" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(closed["task"]["status_changed_on"], tomorrow.to_string());
+
+    // Storage failures.
+    server.remote.fail(FailureKind::Offline);
+    let (status, _, error) = server
+        .api(
+            "GET",
+            &server.view_path("all", "da"),
+            Login::Bearer(&token),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert_eq!(error["error"]["code"], "storage_unavailable");
+    assert_eq!(
+        error["error"]["message"],
+        "Ingen forbindelse til synkroniseringslageret."
+    );
+}
+
+#[tokio::test]
+async fn a_status_change_without_a_version_survives_a_rename_on_a_device() {
+    let remote = MemoryRemote::shared();
+    let mut device = Device::seeded(&remote);
+    let signer = Signer::generate().unwrap().0;
+    let server = Server {
+        state: AppState {
+            engine: Arc::new(engine(&remote)),
+            verifier: Arc::new(
+                Verifier::new(&signer.public_key(), ORIGIN, Default::default()).unwrap(),
+            ),
+            origin: ORIGIN.into(),
+            zone: chrono_tz::Tz::UTC,
+            read_only: false,
+            pairings: Arc::default(),
+        },
+        remote: Arc::clone(&remote),
+        signer,
+        _device: Device::new(),
+    };
+    let token = server.token(None, true);
+    let (_, _, view) = server
+        .api(
+            "GET",
+            &server.view_path("all", "en"),
+            Login::Bearer(&token),
+            None,
+        )
+        .await;
+    let old = row(&view, "Buy milk").clone();
+    let path = format!(
+        "/api/tasks/{}?today={}",
+        old["id"].as_str().unwrap(),
+        server.today()
+    );
+
+    device.retitle("Buy milk", "Buy oat milk");
+    device.sync(&remote);
+
+    // The checkbox still works, and the device's title stays.
+    let (status, _, closed) = server
+        .api(
+            "PATCH",
+            &path,
+            Login::Bearer(&token),
+            Some(json!({ "status": "done" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(closed["task"]["title"], "Buy oat milk");
+    assert_eq!(closed["task"]["status"], "done");
+
+    // A description written against the old text is refused.
+    let (status, _, stale) = server
+        .api(
+            "PATCH",
+            &path,
+            Login::Bearer(&token),
+            Some(json!({ "description": "from the phone", "version": old["version"] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(stale["error"]["code"], "stale_version");
+    let report = device.sync(&remote);
+    assert_eq!(report.conflicts, 0);
+    assert_eq!(device.task("Buy oat milk").status, Status::Done);
+    assert_eq!(device.task("Buy oat milk").description, "");
+}
+
+#[tokio::test]
+async fn a_pairing_code_becomes_a_session_cookie_once() {
+    let server = Server::new();
+    let token = server.token(None, true);
+
+    // Only a valid access token in the header can create a pairing code.
+    let (status, _, _) = server.api("POST", "/api/pairings", Login::None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _, _) = server
+        .api("POST", "/api/pairings", Login::Cookie(&token), None)
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the cookie creates no pairing code"
+    );
+    let (status, _, pairing) = server
+        .api("POST", "/api/pairings", Login::Bearer(&token), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(pairing["expires_in"], PAIRING_SECONDS);
+    let code = pairing["code"].as_str().unwrap().to_owned();
+    assert_eq!(code.len(), 12);
+    assert!(
+        code.bytes()
+            .all(|byte| b"0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(&byte)),
+        "{code}"
+    );
+
+    // The page sends the code as a person would type it.
+    let typed = format!("{}-{}-{}", &code[..4], &code[4..8], &code[8..]).to_lowercase();
+    let (status, headers, session) = server
+        .api(
+            "POST",
+            "/api/session",
+            Login::None,
+            Some(json!({ "code": typed })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{session}");
+    assert_eq!(session["name"], "test");
+    assert_eq!(session["write"], true);
+    assert_eq!(session["list"], Value::Null);
+    let cookie = headers["set-cookie"].to_str().unwrap();
+    assert!(
+        cookie.starts_with(&format!("{SESSION_COOKIE}={token};")),
+        "{cookie}"
+    );
+    for attribute in [
+        "Path=/api",
+        "HttpOnly",
+        "SameSite=Strict",
+        "Max-Age=",
+        "Secure",
+    ] {
+        assert!(cookie.contains(attribute), "{cookie} lacks {attribute}");
+    }
+
+    // The code works once.
+    let (status, _, used) = server
+        .api(
+            "POST",
+            "/api/session",
+            Login::None,
+            Some(json!({ "code": code })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(used["error"]["code"], "unknown_code");
+
+    // The cookie reads and changes tasks under /api.
+    let (status, _, view) = server
+        .api(
+            "GET",
+            &server.view_path("all", "en"),
+            Login::Cookie(&token),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, info) = server
+        .api("GET", "/api/session", Login::Cookie(&token), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(info["name"], "test");
+    let id = row(&view, "Buy milk")["id"].as_str().unwrap().to_owned();
+    let path = format!("/api/tasks/{id}?today={}", server.today());
+    let before = file(&server.remote);
+    let (status, _, refused) = server
+        .api_with(
+            "PATCH",
+            &path,
+            Login::Cookie(&token),
+            Some(json!({ "status": "done" })),
+            false,
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "a change without X-Husker");
+    assert_eq!(refused["error"]["code"], "forbidden");
+    assert_eq!(file(&server.remote), before);
+    let (status, _, _) = server
+        .api(
+            "PATCH",
+            &path,
+            Login::Cookie(&token),
+            Some(json!({ "status": "done" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The cookie is not an MCP credential.
+    let request = Request::post("/mcp")
+        .header("host", "127.0.0.1")
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .header("cookie", format!("{SESSION_COOKIE}={token}"))
+        .body(Body::from(initialize().to_string()))
+        .unwrap();
+    let (status, _, _) = server.send(request).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Signing out removes the cookie. Without one, the API answers 401.
+    let (status, headers, _) = server
+        .api("DELETE", "/api/session", Login::Cookie(&token), None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let cleared = headers["set-cookie"].to_str().unwrap();
+    assert!(cleared.starts_with(&format!("{SESSION_COOKIE}=;")) && cleared.contains("Max-Age=0"));
+    let (status, _, _) = server
+        .api("GET", &server.view_path("all", "en"), Login::None, None)
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _, _) = server
+        .api(
+            "GET",
+            &server.view_path("all", "en"),
+            Login::Cookie("garbage"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // A pasted access token opens a session too. A wrong one does not.
+    let (status, headers, _) = server
+        .api(
+            "POST",
+            "/api/session",
+            Login::None,
+            Some(json!({ "token": token })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers.contains_key("set-cookie"));
+    let (status, _, _) = server
+        .api(
+            "POST",
+            "/api/session",
+            Login::None,
+            Some(json!({ "token": "hsk1_x.y" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _, _) = server
+        .api("POST", "/api/session", Login::None, Some(json!({})))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[test]
+fn pairing_codes_expire_and_are_limited() {
+    let pairings = Pairings::default();
+    let start = Instant::now();
+    let code = pairings.create("token-1".into(), "id-1", start).unwrap();
+    assert_eq!(code.len(), 12);
+
+    // A code is read as a person types it.
+    assert_eq!(normalize_code(" k7qf-2m9x tb4h "), "K7QF2M9XTB4H");
+    assert_eq!(normalize_code("oil"), "011");
+
+    // Wrong codes do not consume the right one.
+    assert_eq!(pairings.take("000000000000", start), None);
+    let late = start + Duration::from_secs(PAIRING_SECONDS + 1);
+    assert_eq!(pairings.take(&code, late), None, "an expired code");
+    assert_eq!(pairings.take(&code, start), None, "expiry removed it");
+
+    let code = pairings.create("token-2".into(), "id-2", start).unwrap();
+    let edge = start + Duration::from_secs(PAIRING_SECONDS);
+    assert_eq!(pairings.take(&code, edge).as_deref(), Some("token-2"));
+    assert_eq!(pairings.take(&code, edge), None, "a code works once");
+
+    // The seventeenth code of seventeen access tokens drops the oldest.
+    let codes: Vec<String> = (0..17)
+        .map(|number| {
+            pairings
+                .create(format!("token-{number}"), &format!("id-{number}"), start)
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(pairings.take(&codes[0], start), None);
+    assert_eq!(pairings.take(&codes[1], start).as_deref(), Some("token-1"));
+    assert_eq!(
+        pairings.take(&codes[16], start).as_deref(),
+        Some("token-16")
+    );
+    let unique: std::collections::HashSet<&String> = codes.iter().collect();
+    assert_eq!(unique.len(), 17);
+
+    // One access token holds one code. Its new code replaces its old one and
+    // pushes out no code of another access token.
+    let pairings = Pairings::default();
+    let owner = pairings.create("owner".into(), "id-owner", start).unwrap();
+    let agent: Vec<String> = (0..40)
+        .map(|_| pairings.create("agent".into(), "id-agent", start).unwrap())
+        .collect();
+    assert_eq!(
+        pairings.take(&agent[38], start),
+        None,
+        "replaced by the next"
+    );
+    assert_eq!(pairings.take(&agent[39], start).as_deref(), Some("agent"));
+    assert_eq!(pairings.take(&owner, start).as_deref(), Some("owner"));
+}
+
+#[tokio::test]
+async fn a_read_only_access_reads_views_and_changes_nothing() {
+    let server = Server::new();
+    let reader = server.token(None, false);
+    let (status, _, view) = server
+        .api(
+            "GET",
+            &server.view_path("all", "en"),
+            Login::Bearer(&reader),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(view["write"], false);
+    let id = row(&view, "Buy milk")["id"].as_str().unwrap().to_owned();
+    let before = file(&server.remote);
+    let (status, _, error) = server
+        .api(
+            "PATCH",
+            &format!("/api/tasks/{id}?today={}", server.today()),
+            Login::Bearer(&reader),
+            Some(json!({ "status": "done" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(error["error"]["code"], "read_only");
+    assert_eq!(file(&server.remote), before);
+}
+
+#[tokio::test]
+async fn a_request_is_refused_before_its_body_is_read() {
+    let server = Server::new();
+    let token = server.token(None, true);
+    let downloads = server.remote.counts().0;
+    let tasks = format!("/api/tasks?today={}", server.today());
+    let small = json!({ "id": uid(70), "title": "x" });
+    let large = json!({ "id": uid(70), "title": "x", "description": "d".repeat(600 * 1024) });
+
+    // Without an access token the answer is 401, with or without the page header.
+    // A large body changes nothing, because the server does not read it.
+    for page_header in [true, false] {
+        for body in [&small, &large] {
+            let (status, _, error) = server
+                .api_with("POST", &tasks, Login::None, Some(body.clone()), page_header)
+                .await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
+            assert_eq!(error["error"]["code"], "unauthorized");
+        }
+    }
+
+    // A session without the page header is refused next.
+    let (status, _, error) = server
+        .api_with(
+            "POST",
+            &tasks,
+            Login::Cookie(&token),
+            Some(large.clone()),
+            false,
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(error["error"]["code"], "forbidden");
+
+    // Only then the body counts. A body over the limit is refused.
+    let (status, _, error) = server
+        .api("POST", &tasks, Login::Bearer(&token), Some(large))
+        .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(error["error"]["code"], "too_long");
+
+    // Opening and closing a session need the page header too.
+    for method in ["POST", "DELETE"] {
+        let (status, _, error) = server
+            .api_with(
+                method,
+                "/api/session",
+                Login::Cookie(&token),
+                Some(json!({ "token": token })),
+                false,
+            )
+            .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method}");
+        assert_eq!(error["error"]["code"], "forbidden");
+    }
+
+    // A task ID that is not text names no task. A stranger still gets 401.
+    let change = json!({ "status": "done" });
+    let (status, _, error) = server
+        .api(
+            "PATCH",
+            "/api/tasks/%FF",
+            Login::Bearer(&token),
+            Some(change.clone()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(error["error"]["code"], "task_not_found");
+    let (status, _, error) = server
+        .api("PATCH", "/api/tasks/%FF", Login::None, Some(change))
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(error["error"]["code"], "unauthorized");
+
+    // A known path with another method answers 405 with the JSON error object.
+    for (method, path) in [
+        ("PUT", "/api/view"),
+        ("GET", "/api/tasks"),
+        ("DELETE", "/api/tasks/abc"),
+        ("POST", "/api/health"),
+    ] {
+        let (status, _, error) = server.api(method, path, Login::Bearer(&token), None).await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{method} {path}");
+        assert_eq!(error["error"]["code"], "method_not_allowed");
+    }
+    assert_eq!(
+        server.remote.counts().0,
+        downloads,
+        "no refused request reached the storage"
+    );
+}
+
+#[tokio::test]
+async fn the_session_cookie_is_found_among_other_cookies() {
+    let server = Server::new();
+    let token = server.token(None, true);
+    let path = server.view_path("all", "en");
+    let read = |cookies: String| {
+        let request = Request::get(&path)
+            .header("host", "127.0.0.1")
+            .header(
+                "cookie",
+                axum::http::HeaderValue::from_bytes(cookies.as_bytes()).unwrap(),
+            )
+            .body(Body::empty())
+            .unwrap();
+        server.send(request)
+    };
+    for cookies in [
+        format!("{SESSION_COOKIE}={token}"),
+        format!("a=1;{SESSION_COOKIE}={token};b=2"),
+        // A cookie of another page on this address, with a letter outside ASCII.
+        format!("theme=bl\u{e5}; {SESSION_COOKIE}={token}"),
+        // A longer name is another cookie.
+        format!("{SESSION_COOKIE}_old=zzz; {SESSION_COOKIE}={token}"),
+    ] {
+        let (status, _, _) = read(cookies.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{cookies}");
+    }
+    // The first cookie with the name counts.
+    let (status, _, _) = read(format!(
+        "{SESSION_COOKIE}=garbage; {SESSION_COOKIE}={token}"
+    ))
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_change_answers_with_the_row_and_can_skip_the_view() {
+    let server = Server::new();
+    let token = server.token(None, true);
+    let login = || Login::Bearer(&token);
+    let today = server.today();
+    let (_, _, view) = server
+        .api("GET", &server.view_path("all", "en"), login(), None)
+        .await;
+    assert_eq!(view["session"]["name"], "test");
+    assert_eq!(view["session"]["id"].as_str().unwrap().len(), 12);
+    let report = row(&view, "Write report");
+    let id = report["id"].as_str().unwrap();
+    let path = format!("/api/tasks/{id}?today={today}&lang=en");
+
+    // A tap on a checkbox asks for the row alone.
+    let (status, _, answer) = server
+        .api(
+            "PATCH",
+            &format!("{path}&view=none"),
+            login(),
+            Some(json!({ "status": "done" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert!(answer.get("view").is_none(), "{answer}");
+    let task = &answer["task"];
+    assert_eq!(task["status"], "done");
+    assert_eq!(task["status_changed_on"], today.to_string());
+    assert_eq!(task["list_name"], "Work");
+    assert_eq!(task["list_id"], report["list_id"]);
+    assert_eq!(task["due_label"], Value::Null);
+    assert!(
+        task.get("show_due").is_none(),
+        "the page keeps the show_due of its row"
+    );
+
+    // Without `view=none` the answer holds the view too, and the row has its date label.
+    let (_, _, answer) = server
+        .api("PATCH", &path, login(), Some(json!({ "preset": "today" })))
+        .await;
+    assert_eq!(answer["view"]["view"], "all");
+    assert_eq!(answer["view"]["session"]["name"], "test");
+    let label = answer["task"]["due_label"].as_str().unwrap();
+    assert!(label.starts_with(&today.to_string()), "{label}");
+
+    // A supplied version guards a status change as well as a text change.
+    let before = file(&server.remote);
+    let (status, _, error) = server
+        .api(
+            "PATCH",
+            &path,
+            login(),
+            Some(json!({ "status": "open", "version": "0000000000000000" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(error["error"]["code"], "stale_version");
+    assert_eq!(file(&server.remote), before);
+
+    // A view itself cannot be `none`.
+    let (status, _, error) = server
+        .api("GET", "/api/view?view=none", login(), None)
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["error"]["code"], "invalid_request");
+}
+
+#[tokio::test]
+async fn a_history_heading_counts_its_whole_day_on_every_page() {
+    let remote = MemoryRemote::shared();
+    let mut device = Device::new();
+    let inbox = device.store.default_list_id().unwrap();
+    for number in 0..150 {
+        let task = device
+            .store
+            .create_task(&TaskInput {
+                list_id: inbox,
+                title: format!("Task {number:03}"),
+                ..TaskInput::default()
+            })
+            .unwrap();
+        device
+            .store
+            .set_status(task.id, task.version, Status::Done)
+            .unwrap();
+    }
+    let trashed = device
+        .store
+        .create_task(&TaskInput {
+            list_id: inbox,
+            title: "Trashed".into(),
+            ..TaskInput::default()
+        })
+        .unwrap();
+    device
+        .store
+        .set_deleted(trashed.id, trashed.version, true)
+        .unwrap();
+    device.sync(&remote);
+    let server = Server::with(remote, device);
+    let token = server.token(None, true);
+    let history = server.view_path("history", "en");
+    let page = async |extra: &str| -> Value {
+        let path = format!("{history}{extra}");
+        server
+            .api("GET", &path, Login::Bearer(&token), None)
+            .await
+            .2
+    };
+    let rows = |view: &Value| -> usize {
+        view["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|group| group["rows"].as_array().unwrap().len())
+            .sum()
+    };
+
+    // The first page holds 100 rows. Its heading counts the whole day.
+    let first = page("").await;
+    assert_eq!(rows(&first), 100);
+    assert_eq!(first["total"], 150);
+    assert_eq!(first["next_offset"], 100);
+    assert_eq!(first["groups"].as_array().unwrap().len(), 1);
+    assert_eq!(first["groups"][0]["count"], 150);
+
+    // The next page continues the same group with the same count.
+    let second = page("&offset=100").await;
+    assert_eq!(rows(&second), 50);
+    assert_eq!(second["next_offset"], Value::Null);
+    assert_eq!(second["groups"][0]["key"], first["groups"][0]["key"]);
+    assert_eq!(second["groups"][0]["count"], 150);
+    let last_of_first = first["groups"][0]["rows"][99]["id"].clone();
+    assert!(
+        second["groups"][0]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["id"] != last_of_first),
+        "no row repeats"
+    );
+
+    // A small page keeps the count too, and a page past the end is empty.
+    let small = page("&limit=2").await;
+    assert_eq!(rows(&small), 2);
+    assert_eq!(small["groups"][0]["count"], 150);
+    assert_eq!(small["next_offset"], 2);
+    let past = page("&offset=150").await;
+    assert_eq!(rows(&past), 0);
+    assert_eq!(past["next_offset"], Value::Null);
+
+    // Trash is one group without a label, and it counts its rows.
+    let (_, _, trash) = server
+        .api(
+            "GET",
+            &server.view_path("trash", "en"),
+            Login::Bearer(&token),
+            None,
+        )
+        .await;
+    assert_eq!(trash["groups"][0]["label"], Value::Null);
+    assert_eq!(trash["groups"][0]["count"], 1);
+    assert_eq!(trash["trash_count"], 1);
+}
+
+#[test]
+fn the_phone_date_counts_within_one_day_of_the_server_date() {
+    let server = Server::new();
+    // 23:30 UTC on November 15: phones east of Greenwich are on November 16 already.
+    let now = DateTime::parse_from_rfc3339("2026-11-15T23:30:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let stamp = |today: &str, language: &str| {
+        let params: Params =
+            serde_json::from_value(json!({ "today": today, "lang": language })).unwrap();
+        params.stamp(&server.state, now)
+    };
+    for accepted in ["2026-11-14", "2026-11-15", "2026-11-16"] {
+        let stamp = stamp(accepted, "en").unwrap_or_else(|_| panic!("{accepted} is refused"));
+        assert_eq!(stamp.today.to_string(), accepted);
+        assert_eq!(stamp.now, now);
+    }
+    for refused in ["2026-11-13", "2026-11-17", "2026-11-31", "16-11-2026", ""] {
+        let Err(failure) = stamp(refused, "en") else {
+            panic!("{refused} is accepted");
+        };
+        let (status, code, message) = failure.parts();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(code, "invalid_today");
+        assert!(message.contains("date on this device"), "{message}");
+    }
+    // A person reads the message, so it follows the language of the request.
+    let Err(failure) = stamp("2026-11-17", "da") else {
+        panic!("a date two days off is accepted");
+    };
+    assert!(
+        failure.parts().2.starts_with("Datoen"),
+        "{}",
+        failure.parts().2
+    );
+
+    // Without the parameter the date comes from the time zone setting of the server.
+    let params: Params = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(
+        params.stamp(&server.state, now).unwrap().today.to_string(),
+        "2026-11-15"
+    );
 }

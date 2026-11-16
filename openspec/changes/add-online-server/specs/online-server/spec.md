@@ -254,6 +254,7 @@ A client sends the access token in the `Authorization` header as `Bearer TOKEN`.
 The online server SHALL answer 403 when the request has an `Origin` header that differs from `HUSKER_ONLINE_ORIGIN`.
 The online server SHALL answer 403 when the request has an `X-Forwarded-Host` header that differs from the host in `HUSKER_ONLINE_ORIGIN`.
 Both header checks apply to every path and come before the access token check. They ignore letter case. A port of 443 or 80 in `X-Forwarded-Host` counts as absent.
+When `X-Forwarded-Host` holds several host names, the last one counts, because the proxy next to the online server adds it. The 403 answer names the host that the request was for.
 Tool code never receives the `Authorization` header.
 No answer and no log line of the online server contains an access token or the value of `HUSKER_SYNC_URL`.
 

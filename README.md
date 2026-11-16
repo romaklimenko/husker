@@ -115,14 +115,14 @@ the online server, the agent stays connected while you install a new build.
 
 The online server reads and writes the sync file, so set up
 [sync between computers](#sync-between-computers) first. Your computers
-keep their own `tasks.db` and receive the agent's changes at their next
-sync.
+keep their own `tasks.db` and receive changes from the online server at
+their next sync.
 
 Deploy the server from PowerShell on Windows, then create an access token
 for the agent:
 
 ```text
-./deploy/azure/deploy.ps1 -Subscription <subscription> -ResourceGroup husker -SyncAccount <account> -App <app>
+./deploy/azure/deploy.ps1 -Subscription <subscription> -ResourceGroup husker -SyncAccount <account> -App <app> -CreatePolicy
 husker token --name claude-code --url https://<app>.azurewebsites.net
 ```
 
@@ -131,10 +131,27 @@ after you checked what the agent reads. An access token reaches every list,
 or one list with `--list NAME`. It stops working after 365 days, or after
 the number of days you give with `--days`.
 
+From Husker 0.18.0, the online server also serves a page for your phone
+at `https://<app>.azurewebsites.net/`. Pair the phone once from your
+computer:
+
+```text
+husker pair --url https://<app>.azurewebsites.net
+```
+
+`husker pair` shows a QR code in the terminal. Scan the QR code with the
+phone, and the page opens on All tasks with the headings of the terminal.
+On the page you add tasks, mark them done, plan them, edit them, and move
+them to another list or to Trash. The page needs a connection to save a
+change. A task that you add while the server cannot be reached, or cannot
+save, stays on the phone, and the page sends it when the server answers
+again.
+
 Read [Use Husker online](docs/online.md) to deploy the server, connect
-Claude Code or Codex, limit an agent to one list, and revoke access. The
-access token is a password, and `online.toml` in your profile directory
-holds the key that creates access tokens. Keep both out of repositories.
+Claude Code or Codex, pair a phone, limit an agent or a phone to one list,
+and revoke access. The access token is a password, and `online.toml` in
+your profile directory holds the key that creates access tokens. Keep both
+out of repositories.
 
 ## Configure the interface
 
@@ -206,7 +223,13 @@ through one file in Azure Blob Storage. Azure Blob Storage is the only
 storage that sync supports. Settings in `config.toml` are not synced.
 The optional online server gives agents the same MCP tools over HTTPS. It
 needs sync, and its deployment script supports Azure Functions only. The
-online server serves agents. It has no page for a phone or a browser.
+online server also serves a page for a phone. The page shows All tasks,
+History, and Trash. On the page you can add a task, mark it done, cancel
+it, reopen it, plan it, edit its text, and move it to another list or to
+Trash. The page needs a connection to save a change. A new task is the
+exception: the phone keeps it and sends it when the server answers again.
+The page cannot manage lists, reorder tasks, search, or delete a task
+forever.
 Write `#words` in titles or descriptions when useful.
 Search treats those words as ordinary text.
 Concurrent task edits use version checks so an older edit cannot silently
@@ -227,7 +250,8 @@ current task records, not every past edit or status change.
 
 Recurrence, reminders, subtasks, priorities, and an event log are not
 included. Permanent deletion is available only in the terminal
-interface. No command or MCP tool deletes a task forever.
+interface. No command, MCP tool, or action on the phone page deletes a
+task forever.
 
 ## Work on the project
 
@@ -244,4 +268,12 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 openspec validate --all --strict
+```
+
+After a change to the phone page in `web/`, also run its tests. They need
+Node.js 20 or newer and no install step:
+
+```text
+node --test web/logic.test.mjs
+node --test web/app.test.mjs
 ```

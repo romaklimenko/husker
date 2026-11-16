@@ -8,14 +8,14 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     body::Body,
-    extract::{Path, Request, State, rejection::PathRejection},
+    extract::{DefaultBodyLimit, Path, Request, State, rejection::PathRejection},
     http::{
         HeaderMap, HeaderValue, StatusCode,
         header::{AUTHORIZATION, CACHE_CONTROL, COOKIE, ORIGIN, WWW_AUTHENTICATE},
     },
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{any, get},
+    routing::{any, get, patch, post},
 };
 use chrono::Utc;
 use chrono_tz::Tz;
@@ -27,13 +27,16 @@ use tower::ServiceExt;
 
 use super::{
     access::{Claims, Verifier, origin_host},
+    api::{self, Pairings},
+    assets,
     doc::{Access, resolve_list},
     engine::{Engine, EngineError},
     mcp::OnlineServer,
 };
 use crate::sync::{FailureKind, snapshot::FORMAT};
 
-/// The largest MCP request body. A tool call with the longest accepted texts fits several times.
+/// The largest request body, for MCP and for the API. A request with the longest accepted texts
+/// fits several times.
 const MAX_REQUEST_BYTES: usize = 512 * 1024;
 
 /// What every request handler shares.
@@ -47,16 +50,46 @@ pub struct AppState {
     pub zone: Tz,
     /// Removes write access from every request.
     pub read_only: bool,
+    /// The pairing codes of phones that have not fetched their access token yet.
+    pub pairings: Arc<Pairings>,
 }
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let mut router = Router::new()
         .route("/api/health", get(health))
+        .route("/api/view", get(api::view))
+        .route("/api/tasks", post(api::add_task))
+        .route("/api/tasks/{id}", patch(api::change_task))
+        .route(
+            "/api/session",
+            post(api::open_session)
+                .get(api::read_session)
+                .delete(api::close_session),
+        )
+        .route("/api/pairings", post(api::create_pairing))
+        .route("/strings.json", get(|| async { assets::serve_strings() }))
         .route("/mcp", any(mcp_root))
-        .route("/mcp/list/{name}", any(mcp_list))
+        .route("/mcp/list/{name}", any(mcp_list));
+    // The files of the phone page. They hold no task data and need no access token.
+    for asset in assets::ASSETS {
+        router = router.route(asset.path, get(move || async move { assets::serve(asset) }));
+    }
+    router
         .fallback(not_found)
+        .method_not_allowed_fallback(method_not_allowed)
+        // The API reads no larger body. MCP has the same limit in its own service.
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BYTES))
         .layer(middleware::from_fn_with_state(state.clone(), check_request))
         .with_state(state)
+}
+
+/// The answer for a known path with a method it does not accept.
+async fn method_not_allowed() -> Response {
+    error(
+        StatusCode::METHOD_NOT_ALLOWED,
+        "method_not_allowed",
+        "This address does not accept that method.",
+    )
 }
 
 /// A JSON error answer. `code` is a stable English token.
@@ -99,20 +132,33 @@ async fn check_request(State(state): State<AppState>, request: Request, next: Ne
             "This address does not accept requests from that origin.",
         );
     }
-    let host_matches = headers.get("x-forwarded-host").is_none_or(|host| {
-        host.to_str()
-            .is_ok_and(|host| same_host(host, origin_host(&state.origin)))
-    });
-    if !host_matches {
-        return error(
-            StatusCode::FORBIDDEN,
-            "forbidden",
-            "This address does not accept requests for that host.",
-        );
+    // A proxy in front of the server names the host the client used. Each proxy on the way
+    // can add a name, so the last one counts: it comes from the proxy next to the server.
+    let forwarded = headers.get_all("x-forwarded-host").iter().next_back();
+    if let Some(value) = forwarded {
+        let host = value
+            .to_str()
+            .unwrap_or_default()
+            .rsplit(',')
+            .next()
+            .unwrap_or_default()
+            .trim();
+        if !same_host(host, origin_host(&state.origin)) {
+            // The answer names the host. A first deployment behind another proxy then shows
+            // at once which name arrived.
+            return error(
+                StatusCode::FORBIDDEN,
+                "forbidden",
+                &format!("This address does not accept requests for the host '{host}'."),
+            );
+        }
     }
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
-    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    // Task data is never stored by a browser or a proxy. The page files set their own rule.
+    headers
+        .entry(CACHE_CONTROL)
+        .or_insert(HeaderValue::from_static("no-store"));
     headers.insert(
         "x-content-type-options",
         HeaderValue::from_static("nosniff"),

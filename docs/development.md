@@ -12,7 +12,48 @@ cargo clippy --all-targets -- -D warnings
 cargo test --all-targets
 cargo build --release --locked
 openspec validate --all --strict
+node --test web/logic.test.mjs
+node --test web/app.test.mjs
 ```
+
+The two `node --test` commands test the phone page. They need Node.js 20
+or newer and no install step, because the tests use only modules that
+ship with Node.js.
+
+After a change to the phone page, also run the browser check. It drives
+the phone page in headless Chrome against a local server and writes
+numbered screenshots:
+
+```text
+cargo build --bin husker --example fake_blob
+node web/browser-check.mjs
+```
+
+The browser check needs Node.js 22 or newer and Chrome or Edge. It is not
+part of `cargo test`. See
+[How the phone page is built](#how-the-phone-page-is-built) for its
+arguments and for what it does not cover.
+
+Before a deployment, also run the host check. It runs the Azure Functions
+host on your computer with the `host.json` and `serve/function.json` that
+`deploy.ps1` uploads, and `husker serve` behind the host:
+
+```text
+cargo build --bin husker --example fake_blob
+node deploy/azure/check-local.mjs
+```
+
+The host check needs Node.js 22 or newer and Azure Functions Core Tools
+4. It is not part of `cargo test` either. See
+[How the online server is built](#how-the-online-server-is-built) for
+its arguments and for what it cannot see.
+
+The browser check and the host check each work in a directory of their
+own, `target/browser-check` and `target/functions-check`. Each refuses a
+directory that holds files of anything else. Neither passes a `HUSKER_*`
+variable of your shell to the server that it starts, so a
+`HUSKER_SYNC_URL` in your shell cannot point that server at your real
+sync file. Ctrl+C stops the processes that a check started.
 
 The test suite uses temporary profiles. It does not read or change your
 `~/.husker` profile. Keep a separate profile for interactive checks too:
@@ -142,11 +183,13 @@ Follow these rules when you change sync:
 
 ## How the online server is built
 
-The online server is `husker serve`. It answers MCP requests over HTTP and
-works on the sync file directly. It keeps no database and is not a device:
-it never merges, and it holds no base. The [online guide](online.md)
-describes the behavior for users. The `online-server` and `online-mcp`
-capability specs under `openspec/` hold the rules.
+The online server is `husker serve`. It answers MCP requests and the
+requests of the phone page over HTTP, and it works on the sync file
+directly. It keeps no database and is not a device: it never merges, and
+it holds no base. The [online guide](online.md) describes the behavior
+for users. The `online-server` and `online-mcp` capability specs under
+`openspec/` hold the rules. [How the phone page is built](#how-the-phone-page-is-built)
+covers the page and its JSON API.
 
 One change is one call to `Engine::write` in `src/online/engine.rs`. It
 runs these steps:
@@ -199,18 +242,89 @@ Two rules protect the devices:
 | `src/online/engine.rs` | `Engine`: the cached read, the write loop above, and one mutex that serializes the writes of a process. |
 | `src/online/access.rs` | Access tokens: `Signer`, `Verifier`, the `Claims` in a token, the key file `online.toml` (`OnlineProfile`), and the address check `normalize_origin`. |
 | `src/online/mcp.rs` | `OnlineServer`, the MCP handler for one request. It takes the tool names and descriptions from `available_tools` in `src/mcp.rs` and uses text IDs and versions. |
-| `src/online/http.rs` | The routes `/api/health`, `/mcp`, and `/mcp/list/{name}`. It checks the `Origin` and `X-Forwarded-Host` headers, then the access token, then the list in the path. It builds one rmcp service per request and keeps no session. |
+| `src/online/http.rs` | The routes: `/api/health`, `/mcp`, `/mcp/list/{name}`, the files of the phone page, and the `/api` routes of the phone page. It checks the `Origin` and `X-Forwarded-Host` headers of every request and reads no request body over 512 KiB. When `X-Forwarded-Host` holds several host names, in one header line or in several, the last one counts, because the proxy next to the server adds it. The 403 answer for another host names that host: `This address does not accept requests for the host 'NAME'.` A known path with a method that it does not accept gets the JSON error `method_not_allowed`. For MCP, it then checks the access token and the list in the path, builds one rmcp service per request, and keeps no session. |
 | `src/rules.rs` | The title rule, the list name rule, and the status stamp rule. `Store` and `apply` both call them, so a change gives the same result and the same error sentence through every interface. |
-| `deploy/azure/` | The deployment: `host.json` and `serve/function.json` for the Azure Functions custom handler, `main.bicep` for the function app, `code.bicep` for one code package, and `deploy.ps1`, which runs it all. |
+| `deploy/azure/` | The deployment: `host.json` and `serve/function.json` for the Azure Functions custom handler, `main.bicep` for the function app, `code.bicep` for one code package, and `deploy.ps1`, which runs it all. `check-local.mjs` checks the two host files on your computer. |
 
 The tests never contact a real storage account or a deployed server:
 
 | Test or tool | What it does |
 | --- | --- |
-| `src/online/tests.rs` | Unit tests against hand-built snapshots and `MemoryRemote`, the in-memory sync file. They cover every operation, the guard, a randomized check that any operation changes at most one record, the views, the engine next to devices that sync through the same file, the settings, and the routes. The parity tests run each change through `Store` and through `apply` and compare the record and the error sentence. |
-| `tests/online.rs` | Starts real `husker serve` processes against `FakeBlob`, the local test double in `tests/support/mod.rs`, next to a profile that syncs through the same file. An MCP client connects over HTTP in both lifecycles, with and without `initialize`. |
+| `src/online/tests.rs` | Unit tests against hand-built snapshots and `MemoryRemote`, the in-memory sync file. They cover every operation, the guard, a randomized check that any operation changes at most one record, the views, the engine next to devices that sync through the same file, the settings, and the routes. The parity tests run each change through `Store` and through `apply` and compare the record and the error sentence. The file also holds the tests of the phone page. |
+| `tests/online.rs` | Starts real `husker serve` processes against `FakeBlob`, the local test double in `tests/support/mod.rs`, next to a profile that syncs through the same file. An MCP client connects over HTTP in both lifecycles, with and without `initialize`. Two more tests run `husker pair` against such a server. |
 | `examples/fake_blob.rs` | Runs `FakeBlob` until you stop it and prints the URL of its sync file. Use it for manual checks with `husker sync` and `husker serve`. The [online guide](online.md#try-the-online-server-on-your-own-computer) shows the steps. |
 | `examples/package.rs` | Builds the code package for Azure Functions. It writes the zip itself, because the Linux executable must be stored with the Unix mode 0755 and zip tools on Windows store no mode. `deploy.ps1` calls it. |
+| `deploy/azure/check-local.mjs` | Runs the Azure Functions host on your computer with the deployed host files and `husker serve` behind it. The next paragraphs describe it. |
+
+`deploy/azure/check-local.mjs` checks what the Azure Functions host does
+with a request before `husker serve` receives it. It is not part of
+`cargo test`. Install Azure Functions Core Tools 4 with
+`npm install -g azure-functions-core-tools@4`. Then build the two
+executables that the script starts, and run the script:
+
+```text
+cargo build --bin husker --example fake_blob
+node deploy/azure/check-local.mjs
+```
+
+The script runs two hosts in turn. Both use `host.json` and
+`serve/function.json` from `deploy/azure/`, the files that `deploy.ps1`
+uploads:
+
+1. A host whose handler answers with the request that it received. This
+   host shows what the Functions host forwards: the path, the query, the
+   method, the body, the `Authorization`, `Cookie`, and `Origin` headers,
+   and custom headers such as `X-Husker`. It also shows that the host
+   adds `X-Forwarded-Host` with the address that the client used, passes
+   `Set-Cookie` back, and hands the root path to the handler when
+   `AzureWebJobsDisableHomepage` is set. `main.bicep` sets it.
+2. A host with `husker serve` as its handler, against `fake_blob`. The
+   script requests the page files, pairs with `husker pair`, reads and
+   changes tasks through the cookie, signs out, sends MCP requests, and
+   syncs the profile to find the change. At the end it checks that the
+   output of the host holds no access token and no sync URL.
+
+The script prints `ok` or `FAIL` for each check. At the end it prints the
+number of passed checks and the work directory. It exits with one of
+these codes:
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Every check passed. |
+| 1 | A check failed, or the script could not finish. For example, a host gave no answer within two minutes. |
+| 2 | The script cannot find an executable, or it refuses the work directory. |
+| 130 | You pressed Ctrl+C. The script first stops the Functions host, the handler behind the host, and `fake_blob`. |
+
+| Argument or variable | Default | Meaning |
+| --- | --- | --- |
+| First argument | `target/debug/husker`, with `.exe` on Windows | The `husker` executable. |
+| Second argument | `target/debug/examples/fake_blob`, with `.exe` on Windows | The `fake_blob` executable. |
+| Third argument | `target/functions-check` | The work directory. It must be new or empty, or hold the file `.husker-check` of an earlier run. The script removes only what an earlier run made there: the directories `profile`, `echo`, and `app`. It writes the output of the two hosts to `echo.log` and `app.log` there. |
+| `FUNC` | On Windows, `func.exe` in the global npm directory under `%APPDATA%`. Elsewhere, `func` on the path. | The `func` executable of Core Tools. Set `FUNC` when it is installed elsewhere. |
+
+The script marks its work directory with the file `.husker-check`. It
+works in a directory that does not exist yet, in an empty directory, and
+in a directory that holds this file. It refuses any other directory and
+removes nothing there:
+
+```text
+<directory> holds files that this script did not make. Give it a new or an empty directory.
+```
+
+The script passes a cleaned environment to the Functions host and to the
+`husker` commands that it runs. The cleaned environment holds no
+variable whose name starts with `HUSKER_`, and no
+`FUNCTIONS_CUSTOMHANDLER_PORT`. Core Tools lets a variable of the shell
+win over `local.settings.json`. A `HUSKER_SYNC_URL` in your shell would
+otherwise point the server behind the host at your real sync file. The
+server therefore gets its settings only from the `local.settings.json`
+that the script writes.
+
+The host check needs Node.js 22 or newer. Nothing in it reaches Azure.
+The sync storage is the local test double, and the profile is a temporary
+directory in the work directory. The host check cannot see the Azure
+front end before the host, the Linux build of `husker`, or the time that
+a start takes in Azure.
 
 Follow these rules when you change the online server:
 
@@ -231,6 +345,578 @@ Follow these rules when you change the online server:
   does not say why.
 - Use only `MemoryRemote`, `FakeBlob`, and temporary profiles in tests and
   manual checks.
+
+## How the phone page is built
+
+The phone page is the page that `husker serve` answers at `/`. It is plain
+HTML, CSS, and JavaScript, with no build step and no third-party code.
+The [online guide](online.md#use-the-phone-page) describes the behavior
+for users. The `phone-page` capability spec under `openspec/` holds the
+rules.
+
+| File | What it holds |
+| --- | --- |
+| `web/index.html` | The elements of the page: the task screen, the pairing screen, the task panel (`#sheet`), the menu, and the message at the bottom (`#toast`). |
+| `web/app.js` | The page script. It draws the views that the server sends, sends the changes, and keeps the state of the page. |
+| `web/logic.js` | Pure functions that touch no document and no network: the phone's date, reading a pairing code, the language choice, the list filter, changing a row, counting the open tasks of each list, appending a page of rows, checking that a kept view or an answer has the shape of a view, and the ID of a new task. |
+| `web/app.css` | The styles, in light and dark colors. |
+| `web/sw.js` | The service worker. It keeps the page files of one release, so the page opens before the server answers. |
+| `web/manifest.webmanifest` and the three PNG files | The name and the icons for the home screen of a phone. |
+| `src/online/assets.rs` | `ASSETS`, the page files by request path. `WEB_KEYS`, the catalog keys of the page's text. `page_version`, the version that the service worker carries. The content security policy of `/`. |
+| `src/online/api.rs` | The JSON API under `/api`: views, task changes, the session cookie, and pairing codes. |
+| `src/main.rs` | The `husker pair` command, and `qr_lines`, which draws the QR code. |
+
+`ASSETS` includes every page file with `include_bytes!`, so the files are
+compiled into the `husker` executable. A change to a file in `web/`
+reaches a phone only after a new build and a deployment. To add a file,
+add it to `ASSETS`. Add it to `FILES` in `web/sw.js` too, so the page
+has the file before the server answers. `FILES` names every page file
+except the worker script itself: `/`, the styles, the two scripts,
+`/strings.json`, the manifest, and all three icons. A test fails when
+`FILES` names a path that the server does not serve. It also fails when
+`FILES` misses `/`, the styles, a script, or `/strings.json`.
+
+A release reaches a phone as a whole. `page_version` in
+`src/online/assets.rs` hashes every page file, the page's text, and the
+content security policy. The server writes that version into `/sw.js` in
+place of the text `__PAGE_VERSION__`. A release that changes any of the
+three therefore changes the worker script, and the browser installs the
+new worker. The new worker fetches every file in `FILES` into a cache
+named after the version before it replaces the old worker, so the files
+of two releases never mix. If one file does not arrive, the installation
+fails, and the old worker keeps answering with the files of the old
+release.
+
+When the worker of a new release takes over an open page, the page starts
+again with the new files. `watchRelease` in `web/app.js` notices the new
+worker. `restartWhenIdle` waits while one of these holds:
+
+- The field for a new task or the field for a pairing code holds text.
+- The task panel or the menu is open.
+- A change or a new task is on its way to the server, or a pairing code
+  is being checked.
+- The message at the bottom shows its `Undo` button.
+
+A new task that is marked as not sent does not hold the restart back,
+because the phone keeps it. A page that becomes visible again asks the
+browser to look for a new `/sw.js`.
+
+The page holds no task rules. `GET /api/view` returns the ready groups of
+All tasks, History, or Trash. `build_view` in `src/online/api.rs` calls
+`visible_tasks`, `visible_history`, and `group_rows`, the functions that
+the terminal uses, so the page and the terminal show the same headings,
+counts, and order. The server groups the rows before it cuts a page of
+History or Trash. The `count` of a group therefore covers the whole
+group, also when a page holds only a part of it. Every view also carries
+`session`: the ID, the name, and the expiry date of the access token.
+The first line of the page's menu shows all three, in the catalog text
+`web_paired_as`. The ID is the value that `-Revoked` of `deploy.ps1`
+takes.
+
+The only date logic in the page is `localDate` in `web/logic.js`. The
+page sends that date as `today` with every request. The server uses
+`today` for the groups, the planned date presets, and the status date. It
+accepts `today` only within one day of its own UTC date.
+
+The API checks the caller before it reads a request. The order is fixed:
+the access token first, the `X-Husker` rule second, and the request body
+last. A stranger therefore cannot make the server read a body. A body has
+at most 512 KiB. The extractors `Caller`, `Writer`, and `FromPage` in
+`src/online/api.rs` hold this order.
+
+One request changes one task. `POST /api/tasks` adds a task under an ID
+that the page created, so a repeated request after a lost answer adds
+nothing. `PATCH /api/tasks/{id}` turns its members into up to three
+operations and passes them to `Engine::write_all`, which uploads once. A
+change to the title or the description must carry the `version` that the
+page last read. A status, a planned date, a list, and Trash need no
+`version`, so a tap on a checkbox works after a device changed the title.
+The answer holds the row of the task and the view after the change. A
+request with `view=none` gets the row alone. In All tasks, the checkbox
+and the status buttons of the task panel use `view=none`, because their
+row keeps its place. In History, they ask for the view, because a
+reopened task leaves History.
+
+A failed API request gets a status, a stable `code`, and a message in the
+language of the request. Besides the codes for wrong input, the API
+answers `method_not_allowed` (405) for a known path with a method that it
+does not accept, `file_full` (507) when the sync file cannot hold the
+change, and `server_error` (500) when the upload guard stopped a change
+or the server failed in another way.
+
+The task panel sends only what the user changed. A field counts as
+changed when it holds another text than it showed when the panel took
+the task. `fillSheet` in `web/app.js` puts a task into the panel and
+keeps in `state.sheetShown` what the title, the description, and the
+date field show for it. `draft` compares the three fields with
+`state.sheetShown`, and not with the task. The reason is the browser. A
+text area turns `\r\n` into `\n`, and a one-line field drops line
+breaks. Tasks that agents wrote hold such text. Compared with the task,
+an untouched panel of such a task would count as changed, and a tap on
+`Today` would send the description back with other line breaks.
+`shownAs` asks a field what it shows for a value and puts the user's
+text back.
+
+`Save` sends the changed fields. A button or the list picker sends its
+action and the changed fields in one request. The request carries the
+`version` only when the title or the description is among them. After a
+`stale_version` answer, and after a request without an answer, `rebase`
+requests the view again and calls `fillSheet` with the task of that view
+and the fields that the user changed. Those fields keep their text. The
+other fields, the status button, and `Cancel task` then show the task as
+it is now. A request without an answer can have reached the server. The
+view then holds the task with the user's change, so no field counts as
+changed any more, and a `Save` with nothing left to send closes the
+panel.
+
+`endSheet` ends a panel whose task can no longer be saved. `rebase`
+calls it with the message `web_task_left` when the view no longer holds
+the task, for example because a computer moved the task to Trash.
+`saveSheet` calls it with the message `web_task_missing` after a
+`task_not_found` answer, so the panel does not show the server's
+sentence for that code. `endSheet` hides the planned date buttons with
+the date field, the list picker, and every button except `#sheet-close`.
+It also clears `state.sheetRetry` and `state.sheetEditable`, so nothing
+waits for `Save` and the fields stay disabled. The title and the
+description stay in sight.
+
+`state.sheetRetry` keeps the action of a button or of the list picker
+whose request failed while the panel stayed open. The next `Save` sends
+that action again with the changed fields. `saveSheet` sets
+`state.sheetRetry` after every such failure: a `stale_version` answer,
+no answer, and an error answer of the server. The exceptions are a 401,
+which shows the pairing screen, and a panel that `endSheet` ends.
+`sheetList` returns the list that the list picker of the panel shows:
+the list of a move that waits in `state.sheetRetry`, or else the list of
+the task. Another button, an accepted request, and opening a panel clear
+`state.sheetRetry`. Two newer choices take a waiting action out of it.
+When the user chooses the list that the task is in, the `change`
+listener of the list picker removes a waiting move and sends nothing.
+When the user changes the date field, `dropWaitingDate` removes a
+waiting date button, so the next `Save` sends the day from the date
+field. A date button that the user taps still wins over a date in the
+date field.
+
+While a request of the panel is under way, `state.saving` is set, and
+`saveSheet` and `sheetChange` send nothing. `setSheetBusy` gives the form
+`#sheet-form` the class `saving` and disables `Save`, the three fields,
+and the list picker. Text typed during the request would not be part of
+it. The styles dim every button of the panel except `#sheet-close` and
+switch off its pointer events. The close button stays in reach, so a
+slow connection cannot lock the panel. `markDraft` sets the text of the
+close button. The text is `web_discard` while a field differs from the
+task and no request is under way. During a request it is `web_close`,
+because the changes are on their way. `saveSheet` also puts the task
+into `state.pending`. Its row is dimmed, and no checkbox and no second
+panel changes the task before the request has ended. A panel that opens
+for another task meanwhile starts in the same waiting state, because
+`openSheet` calls `setSheetBusy(state.saving)`. When the request fails
+after the user closed the panel, the message at the bottom names the
+task.
+
+A new task stays on screen until the server has it. `sendTask` repeats
+the request once when no answer comes. A task that the server did not
+take stays in a row that is marked as not sent. A tap on that row sends
+the task again. So does `resend`, which runs when a view arrives from the
+server and when the server confirms a change. The task keeps its ID
+through every attempt.
+
+`sendTask` sorts the outcome of a request into these cases:
+
+| Outcome | What `sendTask` does |
+| --- | --- |
+| An answer whose `task` has the ID of the request | The server has the task. `forget` removes the task from `state.adding` and from the phone, and the view of the answer shows. |
+| The code `task_exists` | The server has the task from an earlier request whose answer was lost, and the task changed there since. `forget` removes the task, and the page requests the view. |
+| A 401 | The pairing screen shows. It removes the waiting tasks. |
+| A refusal: another status from 400 through 499, except 408 and 429, with the error object of the server | `forget` removes the task. The title returns to the field for a new task. When that field holds the next title already, the message names the refused title. |
+| Anything else: no answer, a status from 500 on, 408, 429, an error without the error object of the server, or an answer without the task | The task stays in `state.adding` and on the phone, marked as not sent. An error answer shows its message. |
+
+Only the server's own refusal removes a waiting task. A 502 from the
+sync storage and a 503 from something in front of the server leave it
+waiting.
+
+The page also keeps these tasks on the phone. `keepUnsent` writes the
+request body of every task that the server does not have yet to
+`husker.unsent` in the browser's local storage. Two open pages of one
+phone share that entry. `keepUnsent` therefore keeps the bodies that
+another page wrote and replaces only its own. `unsentBodies` reads the
+entry when the page starts. The tasks show as not sent until `resend`
+sends them. `showPairing` removes the entry, so signing out and a 401
+answer leave no unsent task on the phone.
+
+Answers can arrive late, above all while the server starts. The page
+numbers every request that returns a view in the order it sends them, and
+it shows a view only when no view of a later request is on screen. It
+also drops a view whose request was sent before the server confirmed a
+change, because the server answers a read without waiting for a write.
+In each doubtful case the page requests the view again. `state.sent`,
+`state.shown`, and `state.floor` in `web/app.js` hold the three numbers.
+`adopt` also ignores an answer that `drawable` in `web/logic.js` does not
+accept as a view. The screen and the kept view then stay as they are.
+
+A change that keeps its row asks for `view=none`, and `showRow` puts the
+row of the answer into the view on screen. When another change was
+confirmed since the request was sent, the two answers do not tell which
+change the server saved last. `showRow` then requests the view again.
+
+The page also counts its sessions in `state.epoch`. `newEpoch` begins a
+new count. `showPairing` calls it, and so does a successful pairing, so
+a sign-out, a 401 answer, and a new pairing each begin a new count.
+`api` remembers the count that a request was sent under. When the count
+has grown, `api` drops the answer, whatever it says, and its caller
+never continues. Without the count, a refresh that was under way at a
+sign-out could put the old tasks back on screen after the next pairing,
+and a late 401 could end the new pairing. The requests that open and
+close a session pass the option `across` and are exempt.
+`newEpoch` also resets `state.loading`, `state.saving`, `state.pending`,
+and the waiting state of the task panel, and it marks every new task
+that was on its way as not sent. Nothing on the page waits for a dropped
+answer.
+
+A request of `api` gives up after 30 seconds, the constant `TIMEOUT`. A
+stalled connection would otherwise hold a request, and a task panel that
+waits for it, for minutes. A request that gave up counts as unanswered.
+A browser without `AbortSignal.timeout` sends its requests without the
+limit.
+
+All text of the page comes from the catalog in `src/i18n.rs`.
+`/strings.json` serves the keys in `WEB_KEYS` in English and Danish, and
+`t("key")` in `web/app.js` looks a text up. Headings, date labels, and
+error sentences arrive in the API answers, in the language of the `lang`
+parameter. To add a text, add the key to `tr` in `src/i18n.rs` in both
+languages, add the key to `WEB_KEYS`, and read it with `t`.
+
+A pairing code hands an access token to a phone without showing the
+token. `husker pair` signs an access token and sends it to
+`POST /api/pairings` in the `Authorization` header. `Pairings` in
+`src/online/api.rs` keeps the token in memory under a random code of 12
+characters from an alphabet of 32, which gives 60 random bits. A code
+works once and for 300 seconds. The server keeps at most 16 codes, and
+one access token has one code at a time. The link from `husker pair`
+carries the code after `#code=`, a part of the address that a browser
+never sends to a server. The page exchanges the code for the session
+cookie with `POST /api/session`. Codes are not shared between processes
+and do not survive a restart. Pairing therefore relies on the
+deployment's default of one instance.
+
+`codeFromAddress` in `web/app.js` reads the code of a link and removes it
+from the address. It runs when the page starts and when the address
+changes in an open page. `useLink` then asks the server with
+`GET /api/session` whether the phone is paired. A kept view cannot tell,
+because a paired phone can be without one. The outcome decides what
+`useLink` does:
+
+| Outcome of `GET /api/session` | What `useLink` does |
+| --- | --- |
+| 200 | The phone is paired. The page asks the user before the code replaces the pairing. After a no, it requests the view and does not use the code. |
+| 401 | The phone is not paired. `pair` sends the code. |
+| Anything else, also no answer | The code is not used. A phone with a kept view keeps showing it. Another phone gets the pairing screen with the message `web_offline` and the code in the field. |
+
+`pair` sends a code to `POST /api/session`. `state.pairing` is set while
+a code is being checked. `useLink` and `pair` then start no second
+check, so a second tap on `Pair` sends nothing. While the note of an
+unfinished sign-out exists, `useLink` asks no question and `pair`
+finishes the sign-out first. When the request of `pair` gets no answer
+on a phone without a kept view, `pair` shows the pairing screen with the
+message `web_offline` and puts the code into the field. A typed code
+therefore stays in the field for the next try, as the code of a link
+does.
+
+The session cookie holds the access token. `POST /api/session` answers
+with the cookie `husker_session`, whose value is the token. The cookie is
+`HttpOnly`, `SameSite=Strict`, limited to `Path=/api`, and `Secure` when
+the server address uses `https`. Its `Max-Age` is the time until the
+token expires. `session` in `src/online/api.rs` reads the `Authorization`
+header when a request has one, and the cookie otherwise. Every token rule
+applies to both: the signature, the expiry, the revocation list, the list
+scope, and write access. `DELETE /api/session` removes the cookie. It
+does not revoke the token.
+
+Signing out leaves no task on the phone and none on screen.
+`showPairing` removes the kept view and the unsent new tasks from the
+phone. It also clears the rows of the hidden task screen and empties the
+field for a new task and the fields of the task panel. It clears three
+more hidden places that can hold a task title or the names of the lists:
+the text of the message at the bottom, the `aria-label` of the task
+panel, and the entries of the three list pickers. It returns to All
+tasks without a list filter, so the next pairing opens there.
+The page then sends `DELETE /api/session`, because only the server can
+remove the cookie. When that request gets no answer, the page keeps the
+note `husker.signout` on the phone and requests no view. `finishSignOut`
+sends the request again at the next start and before `pair` uses a
+pairing code. One such request runs at a time, and a pairing code waits
+for it. A late answer therefore cannot remove the cookie of a new
+pairing.
+
+`watchKeyboard` in `web/app.js` measures the on-screen keyboard and sets
+the CSS variable `--keyboard`. The styles use it to keep the task panel,
+the menu, and the message above the keyboard. The browser check sets the
+variable itself and checks the styles. The measuring on a real phone is
+not verified.
+
+The row of buttons at the lower edge of the task panel is sticky. The
+rule `#sheet-form > .actions` in `web/app.css` keeps the row in view
+while the fields above it scroll, so `Save` stays in reach on a small
+screen or with the keyboard open. No test covers this rule.
+
+Every control has a name for assistive technology. A control with
+visible text uses that text. `applyTexts` in `web/app.js` sets an
+`aria-label` on the controls without text, `rowElement` names each
+checkbox after its action, and `openSheet` names the task panel after its
+task. The list filter and the list picker for a new task have names of
+their own, the catalog texts `web_filter` and `web_add_list`. A test
+fails when the two names are equal. The date field of the task panel
+takes its name from the `Planned date` legend through `aria-labelledby`
+in `web/index.html`. The messages carry `role="status"`. The browser
+check reads Chrome's accessibility tree and fails when a control of the
+task screen or of the task panel has no name. It runs no screen reader,
+and it does not check the menu or the pairing screen this way.
+
+Follow these rules when you change the phone page:
+
+- Write task text into the page with `textContent`. Never use
+  `innerHTML`. A test also refuses `outerHTML`, `insertAdjacentHTML`,
+  `document.write`, `eval(`, and `new Function` in the scripts.
+- Put no text into the page files. Take every text from `src/i18n.rs`
+  through `/strings.json`. The name Husker and the pattern
+  `XXXX-XXXX-XXXX` of a pairing code are the only exceptions. Write each
+  key as a string literal in `web/app.js`, so the test that compares the
+  keys with `WEB_KEYS` finds it.
+- Keep `web/index.html` free of inline scripts, inline event handlers,
+  and `style` attributes, and load nothing from another server. The
+  content security policy `default-src 'self'` blocks them. A test also
+  fails when `web/index.html` or one of the three scripts holds the text
+  `http://` or `https://`, also in a comment.
+- Let the service worker keep page files only. It must never keep or
+  answer a request under `/api` or `/mcp`.
+- Keep the text `__PAGE_VERSION__` exactly once in `web/sw.js`. The
+  server replaces it with the page version, and a test fails when the
+  count differs.
+- Send the header `X-Husker: 1` with every request of the page. The
+  server refuses a change through the cookie without that header, and a
+  page of another website cannot send it.
+- Keep the cookie away from MCP. The cookie is limited to `/api`, and the
+  `/mcp` routes read only the `Authorization` header.
+- Keep the order of the API checks: the access token, then the `X-Husker`
+  rule, then the request body.
+- Keep grouping, order, and date labels on the server. Do not add a
+  second copy of a task rule to the page.
+- Keep the page small. A test fails when the page files without the
+  icons exceed 60 KiB together.
+
+These tests and tools cover the phone page:
+
+| Test or tool | What it does |
+| --- | --- |
+| `web/logic.test.mjs` | Tests the pure functions in `web/logic.js`: the phone's date around midnight, reading a pairing code from an address and from typed text, the language choice, the list filter with its new counts, finding and changing a row, counting the lists again, the shape of a view, appending a page, and the ID of a new task. |
+| `web/app.test.mjs` | Loads `web/app.js` against a small stand-in for the document, the storage, and `fetch`. The tests hold answers back, refuse them, or drop them, to cover a server that starts slowly. No browser runs, so the tests do not apply the styles. The list below this table names what they cover. |
+| `src/online/tests.rs` | The tests after the comment `The phone page` request every page file and `/strings.json`, check the version in the worker script, compare the keys in `web/app.js` with `WEB_KEYS`, and search the page files for forbidden calls. They compare each view with the terminal's groups. They cover adding and changing tasks, an answer with the row alone, every error code, the checks before the body is read, the cookie among other cookies, the counts of History across pages, the phone's date, pairing codes, the session cookie, and a read-only access. |
+| `tests/online.rs` | Two tests run `husker pair` against a real `husker serve` process. They cover the link on standard output and the token ID on standard error, the code exchanged for a cookie, a change through the cookie that a laptop profile receives at its next sync, and `--json`. They also cover a server with another key, an address without a server, which is not stored, and an address that stays stored after a mistyped one. A last case is a server that answers with a redirect. `husker pair` reports the status and sends no second request, so the address in the redirect never gets the access token. |
+| `src/main.rs` | A unit test draws the QR code with `qr_lines` and reads the drawing back with the `rqrr` crate, a test dependency. It also checks that the QR code and the two lines under it fit 24 rows and 80 columns for a link of up to 78 characters. |
+| `web/browser-check.mjs` | Drives the page in headless Chrome against a local `husker serve`. The rest of this section describes it. |
+| `deploy/azure/check-local.mjs` | Runs the page and the API behind the Azure Functions host on your computer. See [How the online server is built](#how-the-online-server-is-built). |
+
+`web/app.test.mjs` covers these parts of the page script. Run
+`node --test web/app.test.mjs` to see the name of each test:
+
+- All tasks, the list filter, and the checkbox. A failed change with the
+  message of the server, a change without an answer, and an error that
+  is not the server's.
+- A new task: an accepted task, a refused task whose title returns to
+  the field or is named in the message, a task without an answer, a
+  server that cannot save now, a task that the server has already, a
+  task across a reload, the waiting tasks of a second open page, and a
+  sign-out.
+- The task panel: the buttons and the list picker, `Save` with only the
+  changed fields, text that a field shows with other line breaks, a
+  button with typed text, the fields and the row that wait during a
+  request, the close button that reads `Close` meanwhile, the status
+  buttons in All tasks and in History, a stale answer with the status
+  button that follows the task, a failed button that the next `Save`
+  sends again, the list that the list picker then shows, the list of
+  the task and a day in the date field that replace a waiting button, a
+  task that left the view or was deleted, a save whose answer was lost,
+  a failure after the panel closed, and `Save` tapped twice.
+- Pairing: a code in the address of a starting page and of an open page,
+  a link on a paired phone with and without a kept view, a link without
+  an answer from the server, a typed code without an answer, a refused
+  code, typed text that holds no code, and a second tap on `Pair`.
+- Sessions: signing out with and without a connection, the hidden
+  places that a sign-out clears, a pairing code that waits for the
+  sign-out, answers that belong to an earlier session, a late 401 for
+  the pairing before, and All tasks after a new pairing.
+- The kept view, a kept view that the page cannot draw, an answer that
+  is not a view, a read-only session, the loading line, and a server
+  that cannot be reached.
+- The order of late answers: a refresh during a change, an older answer,
+  a view that was read before a confirmed change, two overlapping
+  changes with a view and with the row alone, and an answer for a view
+  that the user left.
+- The rows of History, the list chosen for a new task, a row with a
+  change under way, a new release, and the keyboard.
+
+One test checks that a request of the page carries a time limit. No test
+waits for the 30 seconds.
+
+`web/browser-check.mjs` checks the phone page in a real browser on your
+computer. It is not part of `cargo test`. Build the two executables that
+the script starts, then run the script:
+
+```text
+cargo build --bin husker --example fake_blob
+node web/browser-check.mjs
+```
+
+The script starts `fake_blob`, the test double of the sync storage. It
+fills a temporary profile through `husker` commands, starts
+`husker serve` on a free port, and runs `husker pair`. Then it drives the
+phone page in headless Chrome through the DevTools protocol, on a screen
+of 390 by 844 pixels. Nothing leaves the computer, and the only profile
+is a temporary directory under the output directory. The script passes a
+cleaned environment to the `husker` commands and to `husker serve`: no
+variable whose name starts with `HUSKER_`, and no
+`FUNCTIONS_CUSTOMHANDLER_PORT`. The settings of the server come from the
+script alone.
+
+The browser check goes through ten steps:
+
+1. The pairing screen without a session, and the message for a wrong
+   pairing code.
+2. Pairing by a link in a tab that already shows the page, the attributes
+   of the cookie, the content security policy, the names of the controls
+   of the task screen in Chrome's accessibility tree, and the headings of
+   All tasks.
+3. Adding a task with the Enter key and with the `+` button.
+4. Closing a task with one tap, the row that keeps its place and its
+   focus, and reopening the task.
+5. The task panel: the names of its controls in the accessibility tree,
+   the buttons of a waiting panel, its place above a keyboard of 300
+   pixels, the planned date buttons, the date field with `Save`, the
+   close button that reads `Close` or `Discard changes`, a button that
+   sends typed text with its action, the list, the title and the
+   description, the status buttons, and Trash with Undo. For the waiting
+   panel, the check sets the class `saving` itself. It reads that `Save`
+   and `Move to Trash` take no pointer events and that the close button
+   does.
+6. The line about the pairing in the menu, a task that leaves History
+   after `Reopen task` in its panel, and `Restore` in Trash.
+7. Danish, the list filter, and the dark colors. Then a pairing link on
+   the paired page, which asks before it replaces the pairing.
+8. The files that the service worker keeps, in one cache named after the
+   page version. Then the kept view while the server is stopped, a change
+   that is rolled back, and a task that is added while the server is
+   stopped and sent when the server returns.
+9. Signing out, the sign-out that the server confirms, the 401 that the
+   browser gets afterwards, and pairing a read-only session with a typed
+   pairing code.
+10. `husker sync` and `husker tasks` on the profile, which must show the
+    changes from the page.
+
+The script prints each passed check and writes numbered screenshots, such
+as `01-pairing.png`, into the output directory. It ends with
+`ALL CHECKS PASSED` and exit code 0. After a failed check, it prints the
+check, writes a screenshot named `failure`, and exits with code 1. It
+also fails when the page logs a script error. It exits with one of these
+codes:
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Every check passed. |
+| 1 | A check failed. Or the script did not finish within five minutes: it then prints `The check did not finish within five minutes.` and stops the browser, the server, and `fake_blob`. |
+| 2 | The script cannot find `husker`, `fake_blob`, or Chrome, or it refuses the output directory. |
+| 130 | You pressed Ctrl+C. The script first stops the browser, the server, and `fake_blob`. |
+
+| Argument or variable | Default | Meaning |
+| --- | --- | --- |
+| First argument | `target/debug/husker`, with `.exe` on Windows | The `husker` executable. |
+| Second argument | `target/debug/examples/fake_blob`, with `.exe` on Windows | The `fake_blob` executable. |
+| Third argument | `target/browser-check` | The output directory. It must be new or empty, or hold the file `.husker-check` of an earlier run. The script removes only what an earlier run made there: the directories `profile` and `chrome`, and its numbered PNG files. It retries the removal of the two directories, because the browser of an earlier run can hold its files for a moment after it closed. Then it writes the screenshots, the temporary profile, and the profile of Chrome into it. |
+| `CHROME` | Chrome or Edge in a standard install path | The path of the Chrome or Edge executable. Set `CHROME` when the browser is installed elsewhere. |
+
+The script marks its output directory with the file `.husker-check`, as
+the host check marks its work directory. It works in a directory that
+does not exist yet, in an empty directory, and in a directory that holds
+this file. It refuses any other directory and removes nothing there:
+
+```text
+<directory> holds files that this script did not make. Give it a new or an empty directory.
+```
+
+The browser check needs Node.js 22 or newer and Chrome or Edge. On
+Windows, keep the path of the output directory short. Chrome cannot store
+a service worker under a profile path longer than about 200 characters.
+
+The browser check does not cover Safari on an iPhone, a real phone, or
+Azure. It runs desktop Chrome with a phone-sized screen, taps with mouse
+events, and sets the value of a picker through script. Touch input, the
+on-screen keyboard, the pickers of a phone, the camera with the QR code,
+and the home screen are therefore untested. So is a screen reader: the
+check reads the names of the controls and runs none.
+
+The browser check also leaves these cases to `web/app.test.mjs`, which
+runs no browser:
+
+- A tap on a checkbox in History.
+- An unsent task across a reload, and a new task that the server answers
+  with an error.
+- A request of the task panel that fails: a stale answer, no answer, the
+  button that the next `Save` sends again, a newer choice that replaces
+  that button, and a task that left the view or was deleted.
+- A request of the task panel that takes long, with its waiting fields,
+  its waiting row, and its close button that reads `Close`.
+- A pairing link or a typed pairing code without an answer from the
+  server, and a pairing link on a paired phone without a kept view.
+- Answers of an earlier session, and a sign-out without a connection.
+
+The browser check reads the pointer events of the buttons of a waiting
+panel, because it sets the class `saving` itself. No check holds a
+request of the panel back in a browser. The dimmed buttons and the
+disabled fields of a real waiting panel are therefore unseen in a
+browser. No check scrolls the task panel to see the sticky row of
+buttons.
+
+The script never contacts Azure. The host check in
+[How the online server is built](#how-the-online-server-is-built) covers
+the Azure Functions host on your computer. The Azure front end before
+the host and a cold start in Azure stay untested.
+
+## Checks for version 0.18.0
+
+The phone page update completed these checks on November 16, 2026, on Windows 11 with Rust 1.91.1, Node 24.11.1, Chrome 157, and Azure Functions Core Tools 4.16.0:
+
+| Check | Result |
+| --- | --- |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Unit tests | 366 passed. 73 of them cover the online server. The new ones cover the views against the terminal's headings, each write and each error code of the API, the order of the checks on a request, the body limit, the cookie among other cookies, `view=none`, the counts of 150 tasks closed on one day across pages, pairing codes, the session cookie, the date rule at one and two days from the server's date, the last name in `X-Forwarded-Host`, and the page files with the page version in `/sw.js`. One more test, in `src/main.rs`, draws the QR code and reads it back with a QR decoder. |
+| Online integration tests | 9 passed. Two of them run `husker pair` against a real `husker serve` process: the link, `--json`, the token ID on stderr, a server with another key, an address where nothing answers, an address that stays stored after a mistyped one, a server that redirects, and a full pairing down to a task that a computer receives. |
+| Package, CLI, and MCP tests | 2, 9, and 8 passed. |
+| Sync integration tests | `two_profiles_show_the_same_tasks_after_husker_sync` and `an_agent_on_a_new_machine_reads_and_writes_a_synced_list` failed in 6 of 8 runs on the final code. The first printed `sent 1` where the test expects `sent 2`, and the second timed out waiting for the agent's upload. On the unchanged 0.17.0 source the same two tests failed the same way in 7 of 8 runs, so the failures don't come from this change. This change doesn't touch sync. The other 6 tests passed in every run. |
+| Page tests | `node --test web/logic.test.mjs` passed 8 tests. `node --test web/app.test.mjs` passed 54 tests of the page script against a stand-in document, with answers that the test holds back, refuses, or drops. |
+| Broken guards | A script removed one guard at a time from a copy of `web/app.js`, 76 guards in all, and ran the page tests. 75 removals made a test fail. The last guard has a second one behind it, and the page still behaved correctly. |
+| Browser check | `node web/browser-check.mjs` passed 65 checks in headless Chrome at 390 by 844 pixels against `husker serve` and the local test double: pairing by link and by typed code, the cookie attributes, the question before a link replaces a pairing, adding with Enter and with the button, a task added while the server was stopped, closing and reopening, every action of a task's panel, Trash with Undo, History, Trash, Danish, the list filter, light and dark colors, the saved view with the server stopped, the names of the controls in Chrome's accessibility tree, signing out, a read-only pairing, and `husker sync` on the computer. The screenshots of the steps were checked by eye. |
+| Page update | Two builds that differ in one page file ran one after the other on one address. Chrome opened the page with the files of the first build and started it again by itself 3.0 seconds later with the files of the second, all from one page version. |
+| Functions host | `node deploy/azure/check-local.mjs` passed 38 checks. The Azure Functions host of Core Tools ran `husker serve` as its custom handler with the deployed `host.json` and `function.json`. The host passed the path, the query, the method, the body, `Authorization`, `Cookie`, `Origin`, and custom headers on unchanged, added `X-Forwarded-Host` with the address the client used, and passed `Set-Cookie` back. The root path reached the server. `husker serve` answered behind the host after about 4 seconds. |
+| Review | Two independent code and security reviews. Neither found a hole in the server. The first found five medium defects: a second Save after a refused one overwrote text of another computer, a title that was not saved disappeared while the next one was typed, a failed save was reported in a closed panel, one test failed whenever the local date differs from the UTC date, and the browser check deleted its output directory. The second found one high and three medium defects in the page: a field that the browser shows with other line breaks counted as changed, a server error removed a waiting new task, answers from before a sign-out counted for the next pairing, and text typed while a save ran was dropped. All were fixed with tests, and so were the smaller findings of both reviews. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.18.0. |
+| Linux build | `cargo zigbuild --release --locked --target x86_64-unknown-linux-musl` produced a statically linked executable of 14.5 MB. Under WSL 2 it reported version 0.18.0, added and listed a task in a temporary profile, and printed a public key. |
+| OpenSpec | `openspec validate add-phone-page --strict` and `openspec validate add-online-server --strict` passed. |
+
+Not verified in this session:
+
+- The deployment to Azure. The agent session was not allowed to run
+  `deploy.ps1`, also not through a syntax check. Nothing ran against Azure:
+  the script, the Azure front end before the Functions host, the Linux
+  build as a server, and the cold start time are untested. The last edit
+  of the script, which prints the server's last answer when the health
+  check fails, was read by a reviewer and has not run.
+- A real phone. Safari, the home screen, the phone's keyboard over a panel,
+  the date picker, and a camera on the QR code are untested. Chrome on a
+  computer stood in for the phone.
+- `husker pair` in a terminal window. The tests cover redirected output and
+  `--json`, and a test reads the drawn QR code back. Nobody has looked at
+  the code in a terminal.
+- Claude Code and Codex against a deployed server, as under version 0.17.0.
 
 ## Checks for version 0.17.0
 

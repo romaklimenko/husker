@@ -857,3 +857,221 @@ fn serve_ignores_the_profile_and_uses_the_handler_port() {
     assert_eq!(status, 200);
     assert!(!missing_profile.exists(), "serve creates no profile");
 }
+
+#[test]
+fn husker_pair_hands_the_phone_a_session_through_a_code() {
+    let online = Online::start();
+    let profile = online.profile();
+
+    // With redirected output the command prints the link alone, and never the access token.
+    let output = husker(profile, &["pair", "--url", &online.origin]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let link = String::from_utf8(output.stdout).unwrap().trim().to_owned();
+    let code = link
+        .strip_prefix(&format!("{}/#code=", online.origin))
+        .unwrap_or_else(|| panic!("unexpected link {link}"))
+        .to_owned();
+    assert_eq!(code.len(), 12);
+    assert!(!link.contains("hsk1_"));
+    // The error stream names the token ID, which revokes the phone later, and no token.
+    let notes = String::from_utf8_lossy(&output.stderr);
+    assert!(!notes.contains("hsk1_"), "{notes}");
+    let id = notes
+        .trim()
+        .strip_prefix("Token ")
+        .and_then(|rest| rest.split_once(" expires on "))
+        .map(|(id, _)| id)
+        .unwrap_or_else(|| panic!("unexpected note {notes}"));
+    assert_eq!(id.len(), 12);
+
+    // The page is served without a token.
+    let page = http("GET", &online.url("/"), &[], None);
+    assert_eq!(page.status, 200);
+    assert!(
+        page.header("content-type")
+            .unwrap()
+            .starts_with("text/html")
+    );
+    assert!(
+        page.header("content-security-policy")
+            .unwrap()
+            .contains("default-src 'self'")
+    );
+    assert!(
+        page.body
+            .contains("<script type=\"module\" src=\"/app.js\"></script>")
+    );
+    let strings = http("GET", &online.url("/strings.json"), &[], None);
+    let strings: Value = serde_json::from_str(&strings.body).unwrap();
+    assert_eq!(strings["da"]["all_tasks"], "Alle opgaver");
+
+    // The phone exchanges the code for a cookie, once.
+    let page_headers = [("content-type", "application/json"), ("x-husker", "1")];
+    let body = json!({ "code": code }).to_string();
+    let session = http(
+        "POST",
+        &online.url("/api/session"),
+        &page_headers,
+        Some(&body),
+    );
+    assert_eq!(session.status, 200, "{}", session.body);
+    let cookie = session.header("set-cookie").unwrap();
+    assert!(
+        cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict"),
+        "{cookie}"
+    );
+    assert!(
+        !cookie.contains("Secure"),
+        "a local http server sets no Secure cookie"
+    );
+    let cookie = cookie.split(';').next().unwrap().to_owned();
+    let info: Value = serde_json::from_str(&session.body).unwrap();
+    assert_eq!(info["name"], "phone");
+    assert_eq!(info["write"], true);
+    let again = http(
+        "POST",
+        &online.url("/api/session"),
+        &page_headers,
+        Some(&body),
+    );
+    assert_eq!(again.status, 404);
+
+    // The cookie reads the view and changes a task, and the laptop receives the change.
+    let view = http(
+        "GET",
+        &online.url("/api/view?view=all&lang=en"),
+        &[("cookie", &cookie)],
+        None,
+    );
+    assert_eq!(view.status, 200, "{}", view.body);
+    let view: Value = serde_json::from_str(&view.body).unwrap();
+    let lists: Vec<&str> = view["lists"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|list| list["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(lists, ["Inbox", "Work"]);
+    let id = "0123456789abcdef0123456789abcdef";
+    let add = json!({ "id": id, "title": "From the phone", "preset": "today" }).to_string();
+    let mut change_headers = page_headers.to_vec();
+    change_headers.push(("cookie", &cookie));
+    // The page sends its local date. `husker tasks due:today` below uses the local date too,
+    // and the server alone would use its own date, which differs for some hours of the day.
+    let tasks = online.url(&format!(
+        "/api/tasks?today={}",
+        chrono::Local::now().date_naive()
+    ));
+    let added = http("POST", &tasks, &change_headers, Some(&add));
+    assert_eq!(added.status, 200, "{}", added.body);
+    let without_header = http(
+        "POST",
+        &tasks,
+        &[("content-type", "application/json"), ("cookie", &cookie)],
+        Some(&add),
+    );
+    assert_eq!(without_header.status, 403);
+    assert_eq!(ok(profile, &["sync"]), "Synced. Received 1, sent 0.");
+    assert!(ok(profile, &["tasks", "due:today"]).contains("From the phone"));
+
+    // --json names the code and the token ID, and holds no token.
+    let pairing = ok(
+        profile,
+        &["--json", "pair", "--name", "tablet", "--read-only"],
+    );
+    assert!(!pairing.contains("hsk1_"));
+    let pairing: Value = serde_json::from_str(&pairing).unwrap();
+    assert_eq!(pairing["code"].as_str().unwrap().len(), 12);
+    assert_eq!(pairing["expires_in"], 300);
+    assert_eq!(
+        pairing["link"],
+        format!(
+            "{}/#code={}",
+            online.origin,
+            pairing["code"].as_str().unwrap()
+        )
+    );
+    assert_eq!(pairing["id"].as_str().unwrap().len(), 12);
+    let body = json!({ "code": pairing["code"] }).to_string();
+    let session = http(
+        "POST",
+        &online.url("/api/session"),
+        &page_headers,
+        Some(&body),
+    );
+    let info: Value = serde_json::from_str(&session.body).unwrap();
+    assert_eq!(
+        (info["name"].clone(), info["write"].clone()),
+        (json!("tablet"), json!(false))
+    );
+}
+
+#[test]
+fn husker_pair_reports_a_server_it_cannot_use() {
+    let online = Online::start();
+
+    // A profile with another key: the server refuses its access token.
+    let stranger = tempfile::tempdir().unwrap();
+    let message = fails(stranger.path(), &["pair", "--url", &online.origin]);
+    assert!(message.contains("public key"), "{message}");
+    assert!(!message.contains("hsk1_"), "{message}");
+
+    // No server at the address. The address is not stored, so a typing mistake does not stay.
+    let closed = format!("http://127.0.0.1:{}", free_port());
+    let message = fails(online.profile(), &["pair", "--url", &closed]);
+    assert!(
+        message.contains("Cannot reach the online server"),
+        "{message}"
+    );
+    let message = fails(online.profile(), &["pair"]);
+    assert!(message.contains("--url"), "{message}");
+
+    // An address that was stored by an earlier pairing stays after a mistyped one.
+    ok(online.profile(), &["pair", "--url", &online.origin]);
+    fails(online.profile(), &["pair", "--url", &closed]);
+    let again = ok(online.profile(), &["pair"]);
+    assert!(
+        again.starts_with(&format!("{}/#code=", online.origin)),
+        "{again}"
+    );
+
+    // A server that redirects gets no second request. The access token goes to the address
+    // the user gave and nowhere else.
+    let elsewhere = TcpListener::bind("127.0.0.1:0").unwrap();
+    elsewhere.set_nonblocking(true).unwrap();
+    let target = elsewhere.local_addr().unwrap();
+    let redirecting = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = format!("http://{}", redirecting.local_addr().unwrap());
+    let answering = std::thread::spawn(move || {
+        use std::io::{Read, Write};
+        let (mut stream, _) = redirecting.accept().unwrap();
+        let mut request = [0_u8; 4096];
+        let _ = stream.read(&mut request);
+        let answer = format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://{target}/api/pairings\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        stream.write_all(answer.as_bytes()).unwrap();
+    });
+    let message = fails(online.profile(), &["pair", "--url", &address]);
+    answering.join().unwrap();
+    assert!(message.contains("status 302"), "{message}");
+    assert!(!message.contains("hsk1_"), "{message}");
+    assert!(
+        elsewhere.accept().is_err(),
+        "the address in the redirect got a request"
+    );
+
+    // The options of `husker token` apply.
+    let message = fails(
+        online.profile(),
+        &["pair", "--url", &online.origin, "--days", "0"],
+    );
+    assert!(message.contains("1 through 400"), "{message}");
+    let fresh = tempfile::tempdir().unwrap();
+    let message = fails(fresh.path(), &["pair"]);
+    assert!(message.contains("--url"), "{message}");
+}

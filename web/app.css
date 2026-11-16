@@ -1,0 +1,382 @@
+:root {
+  color-scheme: light dark;
+  --background: #ffffff;
+  --surface: #f3f4f6;
+  --text: #111827;
+  --muted: #6b7280;
+  --line: #e5e7eb;
+  --accent: #2563eb;
+  --accent-text: #ffffff;
+  --danger: #b91c1c;
+  --heading: #92400e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #111827;
+    --surface: #1f2937;
+    --text: #f9fafb;
+    --muted: #9ca3af;
+    --line: #374151;
+    --accent: #60a5fa;
+    --accent-text: #111827;
+    --danger: #f87171;
+    --heading: #fbbf24;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--background);
+  color: var(--text);
+  font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  /* 16px keeps iOS from zooming into a focused field. */
+  font-size: 16px;
+}
+
+button,
+select,
+input,
+textarea {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 0 12px;
+}
+
+textarea {
+  padding: 10px 12px;
+  width: 100%;
+  resize: vertical;
+}
+
+button {
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+button.danger {
+  color: var(--danger);
+}
+
+button.icon {
+  width: 44px;
+  padding: 0;
+  font-size: 20px;
+}
+
+button.icon span {
+  display: inline-block;
+}
+
+/* The refresh sign turns while a request for the tasks is under way. */
+button.icon.busy span {
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  button.icon.busy span {
+    animation: turn 1s linear infinite;
+  }
+}
+
+@keyframes turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.bar,
+.add {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--background);
+}
+
+.bar {
+  position: sticky;
+  top: env(safe-area-inset-top);
+  z-index: 2;
+  border-bottom: 1px solid var(--line);
+}
+
+.bar select {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.add input {
+  flex: 1;
+  min-width: 0;
+}
+
+.add select {
+  max-width: 34%;
+}
+
+.add button {
+  width: 44px;
+  padding: 0;
+  font-size: 22px;
+}
+
+.notice {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--muted);
+}
+
+.group {
+  margin: 0;
+  padding: 14px 12px 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--heading);
+}
+
+.row {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--line);
+}
+
+.row .check {
+  flex: none;
+  width: 52px;
+  min-height: 52px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font-size: 22px;
+  color: var(--muted);
+}
+
+.row .body {
+  flex: 1;
+  min-width: 0;
+  min-height: 52px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  padding: 8px 12px 8px 0;
+  text-align: left;
+}
+
+.row .title {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.row .meta {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.row.closed .title {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.row.pending {
+  opacity: 0.6;
+}
+
+/* A new task that the server has not confirmed yet. It lines up with the titles below it. */
+.row.adding {
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  border-width: 0 0 1px;
+  border-radius: 0;
+  background: none;
+  padding: 8px 12px 8px 52px;
+  text-align: left;
+}
+
+.row .restore {
+  flex: none;
+  align-self: center;
+  margin-right: 12px;
+}
+
+.more {
+  display: block;
+  margin: 12px auto;
+}
+
+.pairing {
+  max-width: 28rem;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+.pairing form {
+  display: flex;
+  gap: 8px;
+}
+
+.pairing input {
+  flex: 1;
+  min-width: 0;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+dialog {
+  width: min(100vw, 34rem);
+  max-width: 100vw;
+  /* --keyboard is the height of the phone's keyboard while it is open. The script sets it. */
+  max-height: calc(92dvh - var(--keyboard, 0px));
+  margin: auto auto var(--keyboard, 0px);
+  border: 0;
+  border-radius: 16px 16px 0 0;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  background: var(--background);
+  color: var(--text);
+}
+
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+/* The sheet's form takes the focus when the sheet opens, so no text field opens the keyboard. */
+#sheet-form:focus {
+  outline: none;
+}
+
+dialog > .notice {
+  padding: 0 0 12px;
+}
+
+dialog label,
+dialog fieldset {
+  display: block;
+  margin: 0 0 12px;
+  padding: 0;
+  border: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+dialog label input,
+dialog label select,
+dialog fieldset input {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  color: var(--text);
+}
+
+dialog textarea {
+  margin-top: 4px;
+  color: var(--text);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+
+.chips button {
+  color: var(--text);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.actions.column {
+  flex-direction: column;
+}
+
+/* The buttons of a task's sheet stay at its lower edge while the fields scroll,
+   so Save is in reach when the keyboard leaves little room. */
+#sheet {
+  padding-bottom: 0;
+}
+
+/* A request of the sheet is under way. Its buttons wait for the answer.
+   The close button stays in reach, so a slow connection cannot lock the sheet. */
+#sheet-form.saving button:not(#sheet-close) {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+#sheet-form > .actions {
+  position: sticky;
+  bottom: 0;
+  padding: 8px 0 calc(16px + env(safe-area-inset-bottom));
+  background: var(--background);
+}
+
+.actions button {
+  flex: 1 1 auto;
+}
+
+.actions button[aria-current="true"] {
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.toast {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom) + var(--keyboard, 0px));
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 8px 8px 16px;
+  border-radius: 12px;
+  background: var(--text);
+  color: var(--background);
+}
+
+.toast span {
+  flex: 1;
+}
+
+.toast button {
+  background: none;
+  border-color: transparent;
+  color: var(--background);
+  font-weight: 600;
+}

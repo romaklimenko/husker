@@ -12,6 +12,8 @@ use chrono_tz::Tz;
 use crate::sync::{Auth, Settings, remote::BlobRemote};
 
 pub mod access;
+pub mod api;
+pub mod assets;
 pub mod doc;
 pub mod engine;
 pub mod http;
@@ -86,6 +88,7 @@ impl ServerSettings {
             origin: self.origin.into(),
             zone: self.zone,
             read_only: self.read_only,
+            pairings: Arc::default(),
         }
     }
 }

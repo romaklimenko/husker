@@ -150,20 +150,27 @@ try {
 
     Write-Host "Waiting for $url/api/health..."
     $health = $null
+    $lastAnswer = ''
     foreach ($attempt in 1..30) {
         try {
             $health = Invoke-RestMethod -Uri "$url/api/health" -TimeoutSec 30
             if ($health.version -eq $version) { break }
+            $lastAnswer = "version $($health.version)"
         } catch {
             $health = $null
+            # The body of a refusal says why, for example which host name reached the server.
+            $lastAnswer = [string]$_.Exception.Message
+            if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $lastAnswer = [string]$_.ErrorDetails.Message }
         }
         Start-Sleep -Seconds 5
     }
     if (-not $health -or $health.version -ne $version) {
-        throw "The server did not answer with version $version at $url/api/health."
+        if ($lastAnswer.Length -gt 300) { $lastAnswer = $lastAnswer.Substring(0, 300) }
+        throw "The server did not answer with version $version at $url/api/health. The last answer was: $lastAnswer"
     }
     Write-Host "Husker $($health.version) is online at $url. Writes allowed: $([bool]$AllowWrites)."
-    Write-Host "Next: husker token --url $url --name NAME"
+    Write-Host "Next, for an agent: husker token --url $url --name NAME"
+    Write-Host "Next, for a phone: husker pair --url $url"
 } finally {
     Pop-Location
 }

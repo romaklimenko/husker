@@ -33,7 +33,7 @@ server for another.
 
 ## Install or update Husker
 
-This guide describes Husker 0.17.0 and its task tools.
+This guide describes Husker 0.18.0 and its task tools.
 Close running Husker instances before updating the executable.
 Disconnect MCP clients that already use a local Husker server, then run this command from the source directory:
 
