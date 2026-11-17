@@ -2,6 +2,7 @@ pub(crate) mod clipboard;
 pub mod config;
 pub(crate) mod editor_date;
 pub mod i18n;
+pub mod input;
 pub mod mcp;
 pub mod model;
 pub mod online;

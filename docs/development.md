@@ -880,6 +880,37 @@ The script never contacts Azure. The host check in
 the Azure Functions host on your computer. The Azure front end before
 the host and a cold start in Azure stay untested.
 
+## Checks for version 0.18.2
+
+The Option+arrow fix completed these checks on November 17, 2026, on macOS 27.2.1 with Rust 1.100.0:
+
+| Check | Result |
+| --- | --- |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Unit tests | 384 passed. 13 new tests in `src/input.rs` cover the join with scripted events that arrive after scripted delays. The four arrows join after `[` and after `O`. An arrow joins when it follows the Esc at once, after 5 milliseconds, and after 10. An arrow after 11 milliseconds stays apart, and an Esc alone waits exactly 10 milliseconds. A plain arrow key in two reads does not join, also when only its letter comes later, and 21 other inputs after Esc stay in order. A failed look-ahead loses no key. The joining tests fail when `Input::read` skips either join, and the timing tests fail when the wait is 50 milliseconds or also applies to the letter. |
+| Terminal keys test | `tests/terminal_keys.rs` passed in 20 of 20 runs after the last change. It puts a pseudo-terminal in the place of standard input, writes the bytes of 17 keys in one write or in two, and compares the keys that `Input` reads through crossterm. Without the join it fails, because `ESC ESC [ A` arrives as Esc. When the look-ahead reads without polling, the test fails after 30 seconds instead of blocking forever. |
+| Integration tests | CLI 9, MCP 8, online 9, sync 8, and package 2 passed in 8 of 9 full runs: 3 before and 5 after the review fixes. The first full run stopped in `tests/online.rs`, where `serve_ignores_the_profile_and_uses_the_handler_port` failed with `the online server did not start`. The same test passed in the 11 runs after that. The online server does not use the changed code. |
+| Pseudo-terminal run | Versions 0.18.1 and 0.18.2 ran in a pseudo-terminal of 100 columns and 30 rows with temporary profiles. On 0.18.1, `ESC ESC [ A` and `ESC ESC [ B` moved nothing, cleared a filter, opened `Discard unsaved changes?` in a changed editor, and closed the list picker. On 0.18.2 the same bytes moved the task, also in a filtered view, moved the list in the picker, and left the editor open. `ESC ESC O A`, a held key, and `ESC [ 1 ; 3 A` moved the task too. An Esc alone still cleared the filter. An Esc followed later by `[` and `A` or by a plain Up moved nothing. |
+| Two writes | On 0.18.2, the Esc byte and the arrow were sent in two writes. Each pause between the writes was tried with 20 presses. With 0, 0.2, 1, and 5 milliseconds, all 20 moved the task. With 30 and 100 milliseconds, none of the 20 did, as for an Esc and an arrow that a person presses in a row. |
+| Screen and tmux | On 0.18.2 inside GNU screen 4.00.03 and tmux 3.1c with default settings, Esc and Up 50 milliseconds apart moved the task in 5 of 5 runs each. Both programs hold the Esc and deliver it together with the arrow. With `maptimeout 10` in screen and `set -s escape-time 10` in tmux, none of 5 runs moved it, and `ESC ESC [ A` still moved it in 5 of 5. |
+| Terminal.app settings | Read from the preferences of Terminal.app 2.15 (488.9): the profile had Use Option as Meta set to Both Option keys and no key mapping for Option+Up or Option+Down. |
+| Key press | The user pressed Option+Up and Option+Down in Terminal.app 2.15 with those settings and the installed 0.18.2. The selected task moved. |
+| Review | An independent review found no high defect and one medium defect. The first version joined only keys that were ready together. It missed the key when crossterm read the Esc byte in a read of its own. That happened in 9 of 600 pairs of writes without a pause and in 300 of 300 with 0.2 milliseconds between them. The 10 millisecond wait for a plain arrow fixes it. Four smaller findings were fixed too: a failed look-ahead lost the Esc, 5 of 20 code mutations passed the tests, the terminal keys test could block forever, and one sentence about undo did not hold for lists. A second pass of the same review checked the wait. It found that nothing is lost, repeated, moved, or blocked in 299,593 sequences, 1,628,718 splits, and 200,000 runs with random arrival. It found one more medium point: inside screen and tmux, an Esc and an arrow pressed in a row count as Alt+arrow. That is now in the design and the usage guide. Its smaller points were fixed too: two more code mutations passed the tests, and two sentences claimed more than was measured. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.18.2. |
+| OpenSpec | `openspec validate fix-option-arrows --strict` passed. |
+
+Not verified:
+
+- The bytes that Terminal.app sends for Option+Up and Option+Down, and
+  whether it sends them in one write or in two. The agent session could
+  not press keys, and the bytes of the user's key press were not captured.
+  Husker reads both forms.
+- Terminal.app with Use Option as Meta set to None, and the two key
+  mappings of the usage guide in Terminal.app 2.15.
+- iTerm2 and other terminals that send Alt+arrow with an Esc prefix.
+- Windows and Linux. Only the macOS target was built.
+
 ## Checks for version 0.18.1
 
 The sync fix completed these checks on November 16, 2026, on Windows 11 with Rust 1.91.1:

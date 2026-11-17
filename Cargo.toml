@@ -1,6 +1,6 @@
 [package]
 name = "husker"
-version = "0.18.1"
+version = "0.18.2"
 edition = "2024"
 rust-version = "1.88"
 description = "A keyboard-first terminal todo app"
@@ -38,6 +38,10 @@ ureq = { version = "3.5", default-features = false, features = ["rustls", "platf
 rmcp = { version = "3.9", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest"] }
 rqrr = { version = "0.11", default-features = false }
 tokio = { version = "1", features = ["process", "time", "io-util"] }
+
+# tests/terminal_keys.rs opens a pseudo-terminal with rustix.
+[target.'cfg(unix)'.dev-dependencies]
+rustix = { version = "1", features = ["fs", "pty", "stdio"] }
 
 # The zip writer of the deployment package has tests. Run them with the rest.
 [[example]]

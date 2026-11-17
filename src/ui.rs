@@ -8,8 +8,8 @@ use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Local, NaiveDate, Utc};
 use crossterm::cursor::Show;
 use crossterm::event::{
-    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -27,6 +27,7 @@ use crate::clipboard::{SystemClipboard, TextClipboard};
 use crate::config::{Action, Config, Mode};
 use crate::editor_date::parse_editor_date;
 use crate::i18n::{Language, error_message, sync_failure_message, tr};
+use crate::input::Input;
 use crate::model::{Status, Task, TaskInput, TaskList};
 use crate::planning::{DuePreset, GroupLayout, date_label, group_rows, suggested_list_id};
 use crate::query::{Query, visible_history, visible_tasks};
@@ -108,13 +109,14 @@ pub fn run(
     let guard = TerminalGuard::enter()?;
     let mut terminal: Terminal<CrosstermBackend<Stdout>> =
         Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    let mut input = Input::terminal();
     let mut refreshed = Instant::now();
     let mut mouse_captured = true;
     loop {
         app.expire_message(Instant::now());
         terminal.draw(|frame| app.draw(frame, &config))?;
-        if event::poll(Duration::from_millis(200))? {
-            let event = event::read()?;
+        if input.poll(Duration::from_millis(200))? {
+            let event = input.read()?;
             if let Some(sync) = &sync
                 && matches!(event, Event::Key(_) | Event::Paste(_) | Event::Mouse(_))
             {

@@ -445,8 +445,17 @@ Done and cancelled tasks use their recorded status dates and times and cannot
 be reordered manually.
 Reordering never changes a planned date or moves a task between lists.
 With a filter active, reordering uses neighboring tasks in the visible results.
-In macOS Terminal.app, [set up Option+Up and Option+Down](#use-optionarrows-in-macos-terminal)
-if those keys do not move tasks. `K` and `J` work without that setup.
+On a Mac, Alt is the Option key. In Terminal.app, Option+Up and Option+Down
+move a task after you [let an Option key act as Meta or add two key mappings](#use-optionarrows-in-macos-terminal).
+`K` and `J` work without any Terminal setting.
+
+In GNU screen, and in tmux before version 3.5, Esc followed shortly by Up
+or Down can move a task. These programs hold an Esc, for 300 milliseconds
+in screen and 500 in tmux, and then send it together with the arrow key.
+Husker cannot tell that from Alt+Up or Alt+Down. Press `u` to undo the
+move. To prevent it, add `maptimeout 10` to `~/.screenrc` or
+`set -s escape-time 10` to `~/.tmux.conf`, and start a new screen or tmux
+session.
 
 ## Find tasks
 
@@ -876,35 +885,93 @@ Backspace edits text in an input field. It does not delete a task.
 
 ### Use Option+arrows in macOS Terminal
 
-On a Mac, Alt is the Option key. If Option+Up and Option+Down do not
-reorder tasks, configure Terminal.app to send those shortcuts to Husker.
-You can also use `K` and `J` (Shift+K and Shift+J).
+On a Mac, Alt is the Option key. To reorder tasks and lists with Option+Up
+and Option+Down in Terminal.app, let an Option key act as Meta or add two
+key mappings. Without one of these, Terminal sends a plain Up or Down, and
+Husker moves the selection instead of the task.
+`K` and `J` (Shift+K and Shift+J) reorder without any Terminal setting.
+
+Meta is a modifier key for programs that run in Terminal, such as Husker.
+An Option key that acts as Meta no longer types characters in Terminal.
+On a Danish keyboard, Option types characters such as `@`, `|`, `{`, `[`,
+and `\`.
+
+| Way | Setup in Terminal | Husker version | Typing characters with Option |
+| --- | --- | --- | --- |
+| Let an Option key act as Meta | One setting | 0.18.2 or later | An Option key that acts as Meta types no characters. |
+| Add two key mappings | Two key mappings | Every version | Both Option keys type characters. |
+
+If an Option key already acts as Meta in your profile, Husker 0.18.2 and
+later need no setup. Otherwise, let an Option key act as Meta if one Option
+key is enough for typing. Add the two key mappings if you need both Option
+keys for typing, or if your Husker is older than 0.18.2. Both ways change
+one Terminal profile. They apply to every program in a window that uses
+the profile.
+
+To let an Option key act as Meta:
+
+1. Run `husker --version`. The version must be 0.18.2 or later. With an
+   older version, [update Husker](#update-an-existing-profile) or add the
+   two key mappings instead.
+2. In Terminal.app, open Settings, choose Profiles, select the profile
+   you use for Husker, then choose Keyboard.
+3. Set Use Option as Meta to Left Option only, Right Option only, or Both
+   Option keys. In Danish, the menu is named Brug Alternativtast som meta.
+
+| Choice | In Danish | Option keys that reorder | Option keys that type characters |
+| --- | --- | --- | --- |
+| Left Option only | Kun venstre Alternativtast | Left | Right |
+| Right Option only | Kun højre Alternativtast | Right | Left |
+| Both Option keys | Begge Alternativtaster | Left and right | Neither |
+| None | Ingen | Neither, unless you add the two key mappings | Left and right |
+
+For example, choose Right Option only. Option+Up with the right Option key
+then moves a task. On a Danish keyboard, the left Option key still types `@`.
+
+An older macOS version shows a checkbox named Use Option as Meta key
+instead of the menu. Select the checkbox. Both Option keys then act as
+Meta. If you type characters with Option, add the two key mappings instead.
+
+To try the shortcuts, start Husker and select an open task with a neighbor
+on the same planned date. Option+Up moves the task before that neighbor.
+Option+Down moves it after the neighbor. The message shows `Updated`, and
+the task stays selected.
+
+To keep both Option keys for typing, add two key mappings instead:
 
 1. In Terminal.app, open Settings, choose Profiles, select the profile
    you use for Husker, then choose Keyboard.
 2. Click `+` to add a key mapping. If Option+Up already appears, edit it.
-   Set Key to Up Arrow, Modifier to Option, and Action to Send Text.
+   Set Key to Cursor Up, Modifier to Option, and Action to Send Text.
 3. In the text field, press Esc once, then type `[1;3A`.
    The field should show `\033[1;3A`. Click OK.
-4. Add or edit Option+Down in the same way. Choose Down Arrow and send
+4. Add or edit Option+Down in the same way. Choose Cursor Down and send
    Esc followed by `[1;3B`, shown as `\033[1;3B`.
+5. Try Option+Up and Option+Down in Husker as described above.
 
-Keep Use Option as Meta key off if you use Option to type characters on
-a Danish keyboard. If Terminal shows a menu, choose None (Ingen in Danish).
-If it shows a checkbox, leave it unchecked. These two mappings affect only
-the arrow shortcuts. They apply to every program using the selected Terminal profile.
+Keep Use Option as Meta set to None (Ingen in Danish) so that both Option
+keys type characters. If Terminal shows a checkbox, leave it unchecked.
+The two mappings affect only Option+Up and Option+Down.
+In Danish, Key, Modifier, and Action are named Tast, Kombitast, and
+Handling. Their choices are Markør op or Markør ned, Alternativ, and Send tekst.
 Apple describes the controls in [Create custom function keys](https://support.apple.com/en-ca/guide/terminal/trml108/mac).
 
-To check the mappings, run `cat -v` at a shell prompt. Press Option+Up
-and Option+Down. You should see `^[[1;3A` and `^[[1;3B`. Press Ctrl+C
-to leave `cat`. If you see `^[[A` and `^[[B`, Terminal sent ordinary
-Up and Down without Option. Check the selected profile and both mappings.
-If the settings have not taken effect, finish your work in existing
-Terminal windows and restart Terminal when convenient.
+If a task does not move, check what Terminal sends. Quit Husker and run
+`cat -v` at the shell prompt. Press Option+Up, then Option+Down, with the
+Option key you use in Husker. Press Ctrl+C to leave `cat`.
 
-In Husker, select an open task with a neighbor on the same
-planned date. Option+Up moves it before that neighbor; Option+Down moves
-it after the neighbor. The selected task stays selected.
+| `cat -v` shows | Meaning | In Husker |
+| --- | --- | --- |
+| `^[^[[A` and `^[^[[B` | The Option key you pressed acts as Meta. | The shortcuts reorder in 0.18.2 and later. Earlier versions read them as Esc. |
+| `^[[1;3A` and `^[[1;3B` | The two key mappings are in use. | The shortcuts reorder in every version. |
+| `^[[A` and `^[[B` | Terminal sent a plain Up and Down without Option. | The selection moves and nothing is reordered. |
+
+If you see `^[^[[A` and `^[^[[B` with a Husker older than 0.18.2, update
+Husker or add the two key mappings.
+If you see `^[[A` and `^[[B`, check that the window uses the profile you
+changed. Then check that you pressed an Option key that acts as Meta, or
+that both key mappings exist. If the settings have not taken effect, finish
+your work in existing Terminal windows and restart Terminal when convenient.
 
 ## Set the language and shortcuts
 
@@ -1168,6 +1235,13 @@ Install the current version from the repository:
 ```text
 cargo install --path . --locked
 ```
+
+Version 0.18.2 changes Option+Up and Option+Down in macOS Terminal.app.
+While an Option key acts as Meta, the two shortcuts now reorder tasks and
+lists. Before 0.18.2, Husker read them as Esc. For example, Option+Up
+cleared an applied filter. Key mappings that you added for the two
+shortcuts keep working. See [Use Option+arrows in macOS Terminal](#use-optionarrows-in-macos-terminal).
+Version 0.18.2 doesn't change the database.
 
 Version 0.16.0 changes the list a new task starts in when you press `n` in
 All tasks. Husker now suggests the list of the newest task outside Trash.

@@ -84,6 +84,10 @@ are legacy notes. Do not import or delete their contents unless the user asks.
   grouping tests. Do not infer elapsed hours from a date.
 - Keep UI strings in English and Danish catalogs. Stable CLI tokens and JSON
   fields stay in English.
+- Read terminal events through `Input` in `src/input.rs`. It joins the
+  Esc-prefixed arrow keys of terminals such as Terminal.app into Alt+arrow.
+  A direct `crossterm::event::read` would overtake the events that `Input`
+  has read ahead.
 - Test sync with the in-memory remote (`MemoryRemote`) or the local test
   double in `tests/support/mod.rs`. Never use a real storage account in tests.
 - Never print or log the sync URL. Its query string can hold a SAS token.
