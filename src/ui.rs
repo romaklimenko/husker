@@ -21,10 +21,11 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::clipboard::{SystemClipboard, TextClipboard};
-use crate::config::{Action, Config, Mode};
+use crate::config::{Action, Config, Mode, is_printable};
 use crate::editor_date::parse_editor_date;
 use crate::i18n::{Language, error_message, sync_failure_message, tr};
 use crate::input::Input;
@@ -402,7 +403,10 @@ enum HelpOrigin {
 }
 
 enum HelpEntry {
+    /// An action with every configured key.
     Action(Action),
+    /// An action with the configured keys that work in one mode.
+    ActionIn(Action, Mode),
     Builtin(String, &'static str),
 }
 
@@ -518,9 +522,159 @@ impl View {
 
 #[derive(Debug, Default)]
 struct ListPicker {
+    /// The index of the selected entry in `entries`.
     selection: usize,
     state: ListState,
     area: Option<Rect>,
+    /// Text typed while the picker is open. Only entries whose name contains it are shown.
+    filter: String,
+    /// The shown entries in saved order.
+    entries: Vec<RowIdentity>,
+}
+
+impl ListPicker {
+    /// A picker over every list, with All tasks first and Trash last when `virtual_entries`
+    /// is set, and `selected` selected when it is shown.
+    fn new(
+        lists: &[TaskList],
+        virtual_entries: bool,
+        selected: RowIdentity,
+        language: Language,
+    ) -> Self {
+        let mut picker = Self {
+            entries: picker_entries(lists, virtual_entries, "", language),
+            ..Self::default()
+        };
+        picker.select(selected);
+        picker
+    }
+
+    fn selected(&self) -> Option<RowIdentity> {
+        self.entries.get(self.selection).copied()
+    }
+
+    /// Selects `identity` when it is shown. Returns false when it is not.
+    fn select(&mut self, identity: RowIdentity) -> bool {
+        let found = self.entries.iter().position(|entry| *entry == identity);
+        if let Some(index) = found {
+            self.selection = index;
+        }
+        self.clamp();
+        found.is_some()
+    }
+
+    fn clamp(&mut self) {
+        self.selection = self.selection.min(self.entries.len().saturating_sub(1));
+        self.state
+            .select((!self.entries.is_empty()).then_some(self.selection));
+    }
+
+    /// Recomputes the shown entries after the lists changed, keeping the selected entry.
+    fn rebuild(&mut self, lists: &[TaskList], virtual_entries: bool, language: Language) {
+        let selected = self.selected();
+        self.entries = picker_entries(lists, virtual_entries, &self.filter, language);
+        if let Some(identity) = selected {
+            self.select(identity);
+        }
+        self.clamp();
+    }
+
+    /// Replaces the filter text and selects the first entry whose name starts with it,
+    /// or the first shown entry.
+    fn set_filter(
+        &mut self,
+        filter: String,
+        lists: &[TaskList],
+        virtual_entries: bool,
+        language: Language,
+    ) {
+        let selected = self.selected();
+        self.filter = filter;
+        self.entries = picker_entries(lists, virtual_entries, &self.filter, language);
+        // A scroll offset from the longer list would hide matches above the selection.
+        self.state = ListState::default();
+        if self.filter.is_empty() {
+            self.selection = 0;
+            if let Some(identity) = selected {
+                self.select(identity);
+            }
+        } else {
+            let prefix = self.filter.to_lowercase();
+            self.selection = self
+                .entries
+                .iter()
+                .position(|entry| {
+                    picker_entry_name(*entry, lists, language)
+                        .to_lowercase()
+                        .starts_with(&prefix)
+                })
+                .unwrap_or(0);
+        }
+        self.clamp();
+    }
+
+    /// Handles a key that edits the filter. Returns false for other keys.
+    fn filter_key(
+        &mut self,
+        key: KeyEvent,
+        lists: &[TaskList],
+        virtual_entries: bool,
+        language: Language,
+    ) -> bool {
+        let mut filter = self.filter.clone();
+        match key.code {
+            KeyCode::Char(character) if is_printable(key.code, key.modifiers) => {
+                filter.push(character);
+            }
+            KeyCode::Backspace if key.modifiers.is_empty() => {
+                let Some((start, _)) = filter.grapheme_indices(true).next_back() else {
+                    return true;
+                };
+                filter.truncate(start);
+            }
+            _ => return false,
+        }
+        self.set_filter(filter, lists, virtual_entries, language);
+        true
+    }
+}
+
+/// The visible name of a picker entry without its count or default marker.
+fn picker_entry_name(entry: RowIdentity, lists: &[TaskList], language: Language) -> String {
+    match entry {
+        RowIdentity::AllTasks => tr(language, "all_tasks").to_owned(),
+        RowIdentity::Trash => tr(language, "trash").to_owned(),
+        RowIdentity::List(id) => lists
+            .iter()
+            .find(|list| list.id == id)
+            .map(|list| list.name.replace(['\r', '\n'], " "))
+            .unwrap_or_default(),
+        RowIdentity::Task(_) => String::new(),
+    }
+}
+
+/// The picker entries whose name contains `filter`, ignoring case, in saved order.
+fn picker_entries(
+    lists: &[TaskList],
+    virtual_entries: bool,
+    filter: &str,
+    language: Language,
+) -> Vec<RowIdentity> {
+    let mut entries = Vec::new();
+    if virtual_entries {
+        entries.push(RowIdentity::AllTasks);
+    }
+    entries.extend(lists.iter().map(|list| RowIdentity::List(list.id)));
+    if virtual_entries {
+        entries.push(RowIdentity::Trash);
+    }
+    let filter = filter.to_lowercase();
+    entries.retain(|entry| {
+        picker_entry_name(*entry, lists, language)
+            .to_lowercase()
+            .contains(&filter)
+    });
+    entries
 }
 
 struct PlannedBookmark {
@@ -686,6 +840,20 @@ struct App {
     history_origin: Option<(View, PlannedBookmark)>,
     pending_language: Option<Language>,
     description_width: usize,
+    /// The interface language of the last key or frame, for matching virtual picker entries.
+    language: Language,
+    /// The filter state from before the filter input opened, restored by Back.
+    filter_origin: Option<FilterOrigin>,
+    /// True while the text in the filter input does not parse.
+    filter_invalid: bool,
+}
+
+/// What the filter input restores when the user discards the typed text.
+struct FilterOrigin {
+    selected_task: Option<i64>,
+    selection: usize,
+    list_state: ListState,
+    held: Vec<HeldTask>,
 }
 
 impl App {
@@ -726,6 +894,9 @@ impl App {
             history_origin: None,
             pending_language: None,
             description_width: 79,
+            language: Language::En,
+            filter_origin: None,
+            filter_invalid: false,
         };
         app.refresh(store)?;
         Ok(app)
@@ -750,6 +921,7 @@ impl App {
             Screen::Language { .. } => Mode::Language,
             Screen::CopyText { .. } => Mode::CopyText,
             Screen::Navigation if matches!(self.view, View::History(_)) => Mode::History,
+            Screen::Navigation if self.view == View::Trash => Mode::Trash,
             Screen::Navigation => Mode::Tasks,
         }
     }
@@ -778,12 +950,6 @@ impl App {
             self.sync_counters = counters;
         }
         let mut selected_task = self.selected_task().map(|task| task.id);
-        let selected_list = self.picker_identity(self.picker.selection);
-        let editor_list = self
-            .screen
-            .editor_picker()
-            .and_then(|picker| self.lists.get(picker.selection))
-            .map(|list| list.id);
         let lists = store.lists()?;
         let tasks = store.tasks()?;
         if unexplained && (lists != self.lists || tasks != self.tasks) {
@@ -796,9 +962,20 @@ impl App {
             && !self.lists.iter().any(|list| list.id == id)
         {
             self.history_origin = None;
+            // An open filter input now belongs to All tasks, so Back restores its state.
+            self.filter_origin = None;
             let bookmark = self.planned_bookmark.take();
             selected_task = self.restore_view_state(View::Planned, bookmark);
         }
+        self.rebuild_visible();
+        self.select_task_id(selected_task);
+        self.rebuild_pickers();
+        self.data_version = data_version;
+        Ok(())
+    }
+
+    /// Recomputes the task rows of the current view from the loaded tasks and the query.
+    fn rebuild_visible(&mut self) {
         let (list_id, trash) = self.view.scope();
         self.visible = if matches!(self.view, View::History(_)) {
             visible_history(&self.tasks, &self.lists, &self.query, list_id, self.today)
@@ -813,33 +990,7 @@ impl App {
             )
         };
         self.apply_holds();
-        if let Some(index) = self
-            .visible
-            .iter()
-            .position(|task| Some(task.id) == selected_task)
-        {
-            self.selection = index;
-        }
         self.clamp_selection();
-        if let Some(identity) = selected_list {
-            self.select_picker_identity(identity);
-        }
-        self.clamp_picker();
-        if let Some(picker) = self.screen.editor_picker_mut() {
-            if let Some(index) = self
-                .lists
-                .iter()
-                .position(|list| Some(list.id) == editor_list)
-            {
-                picker.selection = index;
-            }
-            picker.selection = picker.selection.min(self.lists.len().saturating_sub(1));
-            picker
-                .state
-                .select((!self.lists.is_empty()).then_some(picker.selection));
-        }
-        self.data_version = data_version;
-        Ok(())
     }
 
     fn refresh_changes(
@@ -849,6 +1000,7 @@ impl App {
         today: NaiveDate,
         manual: bool,
     ) -> Result<()> {
+        self.set_language(config.language);
         let external = store.data_version()? != self.data_version;
         let date_changed = self.today != today;
         self.today = today;
@@ -980,38 +1132,34 @@ impl App {
             .map(|task| RowIdentity::Task(task.id))
     }
 
-    fn picker_identity(&self, index: usize) -> Option<RowIdentity> {
-        if index == 0 {
-            Some(RowIdentity::AllTasks)
-        } else if index == self.lists.len() + 1 {
-            Some(RowIdentity::Trash)
-        } else {
-            self.lists
-                .get(index - 1)
-                .map(|list| RowIdentity::List(list.id))
+    fn set_language(&mut self, language: Language) {
+        if self.language != language {
+            self.language = language;
+            self.rebuild_pickers();
         }
     }
 
-    fn select_picker_identity(&mut self, identity: RowIdentity) {
-        let index = match identity {
-            RowIdentity::AllTasks => Some(0),
-            RowIdentity::Trash => Some(self.lists.len() + 1),
-            RowIdentity::List(id) => self
-                .lists
-                .iter()
-                .position(|list| list.id == id)
-                .map(|index| index + 1),
-            RowIdentity::Task(_) => None,
-        };
-        if let Some(index) = index {
-            self.picker.selection = index;
+    /// Recomputes the shown entries of the list picker and an open editor or move-task
+    /// picker from the current lists, keeping each selected entry where possible.
+    fn rebuild_pickers(&mut self) {
+        let language = self.language;
+        self.picker.rebuild(&self.lists, true, language);
+        if let Some(picker) = self.screen.editor_picker_mut() {
+            picker.rebuild(&self.lists, false, language);
         }
-        self.clamp_picker();
     }
 
-    fn clamp_picker(&mut self) {
-        self.picker.selection = self.picker.selection.min(self.lists.len() + 1);
-        self.picker.state.select(Some(self.picker.selection));
+    /// Sends a filter key to the open picker. Returns false when the key does not edit
+    /// a picker filter.
+    fn picker_filter_key(&mut self, key: KeyEvent) -> bool {
+        let language = self.language;
+        match &mut self.screen {
+            Screen::ListPicker => self.picker.filter_key(key, &self.lists, true, language),
+            Screen::EditorListPicker { picker, .. } | Screen::MoveTaskPicker { picker, .. } => {
+                picker.filter_key(key, &self.lists, false, language)
+            }
+            _ => false,
+        }
     }
 
     fn open_picker(&mut self) {
@@ -1023,14 +1171,13 @@ impl App {
             View::List(id) | View::History(Some(id)) => RowIdentity::List(id),
             View::Trash => RowIdentity::Trash,
         };
-        self.picker = ListPicker::default();
-        self.select_picker_identity(identity);
+        self.picker = ListPicker::new(&self.lists, true, identity, self.language);
         self.screen = Screen::ListPicker;
         self.last_click = None;
     }
 
     fn choose_picker(&mut self, store: &Store) -> Result<()> {
-        let view = match self.picker_identity(self.picker.selection) {
+        let view = match self.picker.selected() {
             Some(RowIdentity::AllTasks) => View::Planned,
             Some(RowIdentity::List(id)) => View::List(id),
             Some(RowIdentity::Trash) => View::Trash,
@@ -1044,17 +1191,11 @@ impl App {
         let Screen::Editor(editor) = std::mem::replace(&mut self.screen, Screen::Navigation) else {
             unreachable!()
         };
-        let selection = self
-            .lists
-            .iter()
-            .position(|list| Some(list.id) == editor.selected_list_id())
-            .unwrap_or(0);
-        let picker = ListPicker {
-            selection,
-            state: ListState::default()
-                .with_selected((!self.lists.is_empty()).then_some(selection)),
-            area: None,
-        };
+        // Without a draft list, or with one that no longer exists, the first list is selected.
+        let selected = editor
+            .selected_list_id()
+            .map_or(RowIdentity::AllTasks, RowIdentity::List);
+        let picker = ListPicker::new(&self.lists, false, selected, self.language);
         self.screen = Screen::EditorListPicker { editor, picker };
         self.last_click = None;
         Ok(())
@@ -1071,11 +1212,8 @@ impl App {
     }
 
     fn choose_editor_list(&mut self, store: &Store, config: &Config) -> Result<()> {
-        let Some(id) = self
-            .screen
-            .editor_picker()
-            .and_then(|picker| self.lists.get(picker.selection))
-            .map(|list| list.id)
+        let Some(RowIdentity::List(id)) =
+            self.screen.editor_picker().and_then(ListPicker::selected)
         else {
             return Ok(());
         };
@@ -1150,7 +1288,7 @@ impl App {
                         } else {
                             self.picker.selection.saturating_sub(1)
                         };
-                        self.clamp_picker();
+                        self.picker.clamp();
                     }
                 }
                 Screen::EditorListPicker { picker, .. } | Screen::MoveTaskPicker { picker, .. } => {
@@ -1164,11 +1302,8 @@ impl App {
                             picker.selection.saturating_add(1)
                         } else {
                             picker.selection.saturating_sub(1)
-                        }
-                        .min(self.lists.len().saturating_sub(1));
-                        picker
-                            .state
-                            .select((!self.lists.is_empty()).then_some(picker.selection));
+                        };
+                        picker.clamp();
                     }
                 }
                 Screen::Help { .. } => {
@@ -1207,10 +1342,13 @@ impl App {
                     Screen::EditorListPicker { .. } | Screen::MoveTaskPicker { .. }
                 ) =>
             {
-                let Some(list) = self.lists.get(index) else {
+                let Some(identity) = self
+                    .screen
+                    .editor_picker()
+                    .and_then(|picker| picker.entries.get(index).copied())
+                else {
                     return Ok(());
                 };
-                let identity = RowIdentity::List(list.id);
                 let double_click = self.last_click.is_some_and(|(previous, at)| {
                     previous == identity
                         && now.saturating_duration_since(at) <= Duration::from_millis(400)
@@ -1220,7 +1358,7 @@ impl App {
                 | Screen::MoveTaskPicker { picker, .. } = &mut self.screen
                 {
                     picker.selection = index;
-                    picker.state.select(Some(index));
+                    picker.clamp();
                 }
                 if double_click {
                     self.last_click = None;
@@ -1234,7 +1372,7 @@ impl App {
                 }
             }
             MouseTarget::PickerRow(index) if matches!(self.screen, Screen::ListPicker) => {
-                let Some(identity) = self.picker_identity(index) else {
+                let Some(identity) = self.picker.entries.get(index).copied() else {
                     return Ok(());
                 };
                 let double_click = self.last_click.is_some_and(|(previous, at)| {
@@ -1242,7 +1380,7 @@ impl App {
                         && now.saturating_duration_since(at) <= Duration::from_millis(400)
                 });
                 self.picker.selection = index;
-                self.clamp_picker();
+                self.picker.clamp();
                 if double_click {
                     self.last_click = None;
                     self.choose_picker(store)?;
@@ -1452,6 +1590,7 @@ impl App {
 
     fn handle_key(&mut self, key: KeyEvent, store: &mut Store, config: &Config) -> bool {
         self.last_click = None;
+        self.set_language(config.language);
         match self.dispatch_key(key, store, config) {
             Ok(quit) => quit,
             Err(error) => {
@@ -1488,6 +1627,9 @@ impl App {
 
     fn dispatch_key(&mut self, key: KeyEvent, store: &mut Store, config: &Config) -> Result<bool> {
         let action = config.action(key, self.mode());
+        if action.is_none() && self.picker_filter_key(key) {
+            return Ok(false);
+        }
         if let Some(preset) = action.and_then(due_preset)
             && let Screen::Editor(editor) = &mut self.screen
             && editor.active == DUE
@@ -1547,22 +1689,18 @@ impl App {
                 match action {
                     Some(action @ (Action::Up | Action::Down | Action::First | Action::Last)) => {
                         picker.selection =
-                            navigation_selection(picker.selection, self.lists.len(), action);
-                        picker
-                            .state
-                            .select((!self.lists.is_empty()).then_some(picker.selection));
+                            navigation_selection(picker.selection, picker.entries.len(), action);
+                        picker.clamp();
                     }
                     Some(action @ (Action::PageUp | Action::PageDown)) => {
                         let page = picker.area.map_or(10, |area| usize::from(area.height));
                         picker.selection = page_selection(
                             picker.selection,
-                            self.lists.len(),
+                            picker.entries.len(),
                             page,
                             action == Action::PageDown,
                         );
-                        picker
-                            .state
-                            .select((!self.lists.is_empty()).then_some(picker.selection));
+                        picker.clamp();
                     }
                     Some(Action::Open) => {
                         if moving {
@@ -1570,6 +1708,9 @@ impl App {
                         } else {
                             self.choose_editor_list(store, config)?;
                         }
+                    }
+                    Some(Action::Back) if !picker.filter.is_empty() => {
+                        picker.set_filter(String::new(), &self.lists, false, config.language);
                     }
                     Some(Action::Back | Action::Lists) => {
                         if moving {
@@ -1612,6 +1753,10 @@ impl App {
             Screen::ListPicker => {
                 match action {
                     Some(Action::Quit) => return Ok(true),
+                    Some(Action::Back) if !self.picker.filter.is_empty() => {
+                        self.picker
+                            .set_filter(String::new(), &self.lists, true, config.language);
+                    }
                     Some(Action::Back | Action::Lists) => {
                         self.screen = Screen::Navigation;
                         self.refresh(store)?;
@@ -1621,20 +1766,20 @@ impl App {
                     Some(action @ (Action::Up | Action::Down | Action::First | Action::Last)) => {
                         self.picker.selection = navigation_selection(
                             self.picker.selection,
-                            self.lists.len() + 2,
+                            self.picker.entries.len(),
                             action,
                         );
-                        self.clamp_picker();
+                        self.picker.clamp();
                     }
                     Some(action @ (Action::PageUp | Action::PageDown)) => {
                         let page = self.picker.area.map_or(10, |area| usize::from(area.height));
                         self.picker.selection = page_selection(
                             self.picker.selection,
-                            self.lists.len() + 2,
+                            self.picker.entries.len(),
                             page,
                             action == Action::PageDown,
                         );
-                        self.clamp_picker();
+                        self.picker.clamp();
                     }
                     Some(Action::NewList) => {
                         self.screen = Screen::ListName {
@@ -1643,8 +1788,7 @@ impl App {
                         };
                     }
                     Some(Action::RenameList) => {
-                        if let Some(RowIdentity::List(id)) =
-                            self.picker_identity(self.picker.selection)
+                        if let Some(RowIdentity::List(id)) = self.picker.selected()
                             && let Some(list) = self.lists.iter().find(|list| list.id == id)
                         {
                             self.screen = Screen::ListName {
@@ -1653,7 +1797,7 @@ impl App {
                             };
                         }
                     }
-                    Some(Action::DeleteList) => match self.picker_identity(self.picker.selection) {
+                    Some(Action::DeleteList) => match self.picker.selected() {
                         Some(RowIdentity::List(id)) => {
                             if self.lists.iter().map(|list| list.id).min() == Some(id) {
                                 self.show_message(
@@ -1674,10 +1818,15 @@ impl App {
                         }
                         _ => {}
                     },
+                    Some(Action::MoveUp | Action::MoveDown) if !self.picker.filter.is_empty() => {
+                        self.show_message(
+                            tr(config.language, "clear_filter_to_reorder"),
+                            false,
+                            Instant::now(),
+                        );
+                    }
                     Some(Action::MoveUp | Action::MoveDown) => {
-                        if let Some(RowIdentity::List(id)) =
-                            self.picker_identity(self.picker.selection)
-                        {
+                        if let Some(RowIdentity::List(id)) = self.picker.selected() {
                             store.move_list(id, action == Some(Action::MoveDown))?;
                             self.refresh(store)?;
                         }
@@ -1815,16 +1964,20 @@ impl App {
                         self.query = query;
                         self.selection = 0;
                         self.screen = Screen::Navigation;
+                        self.filter_origin = None;
+                        self.filter_invalid = false;
                         self.held.clear();
                         self.refresh(store)?;
                         self.message = None;
                     }
-                    Some(Action::Discard | Action::Back) => {
-                        self.screen = Screen::Navigation;
-                        self.refresh(store)?;
-                    }
+                    Some(Action::Discard | Action::Back) => self.discard_typed_filter(store)?,
                     _ => {
+                        let before = buffer.text.clone();
                         buffer.key(key, false);
+                        if buffer.text != before {
+                            let text = buffer.text.clone();
+                            self.apply_typed_filter(&text);
+                        }
                     }
                 }
                 return Ok(false);
@@ -1838,8 +1991,10 @@ impl App {
                             store.create_list(&buffer.text)?
                         };
                         self.screen = Screen::ListPicker;
+                        // The saved list may not match the filter, so the filter is cleared.
+                        self.picker.filter.clear();
                         self.refresh(store)?;
-                        self.select_picker_identity(RowIdentity::List(list.id));
+                        self.picker.select(RowIdentity::List(list.id));
                         self.show_message(tr(config.language, "saved"), false, Instant::now());
                     }
                     Some(Action::Discard | Action::Back) => {
@@ -1917,7 +2072,16 @@ impl App {
             Action::NewTask if matches!(self.view, View::Planned | View::List(_)) => {
                 self.new_task()
             }
-            Action::Filter => self.screen = Screen::Filter(TextBuffer::new(&self.filter)),
+            Action::Filter => {
+                self.filter_origin = Some(FilterOrigin {
+                    selected_task: self.selected_task().map(|task| task.id),
+                    selection: self.selection,
+                    list_state: self.list_state,
+                    held: self.held.clone(),
+                });
+                self.filter_invalid = false;
+                self.screen = Screen::Filter(TextBuffer::new(&self.filter));
+            }
             Action::Help => self.open_help(),
             Action::MoveTask => self.open_move_picker(store)?,
             Action::Undo if self.view != View::Trash => self.undo_last(store, config)?,
@@ -1956,21 +2120,17 @@ impl App {
             return Ok(());
         };
         let (task_id, version, list_id) = (task.id, task.version, task.list_id);
-        let selection = self
-            .lists
-            .iter()
-            .position(|list| list.id == list_id)
-            .unwrap_or(0);
+        let picker = ListPicker::new(
+            &self.lists,
+            false,
+            RowIdentity::List(list_id),
+            self.language,
+        );
         self.screen = Screen::MoveTaskPicker {
             task_id,
             version,
             list_id,
-            picker: ListPicker {
-                selection,
-                state: ListState::default()
-                    .with_selected((!self.lists.is_empty()).then_some(selection)),
-                area: None,
-            },
+            picker,
         };
         self.last_click = None;
         Ok(())
@@ -1987,7 +2147,15 @@ impl App {
             return Ok(());
         };
         let (task_id, version, previous_list) = (*task_id, *version, *list_id);
-        let Some(destination) = self.lists.get(picker.selection).cloned() else {
+        let Some(RowIdentity::List(destination_id)) = picker.selected() else {
+            return Ok(());
+        };
+        let Some(destination) = self
+            .lists
+            .iter()
+            .find(|list| list.id == destination_id)
+            .cloned()
+        else {
             return Ok(());
         };
         self.screen = Screen::Navigation;
@@ -2087,11 +2255,59 @@ impl App {
                 };
                 editor.fields[editor.active].insert(&normalized);
             }
-            Screen::Filter(buffer) | Screen::ListName { buffer, .. } => {
+            Screen::Filter(buffer) => {
+                if buffer.insert(&text.replace(['\r', '\n'], " ")) {
+                    let text = buffer.text.clone();
+                    self.apply_typed_filter(&text);
+                }
+            }
+            Screen::ListName { buffer, .. } => {
                 buffer.insert(&text.replace(['\r', '\n'], " "));
+            }
+            Screen::ListPicker => {
+                let filter = format!("{}{}", self.picker.filter, text.replace(['\r', '\n'], " "));
+                self.picker
+                    .set_filter(filter, &self.lists, true, self.language);
+            }
+            Screen::EditorListPicker { picker, .. } | Screen::MoveTaskPicker { picker, .. } => {
+                let filter = format!("{}{}", picker.filter, text.replace(['\r', '\n'], " "));
+                picker.set_filter(filter, &self.lists, false, self.language);
             }
             _ => {}
         }
+    }
+
+    /// Applies filter text typed into the open filter input to the task rows at once.
+    /// Text that does not parse keeps the rows of the last valid text.
+    fn apply_typed_filter(&mut self, text: &str) {
+        match Query::parse(text) {
+            Ok(query) => {
+                self.query = query;
+                self.filter_invalid = false;
+                self.selection = 0;
+                self.rebuild_visible();
+            }
+            Err(_) => self.filter_invalid = true,
+        }
+    }
+
+    /// Closes the filter input and restores the filter, results, held rows, selected
+    /// task, and scroll position from before it opened.
+    fn discard_typed_filter(&mut self, store: &Store) -> Result<()> {
+        self.screen = Screen::Navigation;
+        self.filter_invalid = false;
+        // The applied filter text always parsed. It changes only on Enter, or when a
+        // refresh leaves a deleted list, so the rows match the filter that is shown.
+        self.query = Query::parse(&self.filter).unwrap_or_default();
+        let Some(origin) = self.filter_origin.take() else {
+            return self.refresh(store);
+        };
+        self.held = origin.held;
+        self.list_state = origin.list_state;
+        self.refresh(store)?;
+        self.selection = origin.selection;
+        self.select_task_id(origin.selected_task);
+        Ok(())
     }
 
     fn finish_discard_confirmation(&mut self, discard: bool, store: &Store) -> Result<()> {
@@ -2341,7 +2557,7 @@ impl App {
                 self.screen = Screen::ListPicker;
                 self.undo = None;
                 self.refresh(store)?;
-                self.select_picker_identity(RowIdentity::List(destination));
+                self.picker.select(RowIdentity::List(destination));
                 self.show_message(tr(config.language, "list_deleted"), false, Instant::now());
             }
             ListDeletionOutcome::Changed(preview) => {
@@ -2610,6 +2826,7 @@ impl App {
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, config: &Config) {
+        self.set_language(config.language);
         self.mouse_targets.clear();
         self.picker.area = None;
         if let Some(picker) = self.screen.editor_picker_mut() {
@@ -2824,7 +3041,21 @@ impl App {
                     let parts = Layout::vertical([Constraint::Length(3), Constraint::Min(1)])
                         .split(sections[1]);
                     if let Screen::Filter(buffer) = &self.screen {
-                        let _ = draw_input(frame, parts[0], tr(language, "filter"), buffer, true);
+                        // A red border shows that the rows still follow the last valid text.
+                        let border = if self.filter_invalid {
+                            Color::Red
+                        } else {
+                            Color::Cyan
+                        };
+                        let _ = draw_input_bordered(
+                            frame,
+                            parts[0],
+                            tr(language, "filter"),
+                            buffer,
+                            true,
+                            None,
+                            border,
+                        );
                     } else {
                         frame.render_widget(
                             Paragraph::new(self.filter.as_str()).block(
@@ -2849,7 +3080,7 @@ impl App {
         let external_notice = format!(
             "{}  {} {}",
             tr(language, "external_update"),
-            config.keys_for(Action::Refresh),
+            config.keys_in(Action::Refresh, self.mode()),
             tr(language, "action_refresh")
         );
         let notice = if self
@@ -2882,18 +3113,20 @@ impl App {
     /// The footer entries of the current screen in priority order.
     fn footer_hints(&self, config: &Config) -> Vec<(String, String)> {
         let language = config.language;
-        let key = |action: Action| config.primary_key(action);
+        let key = |action: Action| config.primary_key_in(action, self.mode());
         let label = |name: &str| tr(language, name).to_owned();
         let pair = |action: Action, name: &str| (key(action), label(name));
         let text = |name: &str| (String::new(), label(name));
         let arrows = |up: Action, down: Action| format!("{}/{}", key(up), key(down));
         match &self.screen {
             Screen::EditorListPicker { .. } => vec![
+                text("picker_filter_hint"),
                 pair(Action::Open, "choose_short"),
                 pair(Action::Back, "action_back"),
                 pair(Action::Help, "help"),
             ],
             Screen::MoveTaskPicker { .. } => vec![
+                text("picker_filter_hint"),
                 pair(Action::Open, "move_short"),
                 pair(Action::Back, "action_back"),
                 pair(Action::Help, "help"),
@@ -2904,13 +3137,14 @@ impl App {
                 pair(Action::Back, "action_back"),
             ],
             Screen::ListPicker => vec![
+                text("picker_filter_hint"),
                 pair(Action::Open, "action_open"),
                 pair(Action::Back, "action_back"),
                 pair(Action::NewList, "new_list"),
                 pair(Action::RenameList, "rename_list"),
                 pair(
                     Action::DeleteList,
-                    if self.picker_identity(self.picker.selection) == Some(RowIdentity::Trash) {
+                    if self.picker.selected() == Some(RowIdentity::Trash) {
                         "action_empty_trash"
                     } else {
                         "action_delete_list"
@@ -3043,18 +3277,16 @@ impl App {
     }
 
     fn draw_list_picker(&mut self, frame: &mut Frame<'_>, area: Rect, language: Language) {
-        let mut rows = vec![ListItem::new(tr(language, "all_tasks"))];
-        rows.extend(ordinary_list_rows(&self.lists, language));
-        rows.push(ListItem::new(format!(
-            "{} ({})",
-            tr(language, "trash"),
-            self.tasks.iter().filter(|task| task.deleted).count()
-        )));
+        let trash_count = self.tasks.iter().filter(|task| task.deleted).count();
         self.mouse_targets = draw_list_popup(
             frame,
             area,
-            rows,
             &mut self.picker,
+            PopupLists {
+                lists: &self.lists,
+                trash_count,
+                total: self.lists.len() + 2,
+            },
             tr(language, "list_picker"),
             language,
         )
@@ -3068,12 +3300,15 @@ impl App {
             unreachable!()
         };
         let _ = draw_editor(frame, area, editor, &self.lists, language);
-        let rows = ordinary_list_rows(&self.lists, language);
         self.mouse_targets = draw_list_popup(
             frame,
             area,
-            rows,
             picker,
+            PopupLists {
+                lists: &self.lists,
+                trash_count: 0,
+                total: self.lists.len(),
+            },
             tr(language, "list_picker"),
             language,
         )
@@ -3086,12 +3321,15 @@ impl App {
         let Screen::MoveTaskPicker { picker, .. } = &mut self.screen else {
             unreachable!()
         };
-        let rows = ordinary_list_rows(&self.lists, language);
         self.mouse_targets = draw_list_popup(
             frame,
             area,
-            rows,
             picker,
+            PopupLists {
+                lists: &self.lists,
+                trash_count: 0,
+                total: self.lists.len(),
+            },
             tr(language, "move_task_picker"),
             language,
         )
@@ -3134,11 +3372,12 @@ impl App {
         let mut rows = Vec::new();
         let mut row_tasks = Vec::new();
         for group in &groups {
+            let (heading_style, row_style) = group_styles(layout, &group.key);
             if let Some(label) = &group.label {
                 // The heading counts the rows displayed under it, held rows included.
                 rows.push(ListItem::new(Line::from(Span::styled(
                     format!("{label} ({})", group.rows.len()),
-                    Style::default().fg(Color::Yellow),
+                    heading_style,
                 ))));
                 row_tasks.push(None);
             }
@@ -3174,7 +3413,7 @@ impl App {
                 let line = if row.held {
                     Line::from(Span::styled(text, Style::default().fg(Color::DarkGray)))
                 } else {
-                    Line::from(text)
+                    Line::from(Span::styled(text, row_style))
                 };
                 rows.push(ListItem::new(line));
                 row_tasks.push(Some(index));
@@ -3213,49 +3452,121 @@ impl App {
     }
 }
 
-fn ordinary_list_rows(lists: &[TaskList], language: Language) -> Vec<ListItem<'static>> {
-    let default_id = lists.iter().map(|list| list.id).min();
-    lists
-        .iter()
-        .map(|list| {
-            let marker = if Some(list.id) == default_id {
+/// The heading style and task-row style of a planning group. Today stands out, while
+/// past and closed groups are dimmed. History and Trash keep the plain styles.
+fn group_styles(layout: GroupLayout, key: &str) -> (Style, Style) {
+    let plain = (Style::default().fg(Color::Yellow), Style::default());
+    if layout != GroupLayout::Planned {
+        return plain;
+    }
+    let dim = Style::default().fg(Color::DarkGray);
+    match key {
+        "today" => (
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        "overdue" | "cancelled_today" | "cancelled" => (dim, dim),
+        "done_today" | "done" => (Style::default().fg(Color::Green), dim),
+        _ => plain,
+    }
+}
+
+/// The text of a picker entry: a list with its open-task count and default marker,
+/// All tasks without a count, or Trash with its deleted-task count.
+fn picker_row(
+    entry: RowIdentity,
+    lists: &[TaskList],
+    trash_count: usize,
+    language: Language,
+) -> String {
+    let name = picker_entry_name(entry, lists, language);
+    match entry {
+        RowIdentity::List(id) => {
+            let default_id = lists.iter().map(|list| list.id).min();
+            let marker = if Some(id) == default_id {
                 format!(" [{}]", tr(language, "default_list"))
             } else {
                 String::new()
             };
-            ListItem::new(format!(
-                "{} ({}){marker}",
-                list.name.replace(['\r', '\n'], " "),
-                list.count
-            ))
-        })
-        .collect()
+            let count = lists
+                .iter()
+                .find(|list| list.id == id)
+                .map_or(0, |list| list.count);
+            format!("{name} ({count}){marker}")
+        }
+        RowIdentity::Trash => format!("{name} ({trash_count})"),
+        RowIdentity::AllTasks | RowIdentity::Task(_) => name,
+    }
+}
+
+/// What a list popup draws its rows from.
+struct PopupLists<'a> {
+    lists: &'a [TaskList],
+    trash_count: usize,
+    /// The number of entries without a filter, which sets the popup height.
+    total: usize,
 }
 
 fn draw_list_popup(
     frame: &mut Frame<'_>,
     area: Rect,
-    rows: Vec<ListItem<'static>>,
     picker: &mut ListPicker,
+    source: PopupLists<'_>,
     title: &str,
     language: Language,
 ) -> Vec<(Rect, usize)> {
+    let rows: Vec<ListItem<'static>> = picker
+        .entries
+        .iter()
+        .map(|entry| {
+            ListItem::new(picker_row(
+                *entry,
+                source.lists,
+                source.trash_count,
+                language,
+            ))
+        })
+        .collect();
     let count = rows.len();
     let width = area.width.saturating_sub(4).min(60);
+    // The unfiltered count sets the height, so the popup does not shrink while typing.
     let height = area
         .height
-        .min((count.max(1) + 2).min(u16::MAX as usize) as u16);
+        .min((source.total.max(1) + 2).min(u16::MAX as usize) as u16);
     let popup = Rect::new(
         area.x + (area.width - width) / 2,
         area.y + (area.height - height) / 2,
         width,
         height,
     );
-    let block = Block::default().borders(Borders::ALL).title(title);
+    let filter_line = if picker.filter.is_empty() {
+        Line::from(Span::styled(
+            format!(" {} ", tr(language, "picker_filter_hint")),
+            Style::default().fg(Color::DarkGray),
+        ))
+    } else {
+        Line::from(format!(
+            " {}: {} ",
+            tr(language, "filter"),
+            picker.filter.replace(['\r', '\n'], " ")
+        ))
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .title_bottom(filter_line);
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
     if rows.is_empty() {
-        frame.render_widget(Paragraph::new(tr(language, "no_lists")).block(block), popup);
+        let empty = if picker.filter.is_empty() {
+            "no_lists"
+        } else {
+            "no_matching_lists"
+        };
+        frame.render_widget(Paragraph::new(tr(language, empty)).block(block), popup);
     } else {
         frame.render_stateful_widget(
             List::new(rows)
@@ -3301,10 +3612,23 @@ fn draw_input_placeholder(
     active: bool,
     placeholder: Option<&str>,
 ) -> (Rect, usize, usize) {
+    let border = if active { Color::Cyan } else { Color::DarkGray };
+    draw_input_bordered(frame, area, title, buffer, active, placeholder, border)
+}
+
+fn draw_input_bordered(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    title: &str,
+    buffer: &TextBuffer,
+    active: bool,
+    placeholder: Option<&str>,
+    border: Color,
+) -> (Rect, usize, usize) {
     let block = Block::default()
         .borders(Borders::TOP | Borders::BOTTOM)
         .title(title)
-        .border_style(Style::default().fg(if active { Color::Cyan } else { Color::DarkGray }));
+        .border_style(Style::default().fg(border));
     let inner = block.inner(area);
     let layout = TextLayout::new(&buffer.text, usize::MAX);
     let (row, column) = buffer.cursor_position();
@@ -3845,6 +4169,7 @@ fn help_sections(config: &Config, origin: HelpOrigin) -> Vec<(&'static str, Vec<
                 Action::MoveUp,
                 Action::MoveDown,
                 Action::Undo,
+                Action::Refresh,
                 Action::CopyText,
                 Action::Quit,
             ]
@@ -3853,33 +4178,49 @@ fn help_sections(config: &Config, origin: HelpOrigin) -> Vec<(&'static str, Vec<
                 // In Trash, the trash keys delete the selected task forever.
                 let extra = (item == Action::Trash)
                     .then(|| builtin(config.keys_for(Action::Trash), "help_delete_forever"));
-                std::iter::once(action(item)).chain(extra)
+                // A printable refresh key works only in task navigation.
+                let entry = if item == Action::Refresh {
+                    HelpEntry::ActionIn(item, Mode::Tasks)
+                } else {
+                    action(item)
+                };
+                std::iter::once(entry).chain(extra)
             })
             .collect(),
         ),
         (
             "help_lists",
-            [
-                Action::Open,
-                Action::Back,
-                Action::NewList,
-                Action::RenameList,
-                Action::DeleteList,
-                Action::MoveUp,
-                Action::MoveDown,
-                Action::Quit,
-            ]
-            .into_iter()
-            .flat_map(|item| {
-                // On the Trash entry, the delete_list keys empty Trash.
-                let extra = (item == Action::DeleteList).then(|| {
-                    builtin(
-                        config.keys_for(Action::DeleteList),
-                        "help_empty_trash_entry",
-                    )
-                });
-                std::iter::once(action(item)).chain(extra)
-            })
+            std::iter::once(builtin(
+                tr(language, "help_typed_text").to_owned(),
+                "help_picker_filter",
+            ))
+            .chain(std::iter::once(builtin(
+                keys(&["backspace"]),
+                "help_picker_backspace",
+            )))
+            .chain(
+                [
+                    Action::Open,
+                    Action::Back,
+                    Action::NewList,
+                    Action::RenameList,
+                    Action::DeleteList,
+                    Action::MoveUp,
+                    Action::MoveDown,
+                    Action::Quit,
+                ]
+                .into_iter()
+                .flat_map(|item| {
+                    // On the Trash entry, the delete_list keys empty Trash.
+                    let extra = (item == Action::DeleteList).then(|| {
+                        builtin(
+                            config.keys_in(Action::DeleteList, Mode::Lists),
+                            "help_empty_trash_entry",
+                        )
+                    });
+                    std::iter::once(HelpEntry::ActionIn(item, Mode::Lists)).chain(extra)
+                }),
+            )
             .collect(),
         ),
         ("help_editor", editor_entries),
@@ -3929,7 +4270,14 @@ fn help_sections(config: &Config, origin: HelpOrigin) -> Vec<(&'static str, Vec<
                 Action::ScrollRight,
             ]
             .into_iter()
-            .map(action)
+            .map(|item| {
+                // Only the refresh keys that work on every screen belong here.
+                if item == Action::Refresh {
+                    HelpEntry::ActionIn(item, Mode::Help)
+                } else {
+                    action(item)
+                }
+            })
             .collect(),
         ),
     ];
@@ -3960,6 +4308,10 @@ fn help_lines(config: &Config, origin: HelpOrigin) -> Vec<Line<'static>> {
             let (keys, label) = match entry {
                 HelpEntry::Action(action) => (
                     config.keys_for(action),
+                    tr(language, &format!("action_{}", action.name())).to_owned(),
+                ),
+                HelpEntry::ActionIn(action, mode) => (
+                    config.keys_in(action, mode),
                     tr(language, &format!("action_{}", action.name())).to_owned(),
                 ),
                 HelpEntry::Builtin(keys, label) => (keys, tr(language, label).to_owned()),
@@ -3995,6 +4347,17 @@ mod tests {
     use crate::sync::{FailureKind, sync_once};
     use ratatui::backend::TestBackend;
     use tempfile::TempDir;
+
+    impl App {
+        /// The list-picker entry shown at `index`.
+        fn picker_identity(&self, index: usize) -> Option<RowIdentity> {
+            self.picker.entries.get(index).copied()
+        }
+
+        fn select_picker_identity(&mut self, identity: RowIdentity) {
+            self.picker.select(identity);
+        }
+    }
 
     struct RecordingClipboard {
         writes: Arc<std::sync::Mutex<Vec<String>>>,
@@ -4169,6 +4532,10 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl(letter: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(letter), KeyModifiers::CONTROL)
     }
 
     fn fixture() -> (TempDir, Store, Config) {
@@ -4500,18 +4867,24 @@ mod tests {
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         assert!(matches!(app.screen, Screen::Navigation));
         app.open_picker();
-        app.handle_key(key(KeyCode::Char('?')), &mut store, &config);
+        app.handle_key(key(KeyCode::F(1)), &mut store, &config);
         let picker_help = rendered(&mut app, &config, 80, 40);
         let lists_at = picker_help.find(tr(config.language, "help_lists")).unwrap();
         let tasks_at = picker_help.find(tr(config.language, "help_tasks")).unwrap();
         assert!(lists_at < tasks_at);
-        assert!(picker_help.contains("n / N"));
+        assert!(picker_help.contains("Ctrl+N"));
+        assert!(picker_help.contains(tr(config.language, "help_picker_filter")));
         let text_help = rendered(&mut app, &config, 80, 120);
         assert!(text_help.contains(tr(config.language, "help_select_all")));
         assert!(text_help.contains("Ctrl+A"));
         assert!(text_help.contains("Ctrl+Shift+Z"));
         assert!(text_help.contains("Alt+Up / K"));
         assert!(text_help.contains("q / Ctrl+C"));
+        // Task views list `r` for Refresh. Everywhere lists only F5.
+        let refresh = tr(config.language, "action_refresh");
+        assert_eq!(text_help.matches(refresh).count(), 2, "{text_help}");
+        assert!(text_help.contains(&format!("{:<30} {refresh}", "r / F5")));
+        assert!(text_help.contains(&format!(" {:<30} {refresh}", "F5")));
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         assert!(matches!(app.screen, Screen::ListPicker));
     }
@@ -4521,7 +4894,11 @@ mod tests {
         let (_directory, mut store, config) = fixture();
         let mut app = App::new(&store, today()).unwrap();
         app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
-        app.handle_key(key(KeyCode::Char('N')), &mut store, &config);
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
         app.paste("Ærinder");
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         assert!(matches!(app.screen, Screen::ListPicker));
@@ -4537,7 +4914,11 @@ mod tests {
                     .id
             ))
         );
-        app.handle_key(key(KeyCode::Char('R')), &mut store, &config);
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
         if let Screen::ListName { buffer, .. } = &mut app.screen {
             *buffer = TextBuffer::new("Shopping");
         }
@@ -4549,7 +4930,11 @@ mod tests {
                 .iter()
                 .any(|list| list.name == "Shopping")
         );
-        app.handle_key(key(KeyCode::Char('N')), &mut store, &config);
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
         app.paste("Discarded");
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         assert!(matches!(app.screen, Screen::ListPicker));
@@ -4817,8 +5202,8 @@ mod tests {
         let mut app = App::new(&store, today()).unwrap();
         app.open_picker();
         app.select_picker_identity(RowIdentity::Trash);
-        assert!(rendered(&mut app, &config, 100, 24).contains("d Empty Trash"));
-        app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
+        assert!(rendered(&mut app, &config, 100, 24).contains("Ctrl+D Empty Trash"));
+        app.handle_key(key(KeyCode::Delete), &mut store, &config);
         app.handle_key(key(KeyCode::Tab), &mut store, &config);
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         assert!(matches!(app.screen, Screen::ListPicker));
@@ -4829,14 +5214,14 @@ mod tests {
         assert!(store.tasks().unwrap().is_empty());
         assert_eq!(message(&app), "Trash emptied");
         assert!(rendered(&mut app, &config, 100, 24).contains("Trash (0)"));
-        app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
+        app.handle_key(key(KeyCode::Delete), &mut store, &config);
         assert!(matches!(app.screen, Screen::ListPicker));
         assert_eq!(message(&app), "Trash is empty");
         // Trash emptied elsewhere closes the open confirmation.
         let task = store.create_task(&input(1, "Three")).unwrap();
         store.set_deleted(task.id, task.version, true).unwrap();
         app.refresh(&store).unwrap();
-        app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
+        app.handle_key(key(KeyCode::Delete), &mut store, &config);
         assert!(matches!(app.screen, Screen::EmptyTrashConfirm { .. }));
         let preview = external.preview_empty_trash().unwrap();
         external.empty_trash(&preview).unwrap();
@@ -5785,7 +6170,7 @@ mod tests {
         let offset = app.list_state.offset();
         let selected_row = app.list_state.selected();
         assert!(offset > 0);
-        for close in [KeyCode::Esc, KeyCode::Char('l'), KeyCode::Enter] {
+        for close in [KeyCode::Esc, KeyCode::Enter] {
             app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
             rendered(&mut app, &config, 80, 12);
             assert_eq!(app.list_state.offset(), offset);
@@ -5907,13 +6292,13 @@ mod tests {
         rendered(&mut app, &config, 80, 12);
         let offset = app.picker.state.offset();
         assert!(offset > 0);
-        app.handle_key(key(KeyCode::Char('?')), &mut store, &config);
+        app.handle_key(key(KeyCode::F(1)), &mut store, &config);
         rendered(&mut app, &config, 80, 12);
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         assert!(matches!(app.screen, Screen::ListPicker));
         assert_eq!(app.picker.state.offset(), offset);
-        for action in ['N', 'R'] {
-            app.handle_key(key(KeyCode::Char(action)), &mut store, &config);
+        for action in ['n', 'r'] {
+            app.handle_key(ctrl(action), &mut store, &config);
             app.paste("Cancel this edit");
             app.handle_key(key(KeyCode::Esc), &mut store, &config);
             assert!(matches!(app.screen, Screen::ListPicker));
@@ -5923,7 +6308,12 @@ mod tests {
             );
             assert_eq!(app.picker.state.offset(), offset);
         }
-        app.handle_key(key(KeyCode::Char('N')), &mut store, &config);
+        // A filter is cleared when a new list is saved, so the new list can be selected.
+        for character in "List 2".chars() {
+            app.handle_key(key(KeyCode::Char(character)), &mut store, &config);
+        }
+        assert_eq!(app.picker.filter, "List 2");
+        app.handle_key(ctrl('n'), &mut store, &config);
         app.paste("New list");
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         let created = store
@@ -5936,6 +6326,7 @@ mod tests {
             app.picker_identity(app.picker.selection),
             Some(RowIdentity::List(created.id))
         );
+        assert_eq!(app.picker.filter, "");
         external
             .rename_list(created.id, "Renamed elsewhere")
             .unwrap();
@@ -5966,7 +6357,7 @@ mod tests {
         assert!(!first_row.contains('('));
         for identity in [RowIdentity::AllTasks, RowIdentity::Trash] {
             app.select_picker_identity(identity);
-            app.handle_key(key(KeyCode::Char('R')), &mut store, &config);
+            app.handle_key(ctrl('r'), &mut store, &config);
             assert!(matches!(app.screen, Screen::ListPicker));
             for code in [KeyCode::Up, KeyCode::Down] {
                 app.handle_key(KeyEvent::new(code, KeyModifiers::ALT), &mut store, &config);
@@ -6385,7 +6776,7 @@ mod tests {
         assert!(matches!(app.screen, Screen::ListPicker));
         assert_eq!(store.tasks().unwrap(), original);
         app.select_picker_identity(RowIdentity::List(work.id));
-        app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
+        app.handle_key(key(KeyCode::Delete), &mut store, &config);
         let display = rendered(&mut app, &config, 90, 24);
         for text in [
             "Delete this list?",
@@ -6419,7 +6810,7 @@ mod tests {
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         assert!(matches!(app.screen, Screen::ListPicker));
         assert_eq!(store.lists().unwrap().len(), 2);
-        app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
+        app.handle_key(key(KeyCode::Delete), &mut store, &config);
         app.handle_key(
             KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT),
             &mut store,
@@ -6686,7 +7077,7 @@ mod tests {
         let mut app = App::new(&store, today()).unwrap();
         app.open_picker();
         app.picker.selection = 20;
-        app.clamp_picker();
+        app.picker.clamp();
         rendered(&mut app, &config, 90, 14);
         let selection = app.picker.selection;
         let scroll = app.picker.state;
@@ -7461,7 +7852,8 @@ mod tests {
                 .iter()
                 .all(|(_, target)| matches!(target, MouseTarget::EditorListRow(_)))
         );
-        app.paste("Ignore paste");
+        // Pasted and typed text goes to the picker filter, never to the draft.
+        app.paste("Filter paste");
         for event in [
             key(KeyCode::Char('N')),
             key(KeyCode::Char('R')),
@@ -7471,7 +7863,18 @@ mod tests {
         ] {
             app.handle_key(event, &mut store, &config);
         }
-        assert!(matches!(app.screen, Screen::EditorListPicker { .. }));
+        assert!(matches!(
+            &app.screen,
+            Screen::EditorListPicker { picker, .. }
+                if picker.filter == "Filter pasteNR" && picker.entries.is_empty()
+        ));
+        assert!(rendered(&mut app, &config, 80, 24).contains("No matching lists"));
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(matches!(
+            &app.screen,
+            Screen::EditorListPicker { picker, .. } if picker.filter.is_empty()
+        ));
         app.handle_key(key(KeyCode::Down), &mut store, &config);
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         assert!(
@@ -7601,7 +8004,7 @@ mod tests {
         let mut external = Store::open(&directory.path().join("tasks.db")).unwrap();
         let mut app = App::new(&store, today()).unwrap();
         app.picker.selection = 7;
-        app.clamp_picker();
+        app.picker.clamp();
         let navigation_picker = app.picker.state;
         app.open_selection(&store).unwrap();
         if let Screen::Editor(editor) = &mut app.screen {
@@ -7617,7 +8020,7 @@ mod tests {
         let offset = picker.state.offset();
         assert!(offset > 0);
         assert_eq!(app.picker.state, navigation_picker);
-        app.handle_key(key(KeyCode::Char('?')), &mut store, &config);
+        app.handle_key(key(KeyCode::F(1)), &mut store, &config);
         app.handle_key(key(KeyCode::F(3)), &mut store, &config);
         external.rename_list(selected, "Renamed selection").unwrap();
         external.move_list(selected, false).unwrap();
@@ -7962,8 +8365,12 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal.draw(|frame| app.draw(frame, &config)).unwrap();
         let buffer = terminal.backend().buffer();
+        // Headings are yellow text, black on yellow for Today, or green for Done today.
         let headings: Vec<_> = (0..30)
-            .filter(|row| buffer[(2, *row)].fg == Color::Yellow)
+            .filter(|row| {
+                let cell = &buffer[(2, *row)];
+                cell.fg == Color::Yellow || cell.bg == Color::Yellow || cell.fg == Color::Green
+            })
             .map(|row| {
                 (0..100)
                     .map(|column| buffer[(column, row)].symbol())
@@ -8162,12 +8569,8 @@ mod tests {
         for (code, identity) in [
             (KeyCode::Up, RowIdentity::Trash),
             (KeyCode::Down, RowIdentity::AllTasks),
-            (KeyCode::Char('k'), RowIdentity::Trash),
-            (KeyCode::Char('j'), RowIdentity::AllTasks),
             (KeyCode::End, RowIdentity::Trash),
             (KeyCode::Home, RowIdentity::AllTasks),
-            (KeyCode::Char('G'), RowIdentity::Trash),
-            (KeyCode::Char('g'), RowIdentity::AllTasks),
             (KeyCode::Right, RowIdentity::Trash),
             (KeyCode::Left, RowIdentity::AllTasks),
         ] {
@@ -8233,8 +8636,6 @@ mod tests {
         for (code, expected) in [
             (KeyCode::Up, last),
             (KeyCode::Down, 0),
-            (KeyCode::Char('G'), last),
-            (KeyCode::Char('g'), 0),
             (KeyCode::End, last),
             (KeyCode::Home, 0),
             (KeyCode::Right, last),
@@ -8248,7 +8649,9 @@ mod tests {
                 matches!(&app.screen, Screen::EditorListPicker { editor, .. } if editor.fields == draft.fields && editor.original == draft.original)
             );
         }
-        app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
+        // A `lists` key that is not printable still cancels the picker.
+        let lists = Config::from_toml("[keys]\nlists = ['ctrl+l']").unwrap();
+        app.handle_key(ctrl('l'), &mut store, &lists);
         assert!(matches!(&app.screen, Screen::Editor(editor) if editor.fields == draft.fields));
         assert_eq!(store.task(task.id).unwrap(), task);
 
@@ -8787,7 +9190,7 @@ mod tests {
         let errands = store.create_list("Errands").unwrap();
         app.refresh(&store).unwrap();
         app.select_picker_identity(RowIdentity::List(errands.id));
-        app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
+        app.handle_key(key(KeyCode::Delete), &mut store, &config);
         app.handle_key(key(KeyCode::Char('y')), &mut store, &config);
         assert!(app.undo.is_none());
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
@@ -8877,13 +9280,23 @@ mod tests {
             panic!()
         };
         assert_eq!(app.lists[picker.selection].id, work.id);
-        app.handle_key(key(KeyCode::Char('j')), &mut store, &config);
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         assert!(matches!(app.screen, Screen::Navigation));
         assert_eq!(store.task(task.id).unwrap(), task);
+        // Typing filters the move-task picker. Esc clears the filter, then cancels.
         app.handle_key(key(KeyCode::Char('m')), &mut store, &config);
-        app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
+        app.handle_key(key(KeyCode::Char('h')), &mut store, &config);
+        app.handle_key(key(KeyCode::Char('o')), &mut store, &config);
+        let Screen::MoveTaskPicker { picker, .. } = &app.screen else {
+            panic!()
+        };
+        assert_eq!(picker.entries, vec![RowIdentity::List(home.id)]);
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(matches!(app.screen, Screen::MoveTaskPicker { .. }));
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
         assert!(matches!(app.screen, Screen::Navigation));
+        assert_eq!(store.task(task.id).unwrap(), task);
         app.handle_key(key(KeyCode::Char('m')), &mut store, &config);
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         assert_eq!(store.task(task.id).unwrap(), task);
@@ -9127,7 +9540,7 @@ mod tests {
         assert!(matches!(app.screen, Screen::Navigation));
         app.open_picker();
         app.select_picker_identity(RowIdentity::List(work.id));
-        app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
+        app.handle_key(key(KeyCode::Delete), &mut store, &config);
         assert!(matches!(app.screen, Screen::DeleteListConfirm { .. }));
         let screen = rendered(&mut app, &config, 80, 24);
         assert!(screen.contains("y Yes"));
@@ -9135,7 +9548,11 @@ mod tests {
         app.handle_key(key(KeyCode::Char('n')), &mut store, &config);
         assert!(matches!(app.screen, Screen::ListPicker));
         assert_eq!(store.lists().unwrap().len(), 2);
-        app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+            &mut store,
+            &config,
+        );
         app.handle_key(key(KeyCode::Char('y')), &mut store, &config);
         assert!(matches!(app.screen, Screen::ListPicker));
         assert_eq!(store.lists().unwrap().len(), 1);
@@ -9212,7 +9629,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_quits_from_navigation_and_shift_letters_reorder_tasks_and_lists() {
+    fn ctrl_c_quits_from_navigation_and_shift_letters_reorder_tasks_but_type_in_the_picker() {
         let (_directory, mut store, config) = fixture();
         let first = store.create_task(&input(1, "First")).unwrap();
         let second = store.create_task(&input(1, "Second")).unwrap();
@@ -9238,20 +9655,32 @@ mod tests {
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         app.open_picker();
         app.select_picker_identity(RowIdentity::List(beta.id));
-        app.handle_key(
-            KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT),
-            &mut store,
-            &config,
-        );
-        assert_eq!(
+        let list_ids = |store: &Store| {
             store
                 .lists()
                 .unwrap()
                 .iter()
                 .map(|l| l.id)
-                .collect::<Vec<_>>(),
-            vec![1, beta.id, alpha.id]
+                .collect::<Vec<_>>()
+        };
+        // In the picker, K types into the filter and Alt+Up reorders.
+        app.handle_key(
+            KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT),
+            &mut store,
+            &config,
         );
+        assert_eq!(app.picker.filter, "K");
+        assert_eq!(list_ids(&store), vec![1, alpha.id, beta.id]);
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(matches!(app.screen, Screen::ListPicker));
+        assert_eq!(app.picker.filter, "");
+        app.select_picker_identity(RowIdentity::List(beta.id));
+        app.handle_key(
+            KeyEvent::new(KeyCode::Up, KeyModifiers::ALT),
+            &mut store,
+            &config,
+        );
+        assert_eq!(list_ids(&store), vec![1, beta.id, alpha.id]);
         assert_eq!(
             app.picker_identity(app.picker.selection),
             Some(RowIdentity::List(beta.id))
@@ -9263,11 +9692,12 @@ mod tests {
     }
 
     #[test]
-    fn picker_accepts_lowercase_new_and_rename_keys() {
+    fn picker_creates_and_renames_lists_with_control_keys() {
         let (_directory, mut store, config) = fixture();
         let mut app = App::new(&store, today()).unwrap();
         app.open_picker();
-        app.handle_key(key(KeyCode::Char('n')), &mut store, &config);
+        let control = |letter| KeyEvent::new(KeyCode::Char(letter), KeyModifiers::CONTROL);
+        app.handle_key(control('n'), &mut store, &config);
         assert!(matches!(app.screen, Screen::ListName { id: None, .. }));
         app.paste("Errands");
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
@@ -9277,21 +9707,37 @@ mod tests {
             app.picker_identity(app.picker.selection),
             Some(RowIdentity::List(errands.id))
         );
-        app.handle_key(key(KeyCode::Char('r')), &mut store, &config);
+        app.handle_key(control('r'), &mut store, &config);
         assert!(matches!(app.screen, Screen::ListName { id: Some(id), .. } if id == errands.id));
-        app.handle_key(
-            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
-            &mut store,
-            &config,
-        );
+        app.handle_key(control('a'), &mut store, &config);
         app.paste("Shopping");
         app.handle_key(key(KeyCode::Enter), &mut store, &config);
         assert_eq!(store.lists().unwrap().pop().unwrap().name, "Shopping");
         let screen = rendered(&mut app, &config, 80, 24);
-        assert!(screen.contains("n New list"));
-        assert!(screen.contains("r Rename list"));
+        for text in [
+            "Type to filter",
+            "Ctrl+N New list",
+            "Ctrl+R Rename list",
+            "Ctrl+D Delete list",
+            "Alt+Up/Alt+Down Reorder",
+            "F1 Help",
+            "Ctrl+C Quit",
+        ] {
+            assert!(screen.contains(text), "{text}\n{screen}");
+        }
+        for text in ["n New list", "r Rename list", "? Help", "q Quit"] {
+            assert!(!screen.contains(&format!(" {text}")), "{text}\n{screen}");
+        }
+        // Letters, including shortcut letters, type into the filter.
+        for letter in ['n', 'r', 'd', 'q', '?', 'j', 'k', 'l'] {
+            app.handle_key(key(KeyCode::Char(letter)), &mut store, &config);
+            assert!(matches!(app.screen, Screen::ListPicker), "{letter}");
+        }
+        assert_eq!(app.picker.filter, "nrdq?jkl");
+        assert_eq!(store.lists().unwrap().len(), 2);
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
-        app.handle_key(key(KeyCode::Char('r')), &mut store, &config);
+        assert!(matches!(app.screen, Screen::ListPicker));
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
         assert!(matches!(app.screen, Screen::Navigation));
     }
 
@@ -9841,5 +10287,440 @@ mod tests {
             sync_failure_message(Language::En, FailureKind::Denied),
             "Sync failed: The sync storage refused access. Your changes stay on this computer."
         );
+    }
+
+    #[test]
+    fn r_refreshes_task_views_and_keeps_restore_and_reopen() {
+        let (directory, mut store, config) = fixture();
+        let mut external = Store::open(&directory.path().join("tasks.db")).unwrap();
+        let deleted = store.create_task(&input(1, "Deleted")).unwrap();
+        store
+            .set_deleted(deleted.id, deleted.version, true)
+            .unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        external.create_task(&input(1, "From elsewhere")).unwrap();
+        app.refresh_changes(&store, &config, today(), false)
+            .unwrap();
+        assert!(app.external_update);
+        assert!(rendered(&mut app, &config, 100, 24).contains("r / F5 Refresh data"));
+        app.handle_key(key(KeyCode::Char('r')), &mut store, &config);
+        assert!(!app.external_update);
+        assert_eq!(message(&app), tr(Language::En, "refreshed"));
+        // In Trash, r restores the selected task and does not refresh.
+        app.message = None;
+        app.set_view(View::Trash, &store).unwrap();
+        assert_eq!(app.mode(), Mode::Trash);
+        app.handle_key(key(KeyCode::Char('r')), &mut store, &config);
+        assert!(!store.task(deleted.id).unwrap().deleted);
+        assert_ne!(message(&app), tr(Language::En, "refreshed"));
+        // In the editor, r is text and the notice names only F5.
+        app.set_view(View::Planned, &store).unwrap();
+        external.create_task(&input(1, "Second change")).unwrap();
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        app.refresh_changes(&store, &config, today(), false)
+            .unwrap();
+        app.handle_key(key(KeyCode::Char('r')), &mut store, &config);
+        let Screen::Editor(editor) = &app.screen else {
+            panic!()
+        };
+        assert!(editor.fields[DESCRIPTION].text.ends_with('r'));
+        let screen = rendered(&mut app, &config, 100, 24);
+        assert!(screen.contains("F5 Refresh data"));
+        assert!(!screen.contains("r / F5"));
+    }
+
+    #[test]
+    fn filter_applies_while_typing_and_esc_restores_the_previous_filter() {
+        let (_directory, mut store, config) = fixture();
+        let milk = store.create_task(&input(1, "Buy milk")).unwrap();
+        let mom = store.create_task(&input(1, "Call mom")).unwrap();
+        let mint = store.create_task(&input(1, "Plant mint")).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.select_task_id(Some(mom.id));
+        app.handle_key(key(KeyCode::Char('/')), &mut store, &config);
+        app.handle_key(key(KeyCode::Char('m')), &mut store, &config);
+        assert_eq!(visible_ids(&app), vec![milk.id, mom.id, mint.id]);
+        app.handle_key(key(KeyCode::Char('i')), &mut store, &config);
+        assert_eq!(visible_ids(&app), vec![milk.id, mint.id]);
+        assert_eq!(app.selection, 0);
+        app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
+        assert_eq!(visible_ids(&app), vec![milk.id]);
+        assert!(matches!(app.screen, Screen::Filter(_)));
+        assert_eq!(app.filter, "");
+        // Text that does not parse keeps the last valid rows and turns the border red.
+        app.handle_key(key(KeyCode::Char(' ')), &mut store, &config);
+        app.handle_key(key(KeyCode::Char('"')), &mut store, &config);
+        assert!(app.filter_invalid);
+        assert_eq!(visible_ids(&app), vec![milk.id]);
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| app.draw(frame, &config)).unwrap();
+        assert_eq!(terminal.backend().buffer()[(0, 2)].fg, Color::Red);
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Filter(_)));
+        assert!(app.message.as_ref().is_some_and(|message| message.is_error));
+        app.handle_key(key(KeyCode::Backspace), &mut store, &config);
+        assert!(!app.filter_invalid);
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        assert_eq!(app.filter, "mil ");
+        assert_eq!(visible_ids(&app), vec![milk.id]);
+        // Esc restores the applied filter, its rows, and the selected task.
+        app.handle_key(key(KeyCode::Char('/')), &mut store, &config);
+        app.paste("x");
+        assert!(app.visible.is_empty());
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        assert_eq!(app.filter, "mil ");
+        assert_eq!(visible_ids(&app), vec![milk.id]);
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        app.select_task_id(Some(mint.id));
+        app.handle_key(key(KeyCode::Char('/')), &mut store, &config);
+        app.paste("mom");
+        assert_eq!(visible_ids(&app), vec![mom.id]);
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert_eq!(visible_ids(&app), vec![milk.id, mom.id, mint.id]);
+        assert_eq!(app.selected_task().unwrap().id, mint.id);
+    }
+
+    #[test]
+    fn planning_groups_color_today_and_dim_past_and_closed_tasks() {
+        let (_directory, mut store, config) = fixture();
+        let mut add = |title: &str, days: Option<i64>, status: Option<Status>| {
+            let mut value = input(1, title);
+            value.due = days.map(|days| today() + chrono::Duration::days(days));
+            let task = store.create_task(&value).unwrap();
+            if let Some(status) = status {
+                store
+                    .set_status_on(task.id, task.version, status, today())
+                    .unwrap();
+            }
+        };
+        add("Past task", Some(-1), None);
+        add("Today task", Some(0), None);
+        add("Tomorrow task", Some(1), None);
+        add("Done task", None, Some(Status::Done));
+        add("Cancelled task", None, Some(Status::Cancelled));
+        let mut app = App::new(&store, today()).unwrap();
+        app.selection = 2;
+        let mut terminal = Terminal::new(TestBackend::new(80, 30)).unwrap();
+        terminal.draw(|frame| app.draw(frame, &config)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let row_of = |text: &str| {
+            (0..30)
+                .find(|row| {
+                    (0..80)
+                        .map(|column| buffer[(column, *row)].symbol())
+                        .collect::<String>()
+                        .contains(text)
+                })
+                .unwrap_or_else(|| panic!("{text} is not drawn"))
+        };
+        // The style of the first character of the row's text, after the selection marker.
+        let style = |text: &str| {
+            let cell = &buffer[(2, row_of(text))];
+            (cell.fg, cell.bg, cell.modifier.contains(Modifier::BOLD))
+        };
+        let dark = (Color::DarkGray, Color::Reset, false);
+        assert_eq!(style("Earlier"), dark);
+        assert_eq!(style("Past task"), dark);
+        assert_eq!(style("Today -"), (Color::Black, Color::Yellow, true));
+        assert_eq!(style("Today task"), (Color::Reset, Color::Reset, true));
+        assert_eq!(style("Tomorrow -"), (Color::Yellow, Color::Reset, false));
+        assert_eq!(style("Tomorrow task"), (Color::Cyan, Color::Reset, true));
+        assert_eq!(style("Done today"), (Color::Green, Color::Reset, false));
+        assert_eq!(style("Done task"), dark);
+        assert_eq!(style("Cancelled today"), dark);
+        assert_eq!(style("Cancelled task"), dark);
+        // The selected row keeps the selection style on a dimmed row.
+        app.selection = 0;
+        terminal.draw(|frame| app.draw(frame, &config)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let past = (0..30)
+            .find(|row| {
+                (0..80)
+                    .map(|column| buffer[(column, *row)].symbol())
+                    .collect::<String>()
+                    .contains("Past task")
+            })
+            .unwrap();
+        assert_eq!(buffer[(0, past)].symbol(), ">");
+        assert_eq!(buffer[(2, past)].fg, Color::Cyan);
+        // History keeps yellow headings and plain rows.
+        app.open_history(&store).unwrap();
+        terminal.draw(|frame| app.draw(frame, &config)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let heading = (0..30)
+            .find(|row| {
+                (0..80)
+                    .map(|column| buffer[(column, *row)].symbol())
+                    .collect::<String>()
+                    .contains("Today -")
+            })
+            .unwrap();
+        assert_eq!(buffer[(2, heading)].fg, Color::Yellow);
+        assert_eq!(buffer[(2, heading)].bg, Color::Reset);
+    }
+
+    #[test]
+    fn picker_filter_survives_round_trips_and_resets_a_stale_scroll() {
+        let (directory, mut store, mut config) = fixture();
+        for index in 0..25 {
+            store.create_list(&format!("List {index}")).unwrap();
+        }
+        let shopping = store.create_list("Shopping").unwrap();
+        let home = store.create_list("Home").unwrap();
+        let mut external = Store::open(&directory.path().join("tasks.db")).unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
+        app.handle_key(key(KeyCode::End), &mut store, &config);
+        rendered(&mut app, &config, 80, 14);
+        assert!(app.picker.state.offset() > 0);
+        // Typing after scrolling shows every match from the top, also when the
+        // selected match is not the first one.
+        for character in "ho".chars() {
+            app.handle_key(key(KeyCode::Char(character)), &mut store, &config);
+        }
+        assert_eq!(
+            app.picker.entries,
+            vec![RowIdentity::List(shopping.id), RowIdentity::List(home.id)]
+        );
+        assert_eq!(app.picker.selected(), Some(RowIdentity::List(home.id)));
+        rendered(&mut app, &config, 80, 14);
+        assert_eq!(app.picker.state.offset(), 0);
+        assert_eq!(app.mouse_targets.len(), 2);
+        // Backspace to an empty filter keeps the selected entry.
+        app.handle_key(key(KeyCode::Backspace), &mut store, &config);
+        app.handle_key(key(KeyCode::Backspace), &mut store, &config);
+        assert_eq!(app.picker.filter, "");
+        assert_eq!(app.picker.selected(), Some(RowIdentity::List(home.id)));
+        // Help, the language picker, and an external refresh keep the filter text.
+        for character in "ho".chars() {
+            app.handle_key(key(KeyCode::Char(character)), &mut store, &config);
+        }
+        app.handle_key(key(KeyCode::F(1)), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Help { .. }));
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        app.handle_key(key(KeyCode::F(3)), &mut store, &config);
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        app.apply_language_change(&mut config, &directory.path().join("config.toml"))
+            .unwrap();
+        external.create_list("Hobby").unwrap();
+        app.refresh_changes(&store, &config, today(), false)
+            .unwrap();
+        assert!(matches!(app.screen, Screen::ListPicker));
+        assert_eq!(app.picker.filter, "ho");
+        assert_eq!(app.picker.selected(), Some(RowIdentity::List(home.id)));
+        assert_eq!(app.picker.entries.len(), 3);
+        // A selected list deleted elsewhere leaves a valid selection among the matches.
+        let preview = external.preview_list_deletion(home.id).unwrap();
+        external.delete_list(&preview).unwrap();
+        app.refresh_changes(&store, &config, today(), false)
+            .unwrap();
+        assert_eq!(app.picker.entries.len(), 2);
+        assert!(app.picker.selected().is_some());
+    }
+
+    #[test]
+    fn filter_input_esc_restores_held_rows_and_follows_a_deleted_list() {
+        let (directory, mut store, config) = fixture();
+        let local_today = Local::now().date_naive();
+        let work = store.create_list("Work").unwrap();
+        for title in ["Held milk", "Open bread"] {
+            let mut value = input(work.id, title);
+            value.due = Some(local_today);
+            store.create_task(&value).unwrap();
+        }
+        let mut app = App::new(&store, local_today).unwrap();
+        app.set_view(View::List(work.id), &store).unwrap();
+        app.handle_key(key(KeyCode::Char(' ')), &mut store, &config);
+        let held = app.visible[0].id;
+        assert!(app.is_held(held));
+        app.handle_key(key(KeyCode::Char('/')), &mut store, &config);
+        app.paste("bread");
+        assert!(!app.visible.iter().any(|task| task.id == held));
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(app.is_held(held));
+        assert_eq!(app.visible[0].id, held);
+        // The current list is deleted elsewhere while the input is open.
+        app.filter = "bread".into();
+        app.query = Query::parse("bread").unwrap();
+        app.refresh(&store).unwrap();
+        app.handle_key(key(KeyCode::Char('/')), &mut store, &config);
+        app.paste(" x");
+        let mut external = Store::open(&directory.path().join("tasks.db")).unwrap();
+        let preview = external.preview_list_deletion(work.id).unwrap();
+        external.delete_list(&preview).unwrap();
+        app.refresh_changes(&store, &config, local_today, false)
+            .unwrap();
+        assert_eq!(app.view, View::Planned);
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        // All tasks shows its own filter, and the rows match it.
+        assert_eq!(app.filter, "");
+        assert_eq!(app.visible.len(), 2);
+    }
+
+    #[test]
+    fn a_held_row_stays_dark_gray_under_the_today_heading() {
+        let (_directory, mut store, config) = fixture();
+        // Store::set_status stamps the real local date, so the app uses it too.
+        let local_today = Local::now().date_naive();
+        for title in ["Held task", "Open task"] {
+            let mut value = input(1, title);
+            value.due = Some(local_today);
+            store.create_task(&value).unwrap();
+        }
+        let mut app = App::new(&store, local_today).unwrap();
+        app.handle_key(key(KeyCode::Char(' ')), &mut store, &config);
+        app.selection = 1;
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| app.draw(frame, &config)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let row_of = |text: &str| {
+            (0..24)
+                .find(|row| {
+                    (0..80)
+                        .map(|column| buffer[(column, *row)].symbol())
+                        .collect::<String>()
+                        .contains(text)
+                })
+                .unwrap()
+        };
+        let heading = row_of("Today -");
+        assert_eq!(buffer[(2, heading)].bg, Color::Yellow);
+        assert!(buffer[(2, heading)].modifier.contains(Modifier::BOLD));
+        let held = row_of("Held task");
+        assert_eq!(buffer[(2, held)].symbol(), "[");
+        assert_eq!(buffer[(2, held)].fg, Color::DarkGray);
+        assert!(!buffer[(2, held)].modifier.contains(Modifier::BOLD));
+        assert!(heading < held && held < row_of("Open task"));
+    }
+
+    #[test]
+    fn list_pickers_filter_by_typed_text() {
+        let (_directory, mut store, config) = fixture();
+        let husker = store.create_list("Husker").unwrap();
+        let labs = store.create_list("Labs").unwrap();
+        let shopping = store.create_list("Shopping").unwrap();
+        let home = store.create_list("Home").unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
+        let screen = rendered(&mut app, &config, 80, 24);
+        assert!(screen.contains("Type to filter"));
+        app.handle_key(key(KeyCode::Char('h')), &mut store, &config);
+        // `h` matches Husker, Shopping, Home, and Trash, but not All tasks, Inbox, or Labs.
+        assert_eq!(
+            app.picker.entries,
+            vec![
+                RowIdentity::List(husker.id),
+                RowIdentity::List(shopping.id),
+                RowIdentity::List(home.id),
+                RowIdentity::Trash,
+            ]
+        );
+        assert_eq!(app.picker.selected(), Some(RowIdentity::List(husker.id)));
+        app.handle_key(key(KeyCode::Char('u')), &mut store, &config);
+        assert_eq!(app.picker.entries, vec![RowIdentity::List(husker.id)]);
+        let screen = rendered(&mut app, &config, 80, 24);
+        assert!(screen.contains("Filter: hu"));
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert_eq!(app.view, View::List(husker.id));
+        // A name that starts with the text wins over an earlier name that contains it.
+        app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
+        for character in ['H', 'O'] {
+            app.handle_key(shift(character), &mut store, &config);
+        }
+        assert_eq!(
+            app.picker.entries,
+            vec![RowIdentity::List(shopping.id), RowIdentity::List(home.id)]
+        );
+        assert_eq!(app.picker.selected(), Some(RowIdentity::List(home.id)));
+        // Reordering is blocked while filtering.
+        let order = store.lists().unwrap();
+        app.handle_key(
+            KeyEvent::new(KeyCode::Up, KeyModifiers::ALT),
+            &mut store,
+            &config,
+        );
+        assert_eq!(store.lists().unwrap(), order);
+        assert_eq!(message(&app), "Clear the filter to reorder lists.");
+        // A click picks the displayed row, not the unfiltered row at that position.
+        rendered(&mut app, &config, 80, 24);
+        let (rect, _) = app.mouse_targets[0];
+        let now = Instant::now();
+        for _ in 0..2 {
+            app.handle_mouse(
+                mouse(MouseEventKind::Down(MouseButton::Left), rect.x, rect.y),
+                now,
+                &mut store,
+                &config,
+            )
+            .unwrap();
+        }
+        assert_eq!(app.view, View::List(shopping.id));
+        // Backspace widens the filter. Nothing matching keeps the picker open on Enter.
+        app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
+        for character in ['z', 'z', 'z'] {
+            app.handle_key(key(KeyCode::Char(character)), &mut store, &config);
+        }
+        assert!(app.picker.entries.is_empty());
+        assert!(rendered(&mut app, &config, 80, 24).contains("No matching lists"));
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert!(matches!(app.screen, Screen::ListPicker));
+        for _ in 0..3 {
+            app.handle_key(key(KeyCode::Backspace), &mut store, &config);
+        }
+        app.handle_key(key(KeyCode::Backspace), &mut store, &config);
+        assert_eq!(app.picker.filter, "");
+        assert_eq!(app.picker.entries.len(), store.lists().unwrap().len() + 2);
+        // The virtual entries match by their localized names.
+        for character in "trash".chars() {
+            app.handle_key(key(KeyCode::Char(character)), &mut store, &config);
+        }
+        assert_eq!(app.picker.entries, vec![RowIdentity::Trash]);
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        // The editor list picker filters too, and Enter chooses the displayed list.
+        app.set_view(View::Planned, &store).unwrap();
+        app.handle_key(key(KeyCode::Char('n')), &mut store, &config);
+        app.handle_key(key(KeyCode::Tab), &mut store, &config);
+        let Screen::Editor(editor) = &app.screen else {
+            panic!()
+        };
+        assert_eq!(editor.active, LIST);
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        for character in "la".chars() {
+            app.handle_key(key(KeyCode::Char(character)), &mut store, &config);
+        }
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        let Screen::Editor(editor) = &app.screen else {
+            panic!()
+        };
+        assert_eq!(editor.selected_list_id(), Some(labs.id));
+    }
+
+    #[test]
+    fn picker_filter_matches_danish_letters_ignoring_case() {
+        let (_directory, mut store, mut config) = fixture();
+        config.language = Language::Da;
+        let errands = store.create_list("Ærinder").unwrap();
+        let mut app = App::new(&store, today()).unwrap();
+        app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
+        app.handle_key(key(KeyCode::Char('æ')), &mut store, &config);
+        assert_eq!(app.picker.entries, vec![RowIdentity::List(errands.id)]);
+        app.handle_key(key(KeyCode::Backspace), &mut store, &config);
+        for character in "papir".chars() {
+            app.handle_key(key(KeyCode::Char(character)), &mut store, &config);
+        }
+        assert_eq!(app.picker.entries, vec![RowIdentity::Trash]);
+        assert!(rendered(&mut app, &config, 80, 24).contains("Filter: papir"));
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        let screen = rendered(&mut app, &config, 80, 24);
+        assert!(!screen.contains("Filter: papir"));
+        assert!(screen.contains("Skriv for at filtrere"));
+        app.handle_key(key(KeyCode::Char('z')), &mut store, &config);
+        app.handle_key(key(KeyCode::Char('z')), &mut store, &config);
+        assert!(rendered(&mut app, &config, 80, 24).contains("Ingen lister passer"));
     }
 }

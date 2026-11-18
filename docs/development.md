@@ -880,6 +880,31 @@ The script never contacts Azure. The host check in
 the Azure Functions host on your computer. The Azure front end before
 the host and a cold start in Azure stay untested.
 
+## Checks for version 0.19.0
+
+The filter, refresh, and group-color change completed these checks on November 18, 2026, on Windows 11 with Rust 1.91.1:
+
+| Check | Result |
+| --- | --- |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Unit tests | 392 passed. New tests cover `r` refreshing in All tasks and restoring in Trash, the external-update notice naming `r / F5` in All tasks and only F5 in the task editor, the filter narrowing rows while typing, a red border and kept rows for an unclosed quote, Esc restoring the earlier filter, selected task, and held rows, and a refresh that leaves a deleted list while the filter input is open. Others cover the group styles read from the rendered buffer, a held row under the Today heading, typing in the list picker, the editor list picker, and the move-task picker, Danish names, a click on a filtered row, reordering blocked while filtering, a stale scroll offset after typing, and the filter surviving Help, the language picker, and an external refresh. The config tests cover the Trash mode, printable keys in the pickers, and the `r` conflict. 25 older tests changed because letters now type in the pickers. |
+| Mutation checks | Each review fix was removed in turn. The tests failed without the held-row restore, without the query taken from the applied filter text, and without the scroll reset. Clearing the saved filter state when a refresh leaves a deleted list is defensive: no test fails without it, because the query is already taken from the applied filter text. |
+| Integration tests | CLI 9, MCP 8, online 9, sync 8, and package 2 passed. |
+| Pseudo-terminal run | The 0.19.0 release executable ran in a Windows pseudo-terminal of 100 columns and 30 rows with a temporary profile. All 19 checks passed. The Today heading was black on yellow and bold, and its row bold. Earlier and the done row were dark gray, Done today green, and Tomorrow yellow. After `husker add` from another process, the notice named `r / F5`, and `r` refreshed. Typing `mi` after `/` narrowed the rows before Enter, an unclosed quote kept them, and Esc brought back every row. In the list picker the footer showed `Ctrl+N New list` and `F1 Help`, `hu` left only Husker, and Enter opened it. The move-task picker filtered to Shopping, and Esc cleared the filter. `tra` and Enter opened Trash, where `r` restored the task. |
+| Review | An independent review found no high defect. It found three real defects, all fixed with tests: typing in a scrolled picker kept the old scroll offset and hid matches above the selection, Esc in the filter input after a refresh left a deleted list could keep a filter that the screen did not show, and Esc did not bring back held rows. Smaller points were fixed too: the spec now says that Backspace to an empty picker filter keeps the selection, the Help label for typed text covers all characters, and the guide explains that Ctrl+Alt keys count as printable. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.19.0. |
+| OpenSpec | `openspec validate improve-filtering-and-highlights --strict` passed, and `openspec validate --specs --strict` passed all 10 capabilities. |
+
+Not verified:
+
+- The colors in a real terminal window. The pseudo-terminal run read the
+  colors that Husker sends, and a headless browser drew them with the
+  Windows Terminal palette.
+- Mouse input in the pseudo-terminal.
+- Linux and macOS, including Terminal.app, where `K` and `J` no longer
+  reorder lists in the picker.
+
 ## Checks for version 0.18.2
 
 The Option+arrow fix completed these checks on November 17, 2026, on macOS 27.2.1 with Rust 1.100.0:

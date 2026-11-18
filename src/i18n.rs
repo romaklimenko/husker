@@ -106,6 +106,21 @@ pub fn tr(language: Language, key: &str) -> &'static str {
         "trash" => ("Trash", "Papirkurv"),
         "no_tasks" => ("No tasks", "Ingen opgaver"),
         "no_lists" => ("No lists", "Ingen lister"),
+        "no_matching_lists" => ("No matching lists", "Ingen lister passer"),
+        "picker_filter_hint" => ("Type to filter", "Skriv for at filtrere"),
+        "help_typed_text" => ("Typed characters", "Indtastede tegn"),
+        "help_picker_filter" => (
+            "Show only lists whose name contains the text",
+            "Vis kun lister, hvis navn indeholder teksten",
+        ),
+        "help_picker_backspace" => (
+            "Remove the last filter character",
+            "Fjern filterets sidste tegn",
+        ),
+        "clear_filter_to_reorder" => (
+            "Clear the filter to reorder lists.",
+            "Ryd filteret for at ændre listernes rækkefølge.",
+        ),
         "filter" => ("Filter", "Filter"),
         "editor" => ("Edit task", "Rediger opgave"),
         "new_task" => ("New task", "Ny opgave"),

@@ -20,8 +20,8 @@ starts in Inbox. See [Start a new task in the right list](docs/usage.md#start-a-
 Before you save, press Tab once to reach List, or twice to reach Planned
 date. For example, press `n`, type `Pay rent`, press Tab twice, then press
 `t` and Enter to plan it for today.
-The footer shows the most useful keys for the current screen. Press `?` to
-see every shortcut grouped by screen, or `q` to quit.
+The footer shows the most useful keys for the current screen. Press `?` or
+F1 to see every shortcut grouped by screen, or `q` to quit.
 With a task selected, press Space to mark it done, `t` for today, `T` for
 tomorrow, `w` for next Monday, or `x` to clear its planned date. These
 changes save immediately. Press `u` to undo the last one.
@@ -177,42 +177,82 @@ History, Trash and permanent deletion, moving tasks, undo, list removal,
 configuration, and backups.
 
 Click a task to select it or double-click to edit it. Press F4 to open plain
-task text for copying. Press F5 to refresh after another process changes tasks.
+task text for copying.
+
+Press `r` or F5 in All tasks or a list view to refresh after another
+process changes tasks. F5 refreshes on every screen. In the task editor,
+the filter input, and the list pickers, `r` types the letter, so use F5
+there. In Trash, `r` restores the selected task, and in History it reopens
+the task.
 Action messages and errors clear after five seconds. External-update notices
-stay until you acknowledge them with F5.
+stay until you refresh. The notice names the keys that work on the current
+screen, such as `r / F5 Refresh data` in All tasks or `F5 Refresh data` in
+the task editor.
+
+Press `/` and type to filter the tasks. The task rows narrow while you
+type. Press Enter to keep the filter, or Esc to go back to the filter you
+had before you pressed `/`. If the text isn't a valid filter yet, such as
+`"milk` with no closing quote, the input border turns red and the rows keep
+the last valid results. Read [Find tasks](docs/usage.md#find-tasks) for the
+filter syntax.
+
+In All tasks and list views, the Today heading is bold black on yellow, and
+today's tasks are bold. Earlier, Done, and Cancelled are dimmed. Their task
+rows are dark gray. The Done headings are green, and the Earlier and
+Cancelled headings are dark gray. The selected task stays cyan and bold.
+
 Task rows use the full width. Press Enter to read or edit the description.
 Long descriptions wrap in the editor without adding line breaks to your text.
 Use Ctrl+Left and Ctrl+Right to move by word, Shift with movement keys to
 select text, Ctrl+C to copy the selection, and Ctrl+Z to undo typing.
 The editor heading shows an existing task's ID.
 
-Use Up/Down or `k`/`j` to move through tasks and picker entries. Selection
-wraps at either end. Left, Home, or `g` selects the first item. Right, End,
-or `G` selects the last. PageUp and PageDown move by one screen.
-These keys also work in History, Trash, and the list pickers. Left and Right
-keep their cursor and scrolling controls in text fields and the F4 copy view.
+Use Up/Down or `k`/`j` to move through tasks. Selection wraps at either
+end. Left, Home, or `g` selects the first item. Right, End, or `G` selects
+the last. PageUp and PageDown move by one screen. These keys also work in
+History and Trash. In the list pickers, letters type into the picker's
+filter, so use the arrow keys, Home, End, PageUp, and PageDown there.
+Left and Right keep their cursor and scrolling controls in text fields and
+the F4 copy view.
 Ctrl+C quits from a task view, History, or the list picker.
 
 Press `l` to open the list picker over your tasks. Choose a list to show a
 view such as `All tasks > Work`. If that view has a filter applied, Esc
 clears the filter first. Otherwise Esc returns to All tasks with the filter,
-selected task, and scroll position you had there. Esc inside the picker cancels it.
+selected task, and scroll position you had there.
 All tasks is the first picker entry and Trash is last.
 All tasks and all-list History prefix task titles with their list, such as
 `[Work] Review`. A view scoped to Work does not repeat that label.
-Press `n` in the picker to create a list and `r` to rename the selected one.
-Use Alt+Up and Alt+Down, or `K` and `J`, to arrange ordinary lists.
+
+Type in the list picker to find a list. Only lists whose name contains the
+text stay, ignoring case, and the first name that starts with it is selected. For example,
+press `l`, type `hu`, and press Enter to open Husker. The same works when
+you choose a list in the task editor and when you move a task with `m`.
+Backspace removes the last character. Esc clears the typed text, and a
+second Esc closes the picker.
+
+Because letters type in the picker, list management uses Ctrl keys. Press
+Ctrl+N to create a list and Ctrl+R to rename the selected one. Press
+Delete or Ctrl+D on a list to review its removal, then `y` to confirm.
+After confirmation, every task moves to the default list and only the list
+is removed. Press F1 for Help and Ctrl+C to quit while the picker is open.
+Before Husker 0.19.0, `n`, `r`, and `d` created, renamed, and removed lists
+in the picker, and `?` and `q` opened Help and quit. Those characters now
+type into the filter. If your `config.toml` sets `new_list`, `rename_list`,
+or `delete_list`, see [Update an existing profile](docs/usage.md#update-an-existing-profile).
+
+Use Alt+Up and Alt+Down in the picker to arrange ordinary lists. Clear the
+typed text first, because lists don't move while the picker is filtered.
 The default list stays first among them and is marked as the default. Husker remembers their order.
 On a Mac, Alt is the Option key. To use Option+Up and Option+Down in Terminal.app,
 [let an Option key act as Meta or add two key mappings](docs/usage.md#use-optionarrows-in-macos-terminal).
-`K` and `J` work without Terminal settings changes.
-Press Delete on a list to review its removal, then `y` to confirm.
-After confirmation, every task moves to the default list and only the list is removed.
+In All tasks and list views, `K` and `J` reorder tasks without Terminal
+settings changes. In the list picker, `K` and `J` type text.
 
 Press `d` on a task to move it to Trash. Choose Trash in the list picker
 and press `r` to restore the selected task. To remove tasks for good, press
 `d` in Trash to delete the selected task forever, or `D` to empty Trash.
-Delete on the Trash entry in the list picker also empties Trash. Husker
+Delete or Ctrl+D on the Trash entry in the list picker also empties Trash. Husker
 asks you to confirm each of these, and a task deleted forever cannot be
 restored or undone.
 

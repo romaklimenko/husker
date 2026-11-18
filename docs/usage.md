@@ -162,9 +162,13 @@ MCP requests, and search filters, such as `due:2026-11-09`.
 Focus List and press Enter or `l` to open its picker. From Title, press Tab
 once to focus List. An existing task's editor opens at Description, so press
 Shift+Tab twice there. You can also click the List field.
-Select a destination with Up or Down, then press Enter.
-For example, choose Work to move the task there when you next save.
-Press Esc or `l` in the picker to return without changing the draft's list.
+Select a destination with Up or Down, or type part of its name, then press
+Enter. For example, type `wo` and press Enter to choose Work. The task
+moves there when you next save.
+Press Esc in the picker to return without changing the draft's list. If you
+typed text, the first Esc clears it and a second Esc returns. In the
+picker, `l` and other letters type into its filter. See
+[Find a list by typing its name](#find-a-list-by-typing-its-name).
 
 The picker contains your ordinary lists in their saved order. The default
 list has a marker. All tasks and Trash are view choices, so they do not appear
@@ -196,14 +200,16 @@ Select a task in All tasks, an ordinary list, or History and press `m`.
 A picker titled `Move the task to` opens over the task view. It lists your
 ordinary lists in their saved order, marks the default list, and starts
 with the task's current list selected. Select the destination with Up or
-Down and press Enter. For example, to move `Buy milk` from Inbox to
-Private, press `m`, select Private, and press Enter. The message shows
-`Moved to Private`, and in All tasks the row starts with `[Private]`.
+Down, or type part of its name, and press Enter. For example, to move
+`Buy milk` from Inbox to Private, press `m`, type `pr`, and press Enter.
+The message shows `Moved to Private`, and in All tasks the row starts with
+`[Private]`. See [Find a list by typing its name](#find-a-list-by-typing-its-name).
 
 The task keeps its title, description, planned date, and status, and it
 stays selected while it is still visible. If you move a task out of the
 list you are viewing, it leaves that view. Choosing the task's current list
-closes the picker without changing anything. Press Esc or `l` to cancel.
+closes the picker without changing anything. Press Esc to cancel. If you
+typed text, the first Esc clears it and a second Esc cancels.
 Press `u` afterwards to move the task back.
 
 The shortcut does nothing in Trash. All tasks and Trash are not offered as
@@ -295,7 +301,10 @@ your current list selected. From All tasks, it starts with the list you
 opened most recently in this Husker session, so pressing `l` and Enter
 takes you back there. If you have not opened a list yet, or that list was
 removed, it starts with All tasks selected.
-Press Esc or `l` again to close the picker without changing the view.
+Press Esc to close the picker without changing the view. If you typed text
+in the picker, the first Esc clears it and a second Esc closes the picker.
+To find a list quickly, type part of its name. See
+[Find a list by typing its name](#find-a-list-by-typing-its-name).
 
 Choose a list and press Enter. For example, choosing Private shows
 `All tasks > Private`. New tasks created there belong to Private.
@@ -310,20 +319,30 @@ Choosing a different list or Trash starts that view without a filter.
 Choosing the current list again preserves its filter, task selection,
 and scroll position.
 
-To create a list, press `n` or `N` in the picker, enter a name such as
+To create a list, press Ctrl+N in the picker, enter a name such as
 `Private`, and press Enter. The footer shows `Enter a list name` while you
 type. The picker returns with the new list selected immediately
 before Trash. Press Enter again to open the list.
 Esc in the list-name form returns to the picker without creating a list.
+If you had typed text in the picker, Husker clears it when you save the
+name, so the new list is visible and selected.
 
-Select an ordinary list and press Alt+Up or Alt+Down, or `K` or `J`, to
-change its position. Husker saves this order for the next session.
+Select an ordinary list and press Alt+Up or Alt+Down to change its
+position. Husker saves this order for the next session.
 The default list, initially Inbox, stays first among ordinary lists and is
 marked as the default. All tasks and Trash stay fixed.
+Lists don't move while you have typed text in the picker. Alt+Up then shows
+`Clear the filter to reorder lists.` Press Esc once to clear the text, then
+move the list.
+On a Mac, Alt is the Option key. Terminal.app needs a setting before
+Option+Up and Option+Down reach Husker. See
+[Use Option+arrows in macOS Terminal](#use-optionarrows-in-macos-terminal).
+`K` and `J` reorder tasks without that setting, but they type text in the
+picker, so they don't reorder lists.
 A new task you create in All tasks starts in a suggested list, which can
 differ from the default list. See [Start a new task in the right list](#start-a-new-task-in-the-right-list).
 
-Press `r` or `R` on a list to rename it. Enter the new name and press Enter.
+Press Ctrl+R on a list to rename it. Enter the new name and press Enter.
 The tasks stay in the same list. Names are unique without regard to case,
 so `Private` and `PRIVATE` cannot be separate lists.
 `Trash` and `Papirkurv` are reserved names.
@@ -337,7 +356,9 @@ For example, `Private (4)` means that list has four open tasks.
 Done and cancelled tasks do not contribute to that count.
 All tasks has no count because it is a view option. If you name an ordinary
 list All tasks, that list still appears separately with its count.
-Help opened with `?` returns to the picker when you close it with Esc.
+Press F1 in the picker to open Help. Help returns to the picker when you
+close it with Esc. `?` types into the picker's filter, so it doesn't open
+Help there.
 
 All tasks and all-list History show the list before each task title, such as
 `[Work] Review`. The prefix remains when you filter All tasks with `l:Work`.
@@ -345,9 +366,72 @@ Opening Work itself removes the repeated prefix because the breadcrumb
 already identifies the list. Renaming a list updates these labels on refresh.
 The prefix is not part of the stored title or the text copied with F4.
 
+These keys work in the list picker:
+
+| Key | Action |
+| --- | --- |
+| Letters, digits, Space, and other characters | Type into the picker's filter. |
+| Backspace | Remove the last character of the filter. |
+| Up or Down | Select the previous or next entry. |
+| Left or Home | Select the first entry. |
+| Right or End | Select the last entry. |
+| PageUp or PageDown | Move the selection by one screen. |
+| Enter | Open the selected list, All tasks, or Trash. |
+| Esc | Clear the filter, or close the picker when the filter is empty. |
+| Ctrl+N | Create a list. |
+| Ctrl+R | Rename the selected ordinary list. |
+| Ctrl+D or Delete | Review removing the selected list, or emptying Trash on the Trash entry. |
+| Alt+Up or Alt+Down | Move the selected ordinary list up or down. |
+| F1 | Open Help. |
+| F2, F3, or F5 | Toggle mouse capture, choose the language, or refresh. |
+| Ctrl+C | Quit Husker. |
+
+## Find a list by typing its name
+
+Type part of a list's name in any of the three list pickers: the list
+picker you open with `l`, the List field's picker in the task editor, and
+the picker that `m` opens to move a task. The picker shows only the lists
+whose name contains the text you typed. Case doesn't matter. The lists
+keep their usual order.
+
+For example, your lists are Inbox, Husker, and Labs. Press `l`, type `hu`,
+and press Enter. The picker shows only Husker, with Husker selected, and
+Enter opens `All tasks > Husker`.
+
+After each character, Husker selects the first list whose name starts with
+the text. If no name starts with it, Husker selects the first list that
+contains it. For example, with the lists Shopping and Home, typing `ho`
+keeps both, because both names contain `ho`, and selects Home, because
+Home starts with `ho`.
+
+In the list picker you open with `l`, All tasks and Trash match by the
+names you see in the picker. Type `tra` to find Trash, or `all` to find All
+tasks. In Danish, they match as Alle opgaver and Papirkurv. The count and
+the default marker beside a list are not part of its name, so typing `4`
+doesn't find `Private (4)`.
+
+The picker's bottom border shows `Type to filter`, or
+`Skriv for at filtrere` in Danish, until you type. Then it shows the text,
+such as `Filter: hu`. If no list matches, the picker shows
+`No matching lists`, or `Ingen lister passer` in Danish, and Enter does
+nothing.
+
+Press Backspace to remove the last character. Press Esc to clear all the
+text and keep the picker open with the same list selected. Press Esc again
+to close the picker. When Backspace removes the last character, the picker
+shows every list again, and the list that was selected stays selected.
+Every picker opens with empty text.
+
+Letters always type in a list picker, even letters that are shortcuts
+elsewhere. For example, `j`, `k`, `l`, `n`, `r`, `d`, `q`, and `?` add
+their character to the text. Use the arrow keys, Home, End, PageUp, and
+PageDown to move the selection. In the list picker you open with `l`,
+manage lists with Ctrl+N, Ctrl+R, Ctrl+D or Delete, and Alt+Up or
+Alt+Down. Clicks and the mouse wheel act on the lists the picker shows.
+
 ## Remove a list without losing its tasks
 
-Press `l`, select an ordinary list, and press Delete or `d`.
+Press `l`, select an ordinary list, and press Delete or Ctrl+D.
 Husker shows the list name and the default list that will receive its tasks.
 The confirmation counts open, done, cancelled, and trashed tasks separately.
 For example, a list with three unfinished tasks warns you before moving them.
@@ -365,7 +449,7 @@ The removed list's name and its task grouping are not retained.
 The picker stays open with the default list selected after deletion.
 If you were viewing the removed list, the tasks behind the picker return
 to All tasks. The default list and All tasks cannot be deleted. Delete or
-`d` on the Trash entry empties Trash instead of removing it. See
+Ctrl+D on the Trash entry empties Trash instead of removing it. See
 [Empty Trash](#empty-trash).
 
 If another process changes the list or its tasks while you confirm,
@@ -411,6 +495,23 @@ a recorded status date appear last. Within one date, the most recent recorded
 completion or cancellation time appears first. Unknown times follow known
 times on that date. Equal or unknown times use descending task ID.
 Trash stays separate from these views.
+
+In All tasks and list views, Today stands out, and Earlier and the finished
+groups are dimmed. Each group uses these colors:
+
+| Group | Heading | Task rows |
+| --- | --- | --- |
+| Earlier | Dark gray | Dark gray |
+| Today | Bold black text on a yellow background | Bold |
+| Tomorrow, each exact date, and Sometime | Yellow | Your terminal's normal text color |
+| Done today and Done | Green | Dark gray |
+| Cancelled today and Cancelled | Dark gray | Dark gray |
+
+The selected task is cyan and bold with a `>` marker in every group, so you
+can still see it in a dimmed group. A task you just marked done or
+cancelled stays dark gray under its open heading until its row moves.
+History keeps yellow headings and rows in the normal text color. Trash has
+no headings, and its rows use the normal text color.
 
 Task rows use the full navigation width. The selected task has no side
 description preview. Press Enter to open its Description field, or F4 to
@@ -459,9 +560,18 @@ session.
 
 ## Find tasks
 
-Press `/`, type a query, and press Enter to apply it. While you type, the
-footer shows the hint `Combine text, l:list, due:today, and s:done. #words are text.`
-Press Esc in the input to discard your query edits.
+Press `/` and type a query. The task rows narrow with each character you
+type, and the first matching task is selected. For example, in All tasks
+with `Buy milk` and `Call mom`, press `/` and type `mi`. Only `Buy milk` is
+listed. Press Enter to keep the filter and return to the task rows.
+While you type, the footer shows the hint
+`Combine text, l:list, due:today, and s:done. #words are text.`
+
+Press Esc in the input to close it without keeping your changes. Husker
+brings back the filter, the results, and the selected task you had before
+you pressed `/`. For example, Work is filtered by `milk`. You press `/`,
+replace the text with `mom`, and press Esc. Work is filtered by `milk`
+again, with the same task selected.
 
 To clear an applied filter, press Esc in the task list. The view and the
 selected task stay as they are, and the footer entry `Esc Clear filter`
@@ -510,9 +620,14 @@ Quote an entire term to search for literal filter syntax. For example,
 `"due:today"` searches task text for those exact characters.
 Inside quotes, use `\"` for a quote and `\\` for a backslash.
 
-Use each of `l:`, `due:`, and `s:` at most once. Unknown fields, invalid dates,
-and unfinished quotes produce an error. Husker keeps your previous results
-until you correct and apply the new query.
+Use each of `l:`, `due:`, and `s:` at most once. Unknown fields, invalid
+dates, and unfinished quotes are errors. While you type, a query is often
+unfinished for a moment, such as `"milk` before you type the closing quote,
+or `due:` before you type the value. Until the text is valid again, the
+input border is red and the task rows keep the results of the last valid
+text. If you press Enter on such text, Husker shows the error, such as
+`Error: Unclosed quoted filter value.`, and keeps the input open so you can
+correct it.
 
 ## Find older completed tasks
 
@@ -576,8 +691,9 @@ changed. Selection moves to the next open task, or the previous open task
 if none follows it.
 
 The held row moves to Done today or Cancelled today as soon as the view
-changes: when you choose another list, apply or clear a filter, open
-History, open the editor, create a task, press F5, or the date changes.
+changes: when you choose another list, change or clear the filter, open
+History, open the editor, create a task, refresh with `r` or F5, or the
+date changes.
 Opening the list picker, the move picker, Help, the language picker, or the
 F4 copy view does not move it. With `s:open` applied, the task leaves the
 results immediately. Tomorrow, the default view hides the closed task.
@@ -665,16 +781,17 @@ confirmation shows `In Trash: 5`, and `y` deletes all five. To delete only
 some tasks, use `d` on each one instead.
 
 You can also empty Trash from the list picker without opening it. Press
-`l`, select the Trash entry, and press `d` or Delete. While Trash is
-selected, the picker hint reads `d Empty Trash`. The same confirmation
-opens. After you confirm, the picker stays open with Trash selected.
+`l`, select the Trash entry, and press Ctrl+D or Delete. To find Trash
+quickly, type `tra` in the picker. While Trash is selected, the picker
+hint reads `Ctrl+D Empty Trash`. The same confirmation opens. After you
+confirm, the picker stays open with Trash selected.
 
 The confirmation keys are the same as for deleting one task. No is selected
 first. Press `y` to empty Trash. Press `n` or Esc to keep every task, or
 press Enter while No is selected. Husker then returns to Trash or the list
 picker, wherever you started.
 
-If Trash is already empty, `D` in Trash and Delete on the Trash entry show
+If Trash is already empty, `D` in Trash and Ctrl+D or Delete on the Trash entry show
 `Trash is empty`, and no confirmation opens. `D` does nothing outside Trash,
 for example in All tasks or History.
 
@@ -771,18 +888,34 @@ For a remote session, use F4 and the local terminal's Copy command.
 
 ## Refresh changes from an agent
 
-Press F5 to refresh database contents. Husker also checks for changes from
-other processes once per second. Navigation updates automatically.
-An on-screen notice tells you when another process changed the database.
-Press F5 to acknowledge a notice that is already visible.
-This notice has no time limit. F5 also moves a task you marked done or
-cancelled from its held row to Done today or Cancelled today.
+In All tasks or a list view, press `r` or F5 to refresh database contents.
+On other screens, press F5. F5 refreshes on every screen, but `r` doesn't:
 
-If you set up [sync between computers](sync.md), F5 also starts a sync at
-once and does not wait for it to finish. Changes that a sync brings in
-from another computer do not show the notice. They show `Synced changes from another device.` for five seconds,
-and you don't need to acknowledge them with F5. See
+- In Trash, `r` restores the selected task.
+- In History, `r` reopens the selected task.
+- In the task editor, the filter input, a list-name form, and the list
+  pickers, `r` types the letter.
+
+Husker also checks for changes from other processes once per second.
+Navigation updates automatically. An on-screen notice tells you when
+another process changed the database. The notice reads
+`Database updated elsewhere. Unsaved text is kept.` and names the refresh
+keys that work on the current screen. In All tasks it ends with
+`r / F5 Refresh data`. In the task editor it ends with `F5 Refresh data`.
+Press one of those keys to acknowledge a notice that is already visible.
+This notice has no time limit. A refresh also moves a task you marked done
+or cancelled from its held row to Done today or Cancelled today.
+
+If you set up [sync between computers](sync.md), a refresh with `r` or F5
+also starts a sync at once and does not wait for it to finish. Changes
+that a sync brings in from another computer do not show the notice. They
+show `Synced changes from another device.` for five seconds, and you don't
+need to acknowledge them. See
 [Read the sync messages in the terminal](sync.md#read-the-sync-messages-in-the-terminal).
+
+If your `config.toml` binds `refresh` to other keys, Husker uses them
+instead. A letter or other printable key in `refresh` works only in All
+tasks and list views. See [Set the language and shortcuts](#set-the-language-and-shortcuts).
 
 Other status messages disappear after five seconds. For example, `Saved`
 clears after you save a task, even if you navigate to another list.
@@ -801,21 +934,37 @@ such as `Enter Edit`, `Space Done`, `t/T/w/x Date`, `u Undo`, and `m Move`.
 The footer uses up to two lines and leaves out entries that do not fit the
 terminal width, so widen the terminal to see more of them. Trash shows
 `r Restore`, `d Delete forever`, `D Empty Trash`, and `F4 Copy` instead of
-the task edits. History adds `r Reopen`. In the list picker, the delete
-entry reads `d Empty Trash` while the Trash entry is selected.
+the task edits. History adds `r Reopen`.
 While a filter is applied, the Esc entry reads `Esc Clear filter`.
-An entry shows the first key of an action, so a rebound action shows your key.
+An entry shows the first key of an action that works on that screen, so a
+rebound action shows your key.
 In Danish, Delete forever reads Slet permanent and Empty Trash reads
 Tøm papirkurven.
 
-Press `?` to open Help with every shortcut from your own configuration.
+The list picker's footer starts with `Type to filter` and shows only keys
+that work while you type, such as `Ctrl+N New list`, `Ctrl+R Rename list`,
+`Alt+Up/Alt+Down Reorder`, `F1 Help`, and `Ctrl+C Quit`. The delete entry
+reads `Ctrl+D Empty Trash` while the Trash entry is selected. The picker
+for the editor's List field shows `Type to filter`, `Enter Choose`,
+`Esc Back`, and `F1 Help`. The picker for moving a task shows `Enter Move`
+instead of `Enter Choose`.
+
+Press `?` or F1 to open Help with every shortcut from your own
+configuration. In the list pickers, press F1, because `?` types into the
+picker's filter there.
 Help is grouped by screen: Task views, List picker, Task editor, Text
 editing, Filter and list name, Confirmations, and Everywhere. The section
 for the screen you opened Help from comes first. An action with several
 keys lists them separated by ` / `, such as `q / Ctrl+C`. Text editing
 lists the built-in keys from [Edit text with the keyboard](#edit-text-with-the-keyboard).
-The Task views section lists Delete forever in Trash and Empty Trash.
-The List picker section lists Empty Trash from the Trash entry.
+The Task views section lists Delete forever in Trash and Empty Trash, and
+lists Refresh as `r / F5`.
+The List picker section starts with `Letters and digits` and Backspace,
+which type and remove filter text, and lists Empty Trash from the Trash
+entry. It leaves out letter keys of other actions, because letters type
+there. For example, it lists Quit as `Ctrl+C` only.
+The Everywhere section lists Refresh as `F5`, because F5 is the refresh key
+that works on every screen.
 Scroll Help with Up and Down, `k` and `j`, PageUp and PageDown, Home and
 End, `g` and `G`, or the mouse wheel. Clicking in Help does nothing.
 Press Esc or `?` to close Help.
@@ -823,7 +972,8 @@ Keys are printed the way they are labelled on the keyboard: Ctrl+S, Esc,
 F4, Space, PageUp, Enter, Tab. Danish prints the arrow keys as Op, Ned,
 Venstre, and Højre.
 
-These are the default shortcuts:
+These are the default shortcuts in All tasks, list views, History, and
+Trash:
 
 | Key | Action |
 | --- | --- |
@@ -832,34 +982,40 @@ These are the default shortcuts:
 | Left, Home, or `g` | Select the first item. |
 | Right, End, or `G` | Select the last item. |
 | PageUp or PageDown | Move the selection by one screen without wrapping. |
-| Enter | Choose a picker entry or edit a task. |
-| `n` | Create a task outside History and Trash, or create a list from the picker. |
-| `N` | Create a list from the picker. |
-| `r` | Restore a task from Trash, reopen a task in History, or rename a list from the picker. |
-| `R` | Rename an ordinary list from the picker. |
-| `l` | Open or cancel the list picker. |
+| Enter | Edit a task. |
+| `n` | Create a task in All tasks or a list view. |
+| `r` | Refresh database contents in All tasks and list views. Restore a task in Trash, or reopen a task in History. |
+| `l` | Open the list picker. |
 | `h` | Open History, or return to the view where you opened it. |
 | `t`, `T`, `w`, `x` | Set today, tomorrow, next Monday, or no planned date outside Trash. |
 | `m` | Move the selected task to another list outside Trash. |
 | `u` | Undo the last task action. |
 | `/` | Edit the task filter. |
-| Esc | Clear an applied filter, return from a list or History to the previous view, or cancel the picker. |
+| Esc | Clear an applied filter, or return from a list or History to the previous view. |
 | Space | Toggle done status. |
 | `c` | Toggle cancelled status. |
-| `d` or Delete | Move a task to Trash, or review deleting a task forever while Trash is open. In the picker, review deleting a list, or review emptying Trash on the Trash entry. |
+| `d` or Delete | Move a task to Trash, or review deleting a task forever while Trash is open. |
 | `D` (Shift+D) | Review emptying Trash while Trash is open. |
-| Alt+Up or `K` | Move an open task before its neighbor with the same planned date, or move an ordinary list up in the picker. |
-| Alt+Down or `J` | Move an open task after that neighbor, or move an ordinary list down in the picker. |
+| Alt+Up or `K` | Move an open task before its neighbor with the same planned date. |
+| Alt+Down or `J` | Move an open task after that neighbor. |
+| `?` or F1 | Open Help. Esc or `?` closes it. |
 | F2 | Toggle mouse capture. |
 | F3 | Choose English or Dansk and save the interface language. |
 | F4 | Open plain task text for copying. |
-| F5 | Refresh database contents. Also start a sync if [sync](sync.md) is set up. |
-| `?` | Open Help. Esc or `?` closes it. |
-| `q` or Ctrl+C | Quit from a task view, History, or the list picker. |
+| F5 | Refresh database contents on every screen. Also start a sync if [sync](sync.md) is set up. |
+| `q` or Ctrl+C | Quit. |
+
+The list picker has its own keys, because letters type into its filter
+there. See the table in [Organize tasks into lists](#organize-tasks-into-lists).
+The pickers for the editor's List field and for moving a task use the
+arrow keys, Home, End, PageUp, PageDown, Enter, Esc, F1, and Backspace in
+the same way.
 
 Wrapping and first/last jumps work in task views, including History and
 Trash, and in the list pickers and the language picker. PageUp and PageDown
-work in the same places except the language picker. With a filter
+work in the same places except the language picker. In the list pickers,
+use Up, Down, Home, End, Left, and Right, because `k`, `j`, `g`, and `G`
+type text there. With a filter
 applied, the keys move only through matching tasks. Group headings are
 skipped, and the selected item scrolls into view. An empty result stays empty.
 A result with one item keeps that item selected.
@@ -889,7 +1045,10 @@ On a Mac, Alt is the Option key. To reorder tasks and lists with Option+Up
 and Option+Down in Terminal.app, let an Option key act as Meta or add two
 key mappings. Without one of these, Terminal sends a plain Up or Down, and
 Husker moves the selection instead of the task.
-`K` and `J` (Shift+K and Shift+J) reorder without any Terminal setting.
+In All tasks and list views, `K` and `J` (Shift+K and Shift+J) reorder
+tasks without any Terminal setting. In the list picker, `K` and `J` type
+into the picker's filter, so Option+Up and Option+Down are the only
+default keys that reorder lists.
 
 Meta is a modifier key for programs that run in Terminal, such as Husker.
 An Option key that acts as Meta no longer types characters in Terminal.
@@ -1017,22 +1176,45 @@ keep their defaults.
 Footers and Help print the keys you configure in display form, so
 `ctrl+s` appears as Ctrl+S and `pageup` as PageUp.
 
-These actions are new in 0.12.0 or gained a default key in that version:
+These actions are new since 0.12.0 or have a new default key. The table
+shows the defaults in 0.19.0:
 
 | Action | Default keys | Where it works |
 | --- | --- | --- |
 | `page_up`, `page_down` | PageUp, PageDown | Task views, History, the list pickers, Help, and the F4 copy view. |
 | `move_task` | `m` | Task views and History, not Trash. |
 | `undo` | `u` | Task views and History. |
-| `new_list` | `n`, `N` | The list picker. |
-| `rename_list` | `r`, `R` | The list picker. |
-| `move_up`, `move_down` | Alt+Up and `K`, Alt+Down and `J` | Task views and the list picker. |
-| `quit` | `q`, Ctrl+C | Task views, History, and the list picker. |
+| `new_list` | Ctrl+N | The list picker. |
+| `rename_list` | Ctrl+R | The list picker. |
+| `delete_list` | Ctrl+D, Delete | The list picker. |
+| `move_up`, `move_down` | Alt+Up and `K`, Alt+Down and `J` | Task views. Only Alt+Up and Alt+Down work in the list picker. |
+| `help` | `?`, F1 | Task views, History, and the list pickers. Only F1 works in the list pickers. |
+| `refresh` | `r`, F5 | F5 works on every screen. `r` works only in All tasks and list views. |
+| `quit` | `q`, Ctrl+C | Task views and History. Only Ctrl+C works in the list picker. |
 
-For example, `new_list = ["N"]` keeps only the capital letter for creating
-a list, and `undo = ["ctrl+z"]` undoes a task action with Ctrl+Z in task
+For example, `undo = ["ctrl+z"]` undoes a task action with Ctrl+Z in task
 views. Ctrl+Z still undoes typing in text fields, because those are
-different modes.
+different modes. `new_list = ["insert"]` creates a list with Insert in the
+list picker instead of Ctrl+N.
+
+Two rules decide where a letter or other printable key works. A printable
+key is a character you can type, with or without Shift, such as `n`, `N`,
+`?`, or `4`. Keys with only Ctrl or only Alt, such as `ctrl+n` or
+`alt+up`, and named keys such as F5 or Delete, are not printable. A key
+with both Ctrl and Alt is printable, because terminals report AltGr that
+way. For example, `@` typed with AltGr on a Danish keyboard is printable.
+So a binding such as `quit = ["ctrl+alt+q"]` doesn't work in the list
+pickers, and `refresh = ["ctrl+alt+r"]` works only in All tasks and list
+views.
+
+- In the three list pickers, printable keys always type into the picker's
+  filter. They never run an action there, even if `config.toml` binds one.
+  For example, `new_list = ["N"]` loads, but `N` in the list picker types
+  `N`, and no key creates a list. The footer and Help then show `unbound`
+  for New list, or `ingen genvej` in Danish.
+- A printable `refresh` key works only in All tasks and list views. For
+  example, `r` refreshes there, restores in Trash, reopens in History, and
+  types `r` in text fields and pickers.
 
 Version 0.13.0 adds the `empty_trash` action with the default key `D`.
 It belongs to task views and works only while Trash is open. For example,
@@ -1090,8 +1272,8 @@ To keep a custom Left shortcut and retain the earlier First keys, set
 `first = ["home", "g"]`. For a custom Right shortcut, use `last = ["end", "G"]`.
 
 The same applies to the defaults added in 0.12.0. If a custom action already
-uses `m`, `u`, `K`, `J`, Ctrl+C, PageUp, or PageDown in a task view, or `n`
-or `r` in the list picker, Husker reports the conflict at startup. For
+uses `m`, `u`, `K`, `J`, Ctrl+C, PageUp, or PageDown in a task view,
+Husker reports the conflict at startup. For
 example, `history = ["m"]` conflicts with Move task. Keep that History
 shortcut by adding `move_task = []` under `[keys]`, or rebind `move_task`
 to another key. Use `page_up = []` or `page_down = []` for an action that
@@ -1100,11 +1282,19 @@ uses PageUp or PageDown, and `quit = ["q"]` for an action that uses Ctrl+C.
 The `D` default added in 0.13.0 works the same way. If a custom action
 already uses `D` in a task view, Husker reports the conflict at startup
 instead of opening. For example, `history = ["D"]` stops Husker with
-`Key 'D' conflicts between 'history' and 'empty_trash' in Tasks mode.`
+`Key 'D' conflicts between 'history' and 'empty_trash' in Trash mode.`
 Keep that History shortcut by moving Empty Trash to another key, such as
 `empty_trash = ["ctrl+d"]`, or by adding `empty_trash = []` under `[keys]`.
-With `empty_trash = []`, you can still empty Trash with Delete on the Trash
-entry in the list picker.
+With `empty_trash = []`, you can still empty Trash with Ctrl+D or Delete on
+the Trash entry in the list picker.
+
+The `r` default for `refresh` added in 0.19.0 works the same way in All
+tasks and list views. If a custom action already uses `r` there, Husker
+reports the conflict at startup. For example, a configuration with
+`restore = ["R"]` and `new_task = ["r"]` stops Husker with
+`Key 'r' conflicts between 'new_task' and 'refresh' in Tasks mode.`
+Keep your `r` shortcut by adding `refresh = ["f5"]` under `[keys]`, or move
+the other action to another key.
 
 Husker rejects an unknown setting, action, key, or conflicting shortcut.
 For example, `quit = ["n"]` conflicts with task creation.
@@ -1236,6 +1426,42 @@ Install the current version from the repository:
 cargo install --path . --locked
 ```
 
+Version 0.19.0 changes these keys and screens:
+
+- `r` refreshes in All tasks and list views, like F5. In Trash, `r` still
+  restores a task, and in History it still reopens one.
+- The task filter narrows the rows while you type. Esc in the filter input
+  brings back the filter you had before you pressed `/`. See
+  [Find tasks](#find-tasks).
+- Typing in the list picker, the List field's picker, and the move picker
+  filters the lists. See [Find a list by typing its name](#find-a-list-by-typing-its-name).
+- In the list picker, create a list with Ctrl+N instead of `n`, rename it
+  with Ctrl+R instead of `r`, and remove it with Ctrl+D or Delete instead
+  of `d`. Reorder lists with Alt+Up and Alt+Down, because `K` and `J` type
+  text. Open Help with F1 and quit with Ctrl+C, because `?` and `q` type
+  text. `l` no longer closes a picker. Press Esc instead.
+- F1 opens Help on every screen where `?` does.
+- In All tasks and list views, Today stands out in bold black on yellow,
+  and Earlier, Done, and Cancelled are dimmed. See
+  [Plan tasks by date](#plan-tasks-by-date).
+
+Check your `config.toml` for two cases:
+
+- If it sets `new_list`, `rename_list`, or `delete_list` to letters only,
+  such as `new_list = ["n", "N"]` copied from an older example, Husker
+  starts, but those letters type into the picker's filter. The footer
+  then shows `unbound` for New list. Remove the line to use Ctrl+N, or set
+  `new_list = ["ctrl+n"]`. Do the same with `rename_list = ["ctrl+r"]` and
+  `delete_list = ["ctrl+d", "delete"]`.
+- If another action in All tasks or list views uses `r`, Husker stops at
+  startup with an error such as
+  `Key 'r' conflicts between 'new_task' and 'refresh' in Tasks mode.`
+  Add `refresh = ["f5"]` under `[keys]` to keep your `r` shortcut, or move
+  the other action to another key.
+
+Run `husker config --example` to see every default of your version.
+Version 0.19.0 doesn't change the database.
+
 Version 0.18.2 changes Option+Up and Option+Down in macOS Terminal.app.
 While an Option key acts as Meta, the two shortcuts now reorder tasks and
 lists. Before 0.18.2, Husker read them as Esc. For example, Option+Up
@@ -1301,7 +1527,8 @@ Version 0.12.1 adds a task count to every group heading in the terminal.
 
 Version 0.12.0 adds default shortcuts: `n` and `r` in the list picker, `K`
 and `J` for reordering, `m` for moving a task, `u` for undo, Ctrl+C for
-quitting, and PageUp and PageDown for paging. If your `config.toml` already
+quitting, and PageUp and PageDown for paging. Version 0.19.0 replaces `n`
+and `r` in the list picker with Ctrl+N and Ctrl+R. If your `config.toml` already
 uses one of these keys for another action on the same screen, Husker reports
 the conflict at startup instead of opening. Rebind your action, or disable
 the new default with an empty array such as `move_task = []` or
@@ -1338,8 +1565,8 @@ Old save and discard overrides can conflict until you update them together.
 
 For a profile created before 0.4.0, the same upgrade also adds saved list positions.
 The default list moves to the top. Other existing lists start in
-case-insensitive alphabetical order. Use Alt+Up and Alt+Down, or `K` and
-`J`, in the list picker to arrange them after the upgrade.
+case-insensitive alphabetical order. Use Alt+Up and Alt+Down in the list
+picker to arrange them after the upgrade.
 For a profile from version 0.3.0, every existing task field and task version stays unchanged.
 
 For profiles from version 0.1 or 0.2, the upgrade also simplifies task fields.

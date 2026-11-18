@@ -205,7 +205,7 @@ network while you type, and a sync never replaces text you are typing.
 | 60 seconds pass after the last change to your tasks. | Sends the change. |
 | Every 60 seconds. | Checks the sync file for changes from your other computers. |
 | You press a key, paste, or use the mouse after 60 seconds without input. | Starts a sync, so you see current tasks when you come back. |
-| You press F5. | Starts a sync at once. |
+| You press F5 on any screen, or `r` in All tasks or a list view. | Starts a sync at once. |
 | You quit while changes are unsent. | Shows `Syncing...` and sends them. Husker waits at most 10 seconds. |
 
 A change therefore leaves your computer within about a minute while Husker
@@ -296,7 +296,8 @@ contact it. A change from the online server arrives like a change from
 another computer, at the next sync:
 
 - The terminal interface receives it within about a minute, or at once
-  when you press F5. It shows `Synced changes from another device.`
+  when you press `r` or F5 in All tasks or a list view. It shows
+  `Synced changes from another device.`
 - A writable `husker mcp` server receives it within about a minute.
 - If you only run commands, run `husker sync` to receive it.
 
@@ -360,8 +361,9 @@ seconds.
 | `Sync failed:` followed by a reason and `Your changes stay on this computer.` | The sync did not complete. Your tasks are safe in the local database, and you can keep working. |
 
 Husker shows a failure once. It does not repeat the message until a sync
-has succeeded again. Meanwhile, it keeps trying every 60 seconds, when you
-press F5, and when you return after 60 seconds without input.
+has succeeded again. Meanwhile, it keeps trying every 60 seconds and when
+you return after 60 seconds without input. It also tries when you press F5,
+or `r` in All tasks or a list view.
 
 A sync that changes nothing on this computer shows no message.
 
@@ -369,7 +371,7 @@ The reason in a failure message tells you what to do:
 
 | Reason | Cause | What to do |
 | --- | --- | --- |
-| `No connection to the sync storage.` | There is no network, or the storage did not answer within 10 seconds. A misspelled storage account name in `url` gives the same reason, because that address does not exist. | Keep working. Husker sends your changes when the connection is back. Press F5 to try at once. If it never works, check the account name in `url`. |
+| `No connection to the sync storage.` | There is no network, or the storage did not answer within 10 seconds. A misspelled storage account name in `url` gives the same reason, because that address does not exist. | Keep working. Husker sends your changes when the connection is back. To try at once, press `r` or F5 in All tasks or a list view. If it never works, check the account name in `url`. |
 | `The sync storage refused access.` | The URL in `sync.toml` is wrong, expired, or revoked. On an Azure VM, the managed identity is missing or has no role on the container. | Compare `url` with the URL that `az storage blob generate-sas` printed, or create a new URL. On a VM, check the role assignment. |
 | `The sync storage gave an unexpected answer.` | The storage answered with another error, for example because the container in `url` does not exist. | Check the container name in `url`. Run `husker sync` to see the details. |
 | `The sync file needs a newer Husker.` | A newer Husker on another computer wrote the sync file in a newer format. | Update Husker on this computer. Until then, this computer keeps its tasks and does not sync. |

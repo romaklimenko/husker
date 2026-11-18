@@ -8,7 +8,10 @@ use crate::i18n::{Language, tr};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
+    /// Task navigation in All tasks and list views.
     Tasks,
+    /// Task navigation while Trash is open.
+    Trash,
     History,
     Lists,
     Editor,
@@ -173,6 +176,11 @@ impl Action {
     }
 
     pub fn available_in(self, mode: Mode) -> bool {
+        if mode == Mode::Trash {
+            // Trash keeps every task-navigation action so their conflicts stay checked there.
+            return matches!(self, Self::Restore | Self::EmptyTrash)
+                || self.available_in(Mode::Tasks);
+        }
         if mode == Mode::ListField {
             return matches!(self, Self::Open | Self::Lists)
                 || (self != Self::CopySelection && self.available_in(Mode::Editor));
@@ -244,7 +252,8 @@ impl Action {
                     | Mode::Help
             ),
             Self::Reopen => mode == Mode::History,
-            Self::NewTask | Self::Restore | Self::EmptyTrash => mode == Mode::Tasks,
+            Self::NewTask => mode == Mode::Tasks,
+            Self::Restore | Self::EmptyTrash => mode == Mode::Trash,
             Self::Filter | Self::ToggleDone | Self::ToggleCancelled | Self::Trash => {
                 matches!(mode, Mode::Tasks | Mode::History)
             }
@@ -282,9 +291,9 @@ impl Action {
             Self::PageDown => &["pagedown"],
             Self::Open => &["enter"],
             Self::NewTask => &["n"],
-            Self::NewList => &["n", "N"],
-            Self::RenameList => &["r", "R"],
-            Self::DeleteList => &["d", "delete"],
+            Self::NewList => &["ctrl+n"],
+            Self::RenameList => &["ctrl+r"],
+            Self::DeleteList => &["ctrl+d", "delete"],
             Self::Language => &["f3"],
             Self::Lists => &["l"],
             Self::AllTasks => &[],
@@ -304,7 +313,7 @@ impl Action {
             Self::MoveDown => &["alt+down", "J"],
             Self::MoveTask => &["m"],
             Self::Undo => &["u"],
-            Self::Help => &["?"],
+            Self::Help => &["?", "f1"],
             Self::Quit => &["q", "ctrl+c"],
             Self::Back => &["esc"],
             Self::Save => &["ctrl+s", "ctrl+enter"],
@@ -313,7 +322,7 @@ impl Action {
             Self::PreviousField => &["shift+tab"],
             Self::Apply => &["enter"],
             Self::Close => &["esc", "?"],
-            Self::Refresh => &["f5"],
+            Self::Refresh => &["r", "f5"],
             Self::ToggleMouse => &["f2"],
             Self::CopyText => &["f4"],
             Self::CopySelection => &["ctrl+c"],
@@ -334,6 +343,29 @@ struct Binding {
     name: String,
     code: KeyCode,
     modifiers: KeyModifiers,
+}
+
+/// True for a character key that types text: no Ctrl or Alt, or both together,
+/// which terminals report for AltGr.
+pub fn is_printable(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    matches!(code, KeyCode::Char(character) if !character.is_control())
+        && (!modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            || modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::ALT))
+}
+
+/// Whether a key of `action` works in `mode`. Printable keys type into the filter of
+/// the list pickers, and a printable refresh key works only in task navigation.
+fn binding_active(action: Action, binding: &Binding, mode: Mode) -> bool {
+    if !action.available_in(mode) {
+        return false;
+    }
+    if !is_printable(binding.code, binding.modifiers) {
+        return true;
+    }
+    match mode {
+        Mode::Lists | Mode::EditorListPicker => false,
+        _ => action != Action::Refresh || mode == Mode::Tasks,
+    }
 }
 
 impl Binding {
@@ -461,21 +493,34 @@ impl Config {
         }
         let (code, modifiers) = normalize_key(event.code, event.modifiers);
         self.keys.iter().find_map(|(action, bindings)| {
-            (action.available_in(mode)
-                && bindings
-                    .iter()
-                    .any(|binding| binding.code == code && binding.modifiers == modifiers))
-            .then_some(*action)
+            bindings
+                .iter()
+                .any(|binding| {
+                    binding.code == code
+                        && binding.modifiers == modifiers
+                        && binding_active(*action, binding, mode)
+                })
+                .then_some(*action)
         })
     }
 
     /// Every configured key of an action in display form, such as `Ctrl+S / F6`.
     pub fn keys_for(&self, action: Action) -> String {
+        self.join_keys(action, |_| true)
+    }
+
+    /// The configured keys of an action that work in `mode`, in display form.
+    pub fn keys_in(&self, action: Action, mode: Mode) -> String {
+        self.join_keys(action, |binding| binding_active(action, binding, mode))
+    }
+
+    fn join_keys(&self, action: Action, keep: impl Fn(&Binding) -> bool) -> String {
         let keys: Vec<String> = self
             .keys
             .get(&action)
             .into_iter()
             .flatten()
+            .filter(|binding| keep(binding))
             .map(|binding| binding.display(self.language))
             .collect();
         if keys.is_empty() {
@@ -487,9 +532,18 @@ impl Config {
 
     /// The first configured key of an action in display form, for footer hints.
     pub fn primary_key(&self, action: Action) -> String {
+        self.first_key(action, |_| true)
+    }
+
+    /// The first configured key of an action that works in `mode`, for footer hints.
+    pub fn primary_key_in(&self, action: Action, mode: Mode) -> String {
+        self.first_key(action, |binding| binding_active(action, binding, mode))
+    }
+
+    fn first_key(&self, action: Action, keep: impl Fn(&Binding) -> bool) -> String {
         self.keys
             .get(&action)
-            .and_then(|bindings| bindings.first())
+            .and_then(|bindings| bindings.iter().find(|binding| keep(binding)))
             .map_or_else(
                 || tr(self.language, "unbound").into(),
                 |binding| binding.display(self.language),
@@ -506,7 +560,7 @@ impl Config {
 
     pub fn example() -> String {
         let mut example = String::from(
-            "# Save as config.toml in your profile, or pass --config FILE.\n# Use en for English or da for Danish.\nlanguage = \"en\"\n\n# Each array replaces the action's default shortcuts. [] disables it.\n# Keys may be reused in different modes. Conflicts in one mode are errors.\n[keys]\n",
+            "# Save as config.toml in your profile, or pass --config FILE.\n# Use en for English or da for Danish.\nlanguage = \"en\"\n\n# Each array replaces the action's default shortcuts. [] disables it.\n# Keys may be reused in different modes. Conflicts in one mode are errors.\n# Letters and other printable keys type into the filter of the list pickers.\n# A printable refresh key works only in All tasks and list views.\n[keys]\n",
         );
         for action in Action::ALL {
             let names: Vec<String> = action
@@ -522,6 +576,7 @@ impl Config {
     fn validate(&self) -> Result<()> {
         for mode in [
             Mode::Tasks,
+            Mode::Trash,
             Mode::History,
             Mode::Lists,
             Mode::Editor,
@@ -538,10 +593,10 @@ impl Config {
         ] {
             let mut seen: Vec<(&Binding, Action)> = Vec::new();
             for (action, bindings) in &self.keys {
-                if !action.available_in(mode) {
-                    continue;
-                }
                 for binding in bindings {
+                    if !binding_active(*action, binding, mode) {
+                        continue;
+                    }
                     if let Some((_, previous)) = seen.iter().find(|(previous, previous_action)| {
                         previous.code == binding.code
                             && previous.modifiers == binding.modifiers
@@ -740,13 +795,18 @@ mod tests {
         for (event, action) in bindings {
             for mode in [
                 Mode::Tasks,
+                Mode::Trash,
                 Mode::History,
-                Mode::Lists,
-                Mode::EditorListPicker,
                 Mode::Language,
                 Mode::Help,
             ] {
                 assert_eq!(config.action(event, mode), Some(action), "{mode:?}");
+            }
+            // Letters type into the picker filter. Named keys still select.
+            let printable = matches!(event.code, KeyCode::Char(_));
+            for mode in [Mode::Lists, Mode::EditorListPicker] {
+                let expected = (!printable).then_some(action);
+                assert_eq!(config.action(event, mode), expected, "{mode:?}");
             }
             for mode in [
                 Mode::Editor,
@@ -915,10 +975,9 @@ mod tests {
         let config = Config::default();
         for mode in [Mode::ListField, Mode::EditorListPicker] {
             assert_eq!(config.action(key(KeyCode::Enter), mode), Some(Action::Open));
-            assert_eq!(
-                config.action(key(KeyCode::Char('l')), mode),
-                Some(Action::Lists)
-            );
+            // `l` opens the picker from the List field and types into the picker filter.
+            let lists = (mode == Mode::ListField).then_some(Action::Lists);
+            assert_eq!(config.action(key(KeyCode::Char('l')), mode), lists);
             assert_eq!(
                 config.action(
                     KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
@@ -963,6 +1022,10 @@ mod tests {
         );
         assert_eq!(
             config.action(key(KeyCode::Char('?')), Mode::EditorListPicker),
+            None
+        );
+        assert_eq!(
+            config.action(key(KeyCode::F(1)), Mode::EditorListPicker),
             Some(Action::Help)
         );
     }
@@ -1165,8 +1228,12 @@ mod tests {
             config.action(key(KeyCode::Char('n')), Mode::Tasks),
             Some(Action::NewTask)
         );
+        assert_eq!(config.action(key(KeyCode::Char('N')), Mode::Lists), None);
         assert_eq!(
-            config.action(key(KeyCode::Char('N')), Mode::Lists),
+            config.action(
+                KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
+                Mode::Lists
+            ),
             Some(Action::NewList)
         );
     }
@@ -1235,8 +1302,12 @@ mod tests {
             Some(Action::Reopen)
         );
         assert_eq!(
-            config.action(key(KeyCode::Char('r')), Mode::Tasks),
+            config.action(key(KeyCode::Char('r')), Mode::Trash),
             Some(Action::Restore)
+        );
+        assert_eq!(
+            config.action(key(KeyCode::Char('r')), Mode::Tasks),
+            Some(Action::Refresh)
         );
         assert_eq!(
             config.action(key(KeyCode::Delete), Mode::Lists),
@@ -1261,25 +1332,27 @@ mod tests {
         );
         assert!(Config::from_toml("[keys]\nhistory = ['a']\nall_tasks = ['a']").is_err());
         assert!(Config::from_toml("[keys]\nreopen = ['d']").is_err());
-        assert!(Config::from_toml("[keys]\ndelete_list = ['R']").is_err());
+        assert!(Config::from_toml("[keys]\ndelete_list = ['ctrl+r']").is_err());
+        // Printable picker keys type into the filter, so they never conflict there.
+        assert!(Config::from_toml("[keys]\ndelete_list = ['R']").is_ok());
     }
 
     #[test]
-    fn empty_trash_uses_shift_d_only_in_task_navigation() {
+    fn empty_trash_uses_shift_d_only_in_trash_navigation() {
         let config = Config::default();
         let shift_d = KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT);
         assert_eq!(
-            config.action(shift_d, Mode::Tasks),
+            config.action(shift_d, Mode::Trash),
             Some(Action::EmptyTrash)
         );
-        for mode in [Mode::History, Mode::Lists, Mode::DeleteConfirm] {
+        for mode in [Mode::Tasks, Mode::History, Mode::Lists, Mode::DeleteConfirm] {
             assert_eq!(config.action(shift_d, mode), None);
         }
         assert_eq!(config.keys_for(Action::EmptyTrash), "D");
         assert!(Config::example().contains("empty_trash = [\"D\"]\n"));
         let conflict = Config::from_toml("[keys]\nnew_task = ['D']").unwrap_err();
         let message = format!("{conflict:#}");
-        assert!(message.contains("'new_task' and 'empty_trash' in Tasks mode"));
+        assert!(message.contains("'new_task' and 'empty_trash' in Trash mode"));
         let disabled = Config::from_toml("[keys]\nnew_task = ['D']\nempty_trash = []").unwrap();
         assert_eq!(disabled.action(shift_d, Mode::Tasks), Some(Action::NewTask));
     }
@@ -1316,6 +1389,7 @@ mod tests {
                 Action::PageUp,
                 vec![
                     Mode::Tasks,
+                    Mode::Trash,
                     Mode::History,
                     Mode::Lists,
                     Mode::EditorListPicker,
@@ -1329,6 +1403,7 @@ mod tests {
                 Action::PageDown,
                 vec![
                     Mode::Tasks,
+                    Mode::Trash,
                     Mode::History,
                     Mode::Lists,
                     Mode::EditorListPicker,
@@ -1340,42 +1415,67 @@ mod tests {
                 KeyCode::Char('m'),
                 KeyModifiers::NONE,
                 Action::MoveTask,
-                vec![Mode::Tasks, Mode::History],
+                vec![Mode::Tasks, Mode::Trash, Mode::History],
             ),
             (
                 KeyCode::Char('u'),
                 KeyModifiers::NONE,
                 Action::Undo,
-                vec![Mode::Tasks, Mode::History],
+                vec![Mode::Tasks, Mode::Trash, Mode::History],
             ),
             (
                 KeyCode::Char('K'),
                 KeyModifiers::SHIFT,
                 Action::MoveUp,
-                vec![Mode::Tasks, Mode::Lists],
+                vec![Mode::Tasks, Mode::Trash],
             ),
             (
                 KeyCode::Char('J'),
                 KeyModifiers::SHIFT,
                 Action::MoveDown,
-                vec![Mode::Tasks, Mode::Lists],
+                vec![Mode::Tasks, Mode::Trash],
+            ),
+            (
+                KeyCode::Up,
+                KeyModifiers::ALT,
+                Action::MoveUp,
+                vec![Mode::Tasks, Mode::Trash, Mode::Lists],
             ),
             (
                 KeyCode::Char('n'),
-                KeyModifiers::NONE,
+                KeyModifiers::CONTROL,
                 Action::NewList,
                 vec![Mode::Lists],
             ),
             (
                 KeyCode::Char('r'),
-                KeyModifiers::NONE,
+                KeyModifiers::CONTROL,
                 Action::RenameList,
                 vec![Mode::Lists],
+            ),
+            (
+                KeyCode::Char('d'),
+                KeyModifiers::CONTROL,
+                Action::DeleteList,
+                vec![Mode::Lists],
+            ),
+            (
+                KeyCode::F(1),
+                KeyModifiers::NONE,
+                Action::Help,
+                vec![
+                    Mode::Tasks,
+                    Mode::Trash,
+                    Mode::History,
+                    Mode::Lists,
+                    Mode::EditorListPicker,
+                ],
             ),
         ] {
             let event = KeyEvent::new(code, modifiers);
             for mode in [
                 Mode::Tasks,
+                Mode::Trash,
                 Mode::History,
                 Mode::Lists,
                 Mode::Editor,
@@ -1392,22 +1492,26 @@ mod tests {
             ] {
                 let expected = modes.contains(&mode).then_some(action);
                 let actual = config.action(event, mode);
-                if mode == Mode::Tasks && code == KeyCode::Char('n') {
-                    assert_eq!(actual, Some(Action::NewTask));
-                } else if mode == Mode::Tasks && code == KeyCode::Char('r') {
-                    assert_eq!(actual, Some(Action::Restore));
-                } else if mode == Mode::History && code == KeyCode::Char('r') {
-                    assert_eq!(actual, Some(Action::Reopen));
-                } else {
-                    assert_eq!(actual, expected, "{} in {mode:?}", action.name());
-                }
+                assert_eq!(actual, expected, "{} in {mode:?}", action.name());
             }
         }
         assert_eq!(config.keys_for(Action::Quit), "q / Ctrl+C");
         assert_eq!(config.primary_key(Action::Quit), "q");
+        assert_eq!(config.primary_key_in(Action::Quit, Mode::Lists), "Ctrl+C");
+        assert_eq!(config.keys_in(Action::Quit, Mode::Lists), "Ctrl+C");
+        assert_eq!(config.primary_key_in(Action::Help, Mode::Lists), "F1");
+        assert_eq!(config.keys_for(Action::Help), "? / F1");
         assert_eq!(config.keys_for(Action::Save), "Ctrl+S / Ctrl+Enter");
         assert_eq!(config.keys_for(Action::MoveUp), "Alt+Up / K");
-        assert_eq!(config.keys_for(Action::NewList), "n / N");
+        assert_eq!(config.keys_in(Action::MoveUp, Mode::Lists), "Alt+Up");
+        assert_eq!(config.keys_for(Action::NewList), "Ctrl+N");
+        assert_eq!(config.keys_for(Action::RenameList), "Ctrl+R");
+        assert_eq!(config.keys_for(Action::DeleteList), "Ctrl+D / Delete");
+        assert_eq!(config.keys_for(Action::Refresh), "r / F5");
+        assert_eq!(config.keys_in(Action::Refresh, Mode::Tasks), "r / F5");
+        for mode in [Mode::Trash, Mode::History, Mode::Editor, Mode::Lists] {
+            assert_eq!(config.keys_in(Action::Refresh, mode), "F5", "{mode:?}");
+        }
         assert_eq!(config.keys_for(Action::ToggleDone), "Space");
         assert_eq!(config.keys_for(Action::First), "Home / g / Left");
         assert_eq!(config.keys_for(Action::PreviousField), "Shift+Tab");
@@ -1427,8 +1531,11 @@ mod tests {
             "page_down = [\"pagedown\"]",
             "move_task = [\"m\"]",
             "undo = [\"u\"]",
-            "new_list = [\"n\", \"N\"]",
-            "rename_list = [\"r\", \"R\"]",
+            "new_list = [\"ctrl+n\"]",
+            "rename_list = [\"ctrl+r\"]",
+            "delete_list = [\"ctrl+d\", \"delete\"]",
+            "help = [\"?\", \"f1\"]",
+            "refresh = [\"r\", \"f5\"]",
             "move_up = [\"alt+up\", \"K\"]",
             "quit = [\"q\", \"ctrl+c\"]",
         ] {
@@ -1439,8 +1546,10 @@ mod tests {
             "filter = ['pageup']",
             "trash = ['u']",
             "quit = ['J']",
-            "delete_list = ['r']",
+            "delete_list = ['ctrl+n']",
             "lists = ['n']",
+            "new_task = ['r']",
+            "restore = ['d']",
         ] {
             assert!(
                 Config::from_toml(&format!("[keys]\n{conflict}")).is_err(),
@@ -1452,15 +1561,21 @@ mod tests {
             relieved.action(key(KeyCode::Char('m')), Mode::Tasks),
             Some(Action::History)
         );
-        let uppercase_only = Config::from_toml("[keys]\nnew_list = ['N']").unwrap();
+        // A printable picker key loads, types into the picker filter, and shows as unbound.
+        let printable = Config::from_toml("[keys]\nnew_list = ['N']").unwrap();
+        assert_eq!(printable.action(key(KeyCode::Char('N')), Mode::Lists), None);
         assert_eq!(
-            uppercase_only.action(key(KeyCode::Char('n')), Mode::Lists),
-            None
+            printable.primary_key_in(Action::NewList, Mode::Lists),
+            "unbound"
         );
+        // Restore and the printable refresh key share `r` in separate modes.
+        let refresh = Config::from_toml("[keys]\nrestore = ['r']\nreopen = ['r']").unwrap();
         assert_eq!(
-            uppercase_only.action(key(KeyCode::Char('N')), Mode::Lists),
-            Some(Action::NewList)
+            refresh.action(key(KeyCode::Char('r')), Mode::Trash),
+            Some(Action::Restore)
         );
+        let error = Config::from_toml("[keys]\nnew_task = ['r']").unwrap_err();
+        assert!(format!("{error:#}").contains("in Tasks mode"));
         let custom = Config::from_toml("[keys]\nsave = ['ctrl+s', 'f6']").unwrap();
         assert_eq!(custom.keys_for(Action::Save), "Ctrl+S / F6");
         assert_eq!(custom.primary_key(Action::Save), "Ctrl+S");
@@ -1512,10 +1627,36 @@ mod tests {
         assert_eq!(
             config.action(
                 KeyEvent::new(KeyCode::Char('N'), KeyModifiers::SHIFT),
+                Mode::Tasks
+            ),
+            None
+        );
+        assert_eq!(
+            config.action(
+                KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT),
+                Mode::Tasks
+            ),
+            Some(Action::MoveDown)
+        );
+        // AltGr arrives as Ctrl+Alt and types text in the pickers.
+        assert_eq!(
+            config.action(
+                KeyEvent::new(
+                    KeyCode::Char('@'),
+                    KeyModifiers::CONTROL | KeyModifiers::ALT
+                ),
                 Mode::Lists
             ),
-            Some(Action::NewList)
+            None
         );
+        assert!(is_printable(
+            KeyCode::Char('@'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT
+        ));
+        assert!(is_printable(KeyCode::Char('Å'), KeyModifiers::SHIFT));
+        assert!(!is_printable(KeyCode::Char('n'), KeyModifiers::CONTROL));
+        assert!(!is_printable(KeyCode::Char('k'), KeyModifiers::ALT));
+        assert!(!is_printable(KeyCode::F(1), KeyModifiers::NONE));
         let release = KeyEvent::new_with_kind(
             KeyCode::Char('q'),
             KeyModifiers::NONE,
@@ -1529,7 +1670,10 @@ mod tests {
         let config = Config::from_toml(&Config::example()).unwrap();
         assert_eq!(config.language, Language::En);
         assert_eq!(
-            config.action(key(KeyCode::Char('R')), Mode::Lists),
+            config.action(
+                KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+                Mode::Lists
+            ),
             Some(Action::RenameList)
         );
         for action in Action::ALL {
