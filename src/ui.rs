@@ -10800,4 +10800,28 @@ mod tests {
         rendered(&mut app, &config, 80, 24);
         assert!(app.visible.is_empty());
     }
+
+    #[test]
+    fn typing_a_danish_day_name_in_two_words_matches_it_as_one_phrase() {
+        let (_directory, mut store, mut config) = fixture();
+        config.language = Language::Da;
+        let mut add = |title: &str, days: i64| {
+            let mut value = input(1, title);
+            value.due = Some(today() + chrono::Duration::days(days));
+            store.create_task(&value).unwrap().id
+        };
+        let rent = add("Pay rent", 1);
+        let model = add("Configure model source", 0);
+        let mut app = App::new(&store, today()).unwrap();
+        app.handle_key(key(KeyCode::Char('/')), &mut store, &config);
+        app.handle_key(key(KeyCode::Char('i')), &mut store, &config);
+        assert_eq!(visible_ids(&app), vec![model, rent]);
+        for character in " mo".chars() {
+            app.handle_key(key(KeyCode::Char(character)), &mut store, &config);
+        }
+        // `i` and `mo` alone would also match the title of the task planned today.
+        assert_eq!(visible_ids(&app), vec![rent]);
+        let screen = rendered(&mut app, &config, 80, 24);
+        assert!(row_text(&screen, 80, "I morgen -").is_some(), "{screen}");
+    }
 }

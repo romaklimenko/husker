@@ -200,8 +200,9 @@ A word in the filter also matches the date groups Earlier, Today,
 Tomorrow, and Sometime by name, in the language you chose with F3. For
 example, `tod` lists the tasks planned for today and any task whose text
 contains `tod`. In Danish, `dag` lists today's tasks through the name
-I dag. Put the word in double quotes, such as `"tod"`, to search only
-titles and descriptions.
+I dag. Words in a row that start a name count as one phrase, so `i mo`
+lists tomorrow's tasks through I morgen. Put the word in double quotes,
+such as `"tod"`, to search only titles and descriptions.
 
 In All tasks and list views, the Today heading is bold black on yellow, and
 today's tasks are bold. Earlier, Done, and Cancelled are dimmed. Their task

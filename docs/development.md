@@ -880,6 +880,26 @@ The script never contacts Azure. The host check in
 the Azure Functions host on your computer. The Azure front end before
 the host and a cold start in Azure stay untested.
 
+## Checks for version 0.20.1
+
+The Danish day-name phrase change completed these checks on November 18, 2026, on Windows 11 with Rust 1.91.1:
+
+| Check | Result |
+| --- | --- |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Unit tests | 398 passed. A new query test covers `i mo`, `I  MO`, `i m`, `i morgen`, `i d`, `i` alone, `i i mo`, words after a phrase, quoted words, `mo i`, `buy milk`, a field term between two words, `i g` in All tasks and History, `i mo` in History, Trash in both languages, English, and queries without day names. A second test runs a pasted filter of 2,000 words. A UI test types `i mo` with Danish selected. |
+| Mutation checks | Each part was removed in turn, and at least one test failed each time: the joining, the phrase match from a word start, the literal check, and the position check. With the old cubic search restored, the long-filter test had not finished after 120 seconds. |
+| Integration tests | CLI 9, MCP 8, online 9, sync 8, and package 2 passed. |
+| Pseudo-terminal run | The 0.20.1 release executable ran in an isolated psmux server, 100 columns by 30 rows, against a temporary profile with Dansk chosen through F3. All 7 checks passed. `i` listed the tasks under I dag and I morgen. `i mo` left only `Pay rent` under I morgen and hid `Configure model source`, which is under I dag and contains `mo`. `buy milk` found `Buy oat milk`. |
+| Review | An independent code review and a docs review found three issues, all fixed with tests: a field term between two words did not keep them apart, every view checked all five names, so Trash and History joined words for headings they never show, and the run search was cubic, so a pasted filter of 1,000 words took 1.9 seconds per rebuild. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.20.1. |
+| OpenSpec | `openspec validate match-day-name-phrases --strict` passed. |
+
+Not verified:
+
+- Linux and macOS.
+
 ## Checks for version 0.20.0
 
 The filter day-name and picker border change completed these checks on November 18, 2026, on Windows 11 with Rust 1.91.1:

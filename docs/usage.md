@@ -680,6 +680,25 @@ Husker uses the names of the language you chose with F3. In Danish, type
 `dag` for I dag, `mor` for I morgen, `tid` for Tidligere, or `eng` for
 Engang. Because I dag and I morgen both start with the word I, `i` lists
 the tasks in both groups, along with every task whose text contains `i`.
+
+You can also type a Danish name the way it reads, with a space. Words in
+a row that together start a name count as one phrase. For example, `i mo`
+lists the tasks under I morgen and the tasks whose text contains `i mo`.
+With Danish selected, `i mo` lists only `Pay rent` in the example above.
+`Call mom` is under I dag, and its title contains `mo`. It isn't listed,
+because `i mo` doesn't start I dag and the title doesn't contain `i mo`.
+In the same way, `i d` lists the tasks under I dag, and in History, `i g`
+lists the tasks under I går.
+
+Only the names that the current view shows can form a phrase. I går is a
+History heading, so in All tasks `i g` stays two words. Trash has no
+headings, so words never join there. Words must also stand next to each
+other: in `i l:home mo`, the list filter keeps `i` and `mo` apart.
+
+Words that don't start a name together stay separate, so `buy milk` still
+finds `Buy oat milk`. A word in double quotes never joins a phrase, so
+`"i" mo` is two separate words.
+
 English names such as `tomorrow` don't match while Danish is selected.
 If you change the language with F3 while a filter is applied, the filter
 uses the new names at once. For example, `dag` lists nothing in English.
@@ -1509,6 +1528,15 @@ Install the current version from the repository:
 ```text
 cargo install --path . --locked
 ```
+
+Version 0.20.1 changes how the task filter reads a Danish day name typed
+with a space. Words in a row that start a day name, such as `i mo`, count
+as one phrase. `i mo` now lists only the tasks under I morgen and the
+tasks whose text contains `i mo`. In 0.20.0, `i` and `mo` matched
+separately. So `i mo` also listed tasks under I dag whose text contains
+`mo`, and any task whose text contains both `i` and `mo`. See
+[Find tasks by Earlier, Today, Tomorrow, or Sometime](#find-tasks-by-earlier-today-tomorrow-or-sometime).
+Version 0.20.1 doesn't change the database.
 
 Version 0.20.0 changes the task filter and the list pickers:
 

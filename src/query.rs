@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use anyhow::{Result, bail};
 use chrono::NaiveDate;
 
@@ -25,6 +27,9 @@ struct TextTerm {
     text: String,
     /// Quoted terms and `#` terms match only titles and descriptions.
     literal: bool,
+    /// The position of the term among all terms of the input, field terms included.
+    /// Only terms at consecutive positions can join into a phrase.
+    position: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -50,11 +55,12 @@ impl Default for Query {
 impl Query {
     pub fn parse(input: &str) -> Result<Self> {
         let mut query = Self::default();
-        for token in tokenize(input)? {
+        for (position, token) in tokenize(input)?.into_iter().enumerate() {
             if token.literal || token.text.starts_with('#') {
                 query.text.push(TextTerm {
                     text: token.text.to_lowercase(),
                     literal: true,
+                    position,
                 });
             } else if let Some((field, value)) = token.text.split_once(':') {
                 if value.is_empty() {
@@ -100,6 +106,7 @@ impl Query {
                 query.text.push(TextTerm {
                     text: token.text.to_lowercase(),
                     literal: false,
+                    position,
                 });
             }
         }
@@ -109,9 +116,71 @@ impl Query {
     /// Lets unquoted text terms also match the day name of the heading each task is
     /// listed under in `language`. A term matches when a word of the name starts with
     /// it, so `to` matches Today and Tomorrow.
+    ///
+    /// Adjacent unquoted terms that together start a day name of the view become one
+    /// phrase term, so the Danish `i mo` matches I morgen and not `i` and `mo` alone.
     pub fn with_group_names(mut self, language: Language) -> Self {
         self.group_names = Some(language);
         self
+    }
+
+    /// The query for `layout` with its phrase terms joined. A phrase term is the longest
+    /// run of two or more unquoted text terms at consecutive positions whose text,
+    /// joined by single spaces, starts a day name that `layout` shows.
+    fn with_phrases(&self, layout: GroupLayout) -> Cow<'_, Self> {
+        let Some(language) = self.group_names else {
+            return Cow::Borrowed(self);
+        };
+        let names = day_name_keys(layout)
+            .iter()
+            .map(|key| tr(language, key).to_lowercase())
+            .collect::<Vec<_>>();
+        if names.is_empty() {
+            return Cow::Borrowed(self);
+        }
+        let phrase = |terms: &[TextTerm]| {
+            terms
+                .iter()
+                .map(|term| term.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let starts_a_name = |run: &[TextTerm]| {
+            run.iter().all(|term| !term.literal)
+                && run
+                    .windows(2)
+                    .all(|pair| pair[1].position == pair[0].position + 1)
+                && {
+                    let joined = phrase(run);
+                    names.iter().any(|name| name.starts_with(&joined))
+                }
+        };
+        let mut text = Vec::with_capacity(self.text.len());
+        let mut start = 0;
+        while start < self.text.len() {
+            // A run that starts no name cannot grow into one, so the search stops at the
+            // first failure. That keeps long pasted filters linear.
+            let end = (start + 2..=self.text.len())
+                .take_while(|&end| starts_a_name(&self.text[start..end]))
+                .last();
+            match end {
+                Some(end) => {
+                    text.push(TextTerm {
+                        text: phrase(&self.text[start..end]),
+                        literal: false,
+                        position: self.text[start].position,
+                    });
+                    start = end;
+                }
+                None => {
+                    text.push(self.text[start].clone());
+                    start += 1;
+                }
+            }
+        }
+        let mut query = self.clone();
+        query.text = text;
+        Cow::Owned(query)
     }
 
     /// `layout` is the view the results are for. It decides the default status rule
@@ -151,12 +220,28 @@ impl Query {
             title.contains(&term.text)
                 || description.contains(&term.text)
                 || !term.literal
-                    && group_name.as_deref().is_some_and(|name| {
-                        name.split_whitespace()
-                            .any(|word| word.starts_with(&term.text))
-                    })
+                    && group_name
+                        .as_deref()
+                        .is_some_and(|name| day_name_matches(name, &term.text))
         })
     }
+}
+
+/// The catalog keys of the day names that the headings of `layout` show.
+fn day_name_keys(layout: GroupLayout) -> &'static [&'static str] {
+    match layout {
+        GroupLayout::Planned => &["overdue", "today", "tomorrow", "undated"],
+        GroupLayout::History => &["today", "yesterday"],
+        GroupLayout::Trash => &[],
+    }
+}
+
+/// Whether `name`, read from the start of one of its words, starts with `term`.
+/// Spaces separate the words of a name, so `i dag` matches `dag` and `i d`.
+fn day_name_matches(name: &str, term: &str) -> bool {
+    std::iter::once(0)
+        .chain(name.match_indices(' ').map(|(index, _)| index + 1))
+        .any(|start| name[start..].starts_with(term))
 }
 
 /// The lowercase day name of the heading the task is listed under in `layout`.
@@ -185,6 +270,7 @@ fn day_name(
         },
         GroupLayout::Trash => return None,
     };
+    debug_assert!(day_name_keys(layout).contains(&key));
     Some(tr(language, key).to_lowercase())
 }
 
@@ -196,6 +282,12 @@ pub fn visible_tasks(
     trash: bool,
     today: NaiveDate,
 ) -> Vec<Task> {
+    let layout = if trash {
+        GroupLayout::Trash
+    } else {
+        GroupLayout::Planned
+    };
+    let query = query.with_phrases(layout);
     let mut visible: Vec<Task> = tasks
         .iter()
         .filter(|task| {
@@ -207,11 +299,7 @@ pub fn visible_tasks(
                         .iter()
                         .find(|list| list.id == task.list_id)
                         .map_or("", |list| list.name.as_str()),
-                    if trash {
-                        GroupLayout::Trash
-                    } else {
-                        GroupLayout::Planned
-                    },
+                    layout,
                     today,
                 )
         })
@@ -228,6 +316,7 @@ pub fn visible_history(
     list_id: Option<i64>,
     today: NaiveDate,
 ) -> Vec<Task> {
+    let query = query.with_phrases(GroupLayout::History);
     let mut history = tasks
         .iter()
         .filter(|task| {
@@ -665,6 +754,107 @@ mod tests {
                 .collect::<Vec<_>>(),
             [4]
         );
+    }
+
+    #[test]
+    fn adjacent_words_that_start_a_day_name_form_one_phrase() {
+        let today = parse_date("2026-11-18").unwrap();
+        let dated = |id, title, days: Option<i64>| {
+            let mut value = task(id, title);
+            value.due = days.map(|days| today + chrono::Duration::days(days));
+            value
+        };
+        let mut tasks = vec![
+            dated(1, "Pay rent", Some(1)),
+            dated(2, "Configure model source", Some(0)),
+            dated(3, "Buy oat milk", None),
+            dated(4, "Ring til mor", Some(-1)),
+            dated(5, "Notes from i mo meeting", Some(3)),
+        ];
+        let lists = [TaskList {
+            id: 1,
+            name: "Home".into(),
+            count: tasks.len(),
+        }];
+        let search = |tasks: &[Task], input: &str, language: Option<Language>| {
+            let mut query = Query::parse(input).unwrap();
+            if let Some(language) = language {
+                query = query.with_group_names(language);
+            }
+            visible_tasks(tasks, &lists, &query, None, false, today)
+                .iter()
+                .map(|task| task.id)
+                .collect::<Vec<_>>()
+        };
+        let danish = Some(Language::Da);
+        let english = Some(Language::En);
+        // `i mo` starts I morgen, so it matches that name or the text `i mo` only.
+        assert_eq!(search(&tasks, "i mo", danish), [1, 5]);
+        assert_eq!(search(&tasks, "I  MO", danish), [1, 5]);
+        assert_eq!(search(&tasks, "i m", danish), [1, 5]);
+        assert_eq!(search(&tasks, "i morgen", danish), [1]);
+        assert_eq!(search(&tasks, "i d", danish), [2]);
+        // A single `i` stays one word and matches both names and text.
+        assert_eq!(search(&tasks, "i", danish), [4, 2, 1, 5, 3]);
+        // Words after the phrase stay separate terms.
+        assert_eq!(search(&tasks, "i mo pay", danish), [1]);
+        assert!(search(&tasks, "i mo milk", danish).is_empty());
+        // A quoted word never joins a phrase, and words that start no name stay apart.
+        assert_eq!(search(&tasks, "\"i\" mo", danish), [4, 2, 5]);
+        assert_eq!(search(&tasks, "i \"mo\"", danish), [4, 2, 5]);
+        assert_eq!(search(&tasks, "i i mo", danish), [1, 5]);
+        assert_eq!(search(&tasks, "mo i", danish), [4, 2, 1, 5]);
+        assert_eq!(search(&tasks, "buy milk", danish), [3]);
+        // A field term between two words keeps them apart.
+        assert_eq!(search(&tasks, "i l:home mo", danish), [4, 2, 1, 5]);
+        assert_eq!(search(&tasks, "l:home i mo", danish), [1, 5]);
+        // I går is a History name, so All tasks keeps `i g` as two words.
+        assert_eq!(search(&tasks, "i g", danish), [4, 2, 5]);
+        // English names have one word each, and without names nothing joins.
+        assert_eq!(search(&tasks, "i mo", english), [4, 2, 5]);
+        assert_eq!(search(&tasks, "i mo", None), [4, 2, 5]);
+        assert_eq!(search(&tasks, "pay rent", english), [1]);
+        // History joins I går in the same way.
+        tasks[3].status = Status::Done;
+        tasks[3].status_changed_on = today.pred_opt();
+        tasks[1].status = Status::Done;
+        tasks[1].status_changed_on = Some(today);
+        let history = |input: &str| {
+            let query = Query::parse(input).unwrap().with_group_names(Language::Da);
+            visible_history(&tasks, &lists, &query, None, today)
+                .iter()
+                .map(|task| task.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(history("i g"), [4]);
+        assert_eq!(history("i går"), [4]);
+        assert_eq!(history("i d"), [2]);
+        // History shows no I morgen heading, so `i mo` stays two words there.
+        assert_eq!(history("i mo"), [2, 4]);
+        // Trash has no headings, so Danish words never join there.
+        for task in &mut tasks {
+            task.deleted = true;
+        }
+        let trash = |language: Language| {
+            let query = Query::parse("i mo").unwrap().with_group_names(language);
+            visible_tasks(&tasks, &lists, &query, None, true, today)
+                .iter()
+                .map(|task| task.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(trash(Language::Da), trash(Language::En));
+    }
+
+    #[test]
+    fn joining_phrases_stays_fast_for_a_long_pasted_filter() {
+        let today = parse_date("2026-11-18").unwrap();
+        let input = vec!["mo"; 2_000].join(" ");
+        let query = Query::parse(&input).unwrap().with_group_names(Language::Da);
+        let started = std::time::Instant::now();
+        let visible = visible_tasks(&[task(1, "mo")], &[], &query, None, false, today);
+        assert_eq!(visible.len(), 1);
+        // The search stops at the first run that starts no name, so this takes microseconds.
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 
     #[test]
