@@ -1974,7 +1974,7 @@ History and Trash keep their styles: yellow headings in History, no headings in 
 
 ### Requirement: Match day names in the task filter
 
-The terminal task filter SHALL let an unquoted text term also match a task when a word of the task's day name starts with the term.
+The terminal task filter SHALL let an unquoted text term also match a task when the task's day name, read from the start of one of its words, starts with the term.
 
 An unquoted text term is a text term that is not wholly quoted and does not start with `#`. Field terms such as `l:`, `due:`, and `s:` are not text terms.
 The day name is the name of the day that the heading above the task's row shows, in the selected interface language. Each view takes it from a different date.
@@ -2000,7 +2000,16 @@ Soon and Next have no name to match, because their terminal headings show exact 
 A done or cancelled task in All tasks or a list view has the name of its date group. That is the heading its row shows while it is held, so a held row keeps matching.
 In History, a task closed today has the name Today, or I dag in Danish. A task closed yesterday has the name Yesterday, or I går in Danish. A task closed on an earlier date or on an unknown date has no name.
 Spaces separate the words of a name, so I dag has the words I and dag.
-A term matches a word when the lowercase word starts with the lowercase term. `to` matches Today and Tomorrow, `tod` matches only Today, and `day` matches no name.
+Two or more adjacent unquoted text terms form one phrase term when their text, joined by single spaces, is the start of a day name that the current view shows, in the selected language. Case is ignored.
+Terms are adjacent when no other term stands between them in the filter text. A field term between two words keeps them apart, so `i l:home mo` stays the terms `i` and `mo`.
+All tasks and list views check Earlier, Today, Tomorrow, and Sometime. History checks Today and Yesterday. Trash checks no names, so no phrase term forms there.
+With Danish selected, `i g` forms a phrase term in History for I går, and stays two terms in All tasks, which has no I går heading. `i mo` stays two terms in History, which has no I morgen heading.
+The filter reads the text terms from the left. At each term, the longest run of two or more terms that starts a day name forms one phrase term, and reading continues after that run.
+A term that starts no such run stays a separate term. A wholly quoted term or a term that starts with `#` never joins a phrase term, so `"i" mo` stays two terms.
+With Danish selected, `i mo` is one phrase term because I morgen starts with it, and `i d` is one phrase term because I dag starts with it. A single `i` stays one term and matches both names.
+English day names have one word each, so English filters never form a phrase term. Terms that do not start a day name together, such as `buy milk` or `mo i`, stay separate terms.
+A phrase term matches a day name when the lowercase name, read from the start of one of its words, starts with the lowercase phrase. It matches a title or description that contains the phrase, with one space between its words.
+A one-word term matches a word when the lowercase word starts with the lowercase term. `to` matches Today and Tomorrow, `tod` matches only Today, and `day` matches no name.
 A task matches an unquoted text term when its title or description contains the term, as the `planning-search` spec defines, or when its day name matches the term.
 Every term must match, as the Combined filters requirement of the `planning-search` spec defines.
 Wholly quoted terms and terms that start with `#` match only titles and descriptions.
@@ -2050,4 +2059,15 @@ When the interface language changes, an applied filter uses the names of the new
 
 - **WHEN** English is selected, Trash holds `Call mom` due today and `Fix the toaster` without a due date, and the user applies `to`
 - **THEN** only `Fix the toaster` is listed
+
+#### Scenario: Match a Danish name typed as two words
+
+- **WHEN** today is `2026-11-18`, Danish is selected, All tasks holds `Pay rent` due `2026-11-19` and `Configure model source` due `2026-11-18`, and the user presses `/` and types `i mo`
+- **THEN** only `Pay rent` is listed, because `i mo` starts I morgen and no title contains `i mo`
+- **AND** the filter `i` lists both tasks
+
+#### Scenario: Keep other words separate
+
+- **WHEN** Danish is selected, All tasks holds `Buy oat milk` without a due date, and the user applies `buy milk`
+- **THEN** `Buy oat milk` is listed, because `buy` and `milk` do not start a day name together and each matches the title
 
