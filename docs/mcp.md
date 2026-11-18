@@ -313,6 +313,9 @@ After connecting a writable `Private` server, try these requests:
 An empty search returns open tasks and tasks completed or cancelled today, outside Trash.
 Ask for open tasks only when that is what you need. The agent can use `s:open`.
 The agent can use the [same search syntax as the terminal](usage.md#find-tasks), such as `due:today` or `s:done`.
+A word in an agent's search matches titles and descriptions only. In the
+terminal filter, `today` also lists the tasks planned for today. In an
+agent's search, it doesn't, so the agent uses `due:today` for that.
 Use `s:done` or `s:cancelled` to retrieve older closed tasks as well as today's.
 The terminal calls the task date Planned date and the past-date group Earlier.
 MCP keeps the `due` field and `due:` query tokens, including `due:overdue`.

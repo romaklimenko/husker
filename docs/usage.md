@@ -410,9 +410,10 @@ tasks. In Danish, they match as Alle opgaver and Papirkurv. The count and
 the default marker beside a list are not part of its name, so typing `4`
 doesn't find `Private (4)`.
 
-The picker's bottom border shows `Type to filter`, or
-`Skriv for at filtrere` in Danish, until you type. Then it shows the text,
-such as `Filter: hu`. If no list matches, the picker shows
+The picker's bottom border is empty until you type. Then it shows the text
+you typed, such as `Filter: hu`. The footer at the bottom of the screen
+starts with `Type to filter`, or `Skriv for at filtrere` in Danish, while
+any list picker is open. If no list matches, the picker shows
 `No matching lists`, or `Ingen lister passer` in Danish, and Enter does
 nothing.
 
@@ -609,6 +610,9 @@ description. These comparisons ignore case and preserve accents.
 For example, `ÆBLE` matches `Køb æbler`, but does not match `Køb abler`.
 `#` has no special tag meaning. A query such as `#shopping` also matches
 `#shopping-list` because text searches match substrings.
+In the terminal, a word also matches the date group names Earlier, Today,
+Tomorrow, and Sometime. For example, `tod` lists the tasks planned for
+today. See [Find tasks by Earlier, Today, Tomorrow, or Sometime](#find-tasks-by-earlier-today-tomorrow-or-sometime).
 
 Put values containing spaces in double quotes:
 
@@ -618,6 +622,8 @@ l:"Home admin" "electricity bill"
 
 Quote an entire term to search for literal filter syntax. For example,
 `"due:today"` searches task text for those exact characters.
+A quoted term matches only titles and descriptions, so `"tod"` doesn't list
+today's tasks unless their text contains `tod`.
 Inside quotes, use `\"` for a quote and `\\` for a backslash.
 
 Use each of `l:`, `due:`, and `s:` at most once. Unknown fields, invalid
@@ -628,6 +634,81 @@ input border is red and the task rows keep the results of the last valid
 text. If you press Enter on such text, Husker shows the error, such as
 `Error: Unclosed quoted filter value.`, and keeps the input open so you can
 correct it.
+
+### Find tasks by Earlier, Today, Tomorrow, or Sometime
+
+Type the start of a date group name in the task filter to list the tasks
+in that group. For example, press `/` and type `tod` to list the tasks
+planned for today. You can type these names:
+
+| Group | Danish name | Tasks in the group |
+| --- | --- | --- |
+| Earlier | Tidligere | Planned before today |
+| Today | I dag | Planned for today |
+| Tomorrow | I morgen | Planned for tomorrow |
+| Sometime | Engang | No planned date |
+
+A word in the filter matches a group when one of the words in the group's
+name starts with it. Case doesn't matter. For example, `to` matches Today
+and Tomorrow, `tod` matches only Today, and `day` matches no name.
+
+The word still matches titles and descriptions as well. Husker lists a
+task when its title, its description, or its group name matches the word.
+For example, today is 2026-11-18, and All tasks holds these tasks:
+
+| Task | Planned date |
+| --- | --- |
+| `Call mom` | 2026-11-18, today |
+| `Pay rent` | 2026-11-19, tomorrow |
+| `Book tickets` | 2026-11-20 |
+| `Fix the toaster` | None |
+
+Press `/` and type `to`. Husker lists `Call mom` under Today and `Pay rent`
+under Tomorrow, because both names start with `to`. It also lists
+`Fix the toaster` under Sometime, because its title contains `to`.
+`Book tickets` isn't listed. Type `d` to make the filter `tod`, and only
+`Call mom` stays.
+
+With several words, every word must match. For example, `to call` lists
+only `Call mom`.
+
+To search only task text, put the word in double quotes. In the example,
+`"to"` lists only `Fix the toaster`. A word that starts with `#`, such as
+`#today`, also matches only task text.
+
+Husker uses the names of the language you chose with F3. In Danish, type
+`dag` for I dag, `mor` for I morgen, `tid` for Tidligere, or `eng` for
+Engang. Because I dag and I morgen both start with the word I, `i` lists
+the tasks in both groups, along with every task whose text contains `i`.
+English names such as `tomorrow` don't match while Danish is selected.
+If you change the language with F3 while a filter is applied, the filter
+uses the new names at once. For example, `dag` lists nothing in English.
+Choose Dansk with F3, and `Call mom` appears.
+
+Other headings don't match. A heading for a later date, such as
+`2026-11-20 Fri W47`, doesn't match its weekday, date, or week number. So
+`fri` and `w47` don't find `Book tickets`. Use `due:2026-11-20` to find the
+tasks planned for that date. Status headings such as Done today don't match
+either.
+
+In All tasks and list views, a completed or cancelled task keeps the name
+of its planned date. For example, you complete `Pay rent` while `tom` is
+applied. The row stays under Tomorrow, so it doesn't vanish while you
+work. After the row moves to Done today, `tom` still lists `Pay rent`,
+and `tod` doesn't.
+
+History uses its own headings, which show the day you completed or
+cancelled the tasks under them. There, `tod` lists the tasks under Today,
+and `yes` lists the tasks under Yesterday. In Danish, type `dag`
+for I dag and `går` for I går. A heading with a date, such as
+`2026-11-15 Sun W46`, has no name to match.
+
+Trash has no headings, so a word there matches only task text.
+
+The date group names work only in the terminal filter. `husker tasks to`
+and agents connected through MCP match `to` against titles and
+descriptions only. Use `due:overdue`, `due:today`, `due:tomorrow`, or
+`due:none` there.
 
 ## Find older completed tasks
 
@@ -659,7 +740,10 @@ Press `/` to search History. For example, `s:done milk` finds completed tasks
 containing `milk`. `s:cancelled` shows cancelled tasks. `s:all` keeps both
 closed statuses, and `s:open` matches nothing in History.
 Due filters still check the task's planned date. `due:today` does not mean
-completed today.
+completed today. A filter word follows the History headings instead: `tod`
+lists the tasks under Today, the ones you closed today, and `yes` lists
+the tasks under Yesterday. See
+[Find tasks by Earlier, Today, Tomorrow, or Sometime](#find-tasks-by-earlier-today-tomorrow-or-sometime).
 
 Press Enter to edit a historical task or F4 to read and copy its text.
 Press `r` to reopen it. The task leaves History and becomes open in its
@@ -1425,6 +1509,19 @@ Install the current version from the repository:
 ```text
 cargo install --path . --locked
 ```
+
+Version 0.20.0 changes the task filter and the list pickers:
+
+- A word in the task filter also matches the names Earlier, Today,
+  Tomorrow, and Sometime, or their Danish names. In History it matches
+  Today and Yesterday. A filter such as `to` can list more tasks than
+  before. Put the word in double quotes, such as
+  `"to"`, to match only titles and descriptions as before. See
+  [Find tasks by Earlier, Today, Tomorrow, or Sometime](#find-tasks-by-earlier-today-tomorrow-or-sometime).
+- The bottom border of a list picker stays empty until you type. The
+  footer still starts with `Type to filter`.
+
+Version 0.20.0 doesn't change the database.
 
 Version 0.19.0 changes these keys and screens:
 

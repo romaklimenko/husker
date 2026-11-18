@@ -880,6 +880,27 @@ The script never contacts Azure. The host check in
 the Azure Functions host on your computer. The Azure front end before
 the host and a cold start in Azure stay untested.
 
+## Checks for version 0.20.0
+
+The filter day-name and picker border change completed these checks on November 18, 2026, on Windows 11 with Rust 1.91.1:
+
+| Check | Result |
+| --- | --- |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Unit tests | 395 passed. A new query test covers `to`, `tod`, `ear`, `some`, `soon`, `next`, `day`, two terms, quoted terms, the Danish names, exact text for callers without day names, a closed task planned tomorrow, History by closing day in English and Danish, and Trash. New UI tests cover typing `to`, `tod`, and `tom`, a held row under `tom`, a quoted `"to"`, and a language change that rebuilds an applied filter and keeps the selected task. The picker tests check that the hint appears only in the footer and that the popup's bottom border row holds no text. |
+| Mutation checks | Each part was removed in turn, and at least one test failed each time: the day names in `App::rebuild_visible`, the rebuild in `App::set_language`, the kept selection after it, the literal flag of quoted terms, the History and Trash rules, and the empty picker border. |
+| Integration tests | CLI 9, MCP 8, online 9, sync 8, and package 2 passed. |
+| Pseudo-terminal run | The 0.20.0 release executable ran in an isolated psmux server, 100 columns by 30 rows, against a temporary profile. All 21 checks passed. `to` listed today's, tomorrow's, and the toaster task, and `tod` left only today's task. A task completed under `tom` stayed under Tomorrow. The list picker's border was empty and the footer started with `Type to filter`; `hu` showed `Filter: hu`. In History, `tod` listed the task closed today and `tom` listed nothing. `dag` listed nothing in English and today's task after choosing Dansk with F3. `husker tasks to` listed only the toaster task. |
+| Review | An independent review found no code defect. It found that History matched the planned date while its headings show the closing day, so History now matches Today and Yesterday from the closing day and Trash matches no names. The spec now says wholly quoted, and the tests gained the History, Trash, and border-row checks. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.20.0. |
+| OpenSpec | `openspec validate match-date-words-in-filter --strict` passed, and `openspec validate --specs --strict` passed all 10 capabilities. |
+
+Not verified:
+
+- The editor's List picker and the move-task picker in a live terminal. Unit tests cover their shared border drawing.
+- Linux and macOS.
+
 ## Checks for version 0.19.0
 
 The filter, refresh, and group-color change completed these checks on November 18, 2026, on Windows 11 with Rust 1.91.1:

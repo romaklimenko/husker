@@ -2,17 +2,29 @@ use anyhow::{Result, bail};
 use chrono::NaiveDate;
 
 use crate::{
+    i18n::{Language, tr},
     model::{Status, Task, TaskList},
-    planning::{Bucket, compare_closed_tasks, sort_tasks},
+    planning::{Bucket, GroupLayout, compare_closed_tasks, sort_tasks},
 };
 
 #[derive(Clone, Debug)]
 pub struct Query {
     list: Option<String>,
-    text: Vec<String>,
+    text: Vec<TextTerm>,
     due: Option<DueFilter>,
     status: Option<Status>,
     explicit_status: bool,
+    /// The language of the date group names that unquoted text terms also match.
+    /// `None` matches text terms against titles and descriptions only.
+    group_names: Option<Language>,
+}
+
+#[derive(Clone, Debug)]
+struct TextTerm {
+    /// The lowercase text to find.
+    text: String,
+    /// Quoted terms and `#` terms match only titles and descriptions.
+    literal: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -30,6 +42,7 @@ impl Default for Query {
             due: None,
             status: Some(Status::Open),
             explicit_status: false,
+            group_names: None,
         }
     }
 }
@@ -39,7 +52,10 @@ impl Query {
         let mut query = Self::default();
         for token in tokenize(input)? {
             if token.literal || token.text.starts_with('#') {
-                query.text.push(token.text.to_lowercase());
+                query.text.push(TextTerm {
+                    text: token.text.to_lowercase(),
+                    literal: true,
+                });
             } else if let Some((field, value)) = token.text.split_once(':') {
                 if value.is_empty() {
                     bail!("The '{field}:' filter needs a value.");
@@ -81,23 +97,30 @@ impl Query {
                     _ => bail!("Unknown filter '{field}:'. Use l:, due:, or s:."),
                 }
             } else {
-                query.text.push(token.text.to_lowercase());
+                query.text.push(TextTerm {
+                    text: token.text.to_lowercase(),
+                    literal: false,
+                });
             }
         }
         Ok(query)
     }
 
-    fn matches(
-        &self,
-        task: &Task,
-        list_name: &str,
-        include_all_statuses: bool,
-        today: NaiveDate,
-    ) -> bool {
+    /// Lets unquoted text terms also match the day name of the heading each task is
+    /// listed under in `language`. A term matches when a word of the name starts with
+    /// it, so `to` matches Today and Tomorrow.
+    pub fn with_group_names(mut self, language: Language) -> Self {
+        self.group_names = Some(language);
+        self
+    }
+
+    /// `layout` is the view the results are for. It decides the default status rule
+    /// and which day names text terms can match.
+    fn matches(&self, task: &Task, list_name: &str, layout: GroupLayout, today: NaiveDate) -> bool {
         let status_matches = if self.explicit_status {
             self.status.is_none_or(|status| task.status == status)
         } else {
-            include_all_statuses
+            layout != GroupLayout::Planned
                 || task.status == Status::Open
                 || task.status_changed_on == Some(today)
         };
@@ -121,10 +144,48 @@ impl Query {
         }
         let title = task.title.to_lowercase();
         let description = task.description.to_lowercase();
-        self.text
-            .iter()
-            .all(|text| title.contains(text) || description.contains(text))
+        let group_name = self
+            .group_names
+            .and_then(|language| day_name(task, layout, today, language));
+        self.text.iter().all(|term| {
+            title.contains(&term.text)
+                || description.contains(&term.text)
+                || !term.literal
+                    && group_name.as_deref().is_some_and(|name| {
+                        name.split_whitespace()
+                            .any(|word| word.starts_with(&term.text))
+                    })
+        })
     }
+}
+
+/// The lowercase day name of the heading the task is listed under in `layout`.
+///
+/// All tasks and list views name the planned date group: Earlier, Today, Tomorrow, or
+/// Sometime. Soon and Next headings show dates instead. A closed task keeps the name of
+/// its planned date, which is the heading its held row shows. History names the day the
+/// task was closed: Today or Yesterday. Trash has no headings.
+fn day_name(
+    task: &Task,
+    layout: GroupLayout,
+    today: NaiveDate,
+    language: Language,
+) -> Option<String> {
+    let key = match layout {
+        GroupLayout::Planned => match Bucket::for_task(task, today) {
+            bucket @ (Bucket::Overdue | Bucket::Today | Bucket::Tomorrow | Bucket::Undated) => {
+                bucket.key()
+            }
+            Bucket::Soon | Bucket::Next => return None,
+        },
+        GroupLayout::History => match task.status_changed_on {
+            Some(date) if date == today => "today",
+            Some(date) if today.pred_opt() == Some(date) => "yesterday",
+            _ => return None,
+        },
+        GroupLayout::Trash => return None,
+    };
+    Some(tr(language, key).to_lowercase())
 }
 
 pub fn visible_tasks(
@@ -146,7 +207,11 @@ pub fn visible_tasks(
                         .iter()
                         .find(|list| list.id == task.list_id)
                         .map_or("", |list| list.name.as_str()),
-                    trash,
+                    if trash {
+                        GroupLayout::Trash
+                    } else {
+                        GroupLayout::Planned
+                    },
                     today,
                 )
         })
@@ -175,7 +240,7 @@ pub fn visible_history(
                         .iter()
                         .find(|list| list.id == task.list_id)
                         .map_or("", |list| list.name.as_str()),
-                    true,
+                    GroupLayout::History,
                     today,
                 )
         })
@@ -509,6 +574,97 @@ mod tests {
                 "Accepted invalid query: {input}"
             );
         }
+    }
+
+    #[test]
+    fn unquoted_terms_match_word_starts_of_date_group_names() {
+        let today = parse_date("2026-11-18").unwrap();
+        let dated = |id, title, days: Option<i64>| {
+            let mut value = task(id, title);
+            value.due = days.map(|days| today + chrono::Duration::days(days));
+            value
+        };
+        let mut tasks = vec![
+            dated(1, "Call mom", Some(0)),
+            dated(2, "Pay rent", Some(1)),
+            dated(3, "Book tickets", Some(2)),
+            dated(4, "Fix the toaster", None),
+            dated(5, "Renew passport", Some(-1)),
+            dated(6, "Visit museum", Some(8)),
+        ];
+        let lists = [TaskList {
+            id: 1,
+            name: "Home".into(),
+            count: tasks.len(),
+        }];
+        let search = |tasks: &[Task], input: &str, language: Option<Language>| {
+            let mut query = Query::parse(input).unwrap();
+            if let Some(language) = language {
+                query = query.with_group_names(language);
+            }
+            visible_tasks(tasks, &lists, &query, None, false, today)
+                .iter()
+                .map(|task| task.id)
+                .collect::<Vec<_>>()
+        };
+        let english = Some(Language::En);
+        let danish = Some(Language::Da);
+        assert_eq!(search(&tasks, "to", english), [1, 2, 4]);
+        assert_eq!(search(&tasks, "TOD", english), [1]);
+        assert_eq!(search(&tasks, "tomorrow", english), [2]);
+        assert_eq!(search(&tasks, "ear", english), [5]);
+        assert_eq!(search(&tasks, "some", english), [4]);
+        // Soon and Next headings show dates, and names match only from a word start.
+        assert!(search(&tasks, "soon", english).is_empty());
+        assert!(search(&tasks, "next", english).is_empty());
+        assert!(search(&tasks, "day", english).is_empty());
+        // Every term must still match.
+        assert_eq!(search(&tasks, "to call", english), [1]);
+        // A wholly quoted term matches only task text, and so does automation.
+        assert_eq!(search(&tasks, "\"to\"", english), [4]);
+        assert!(search(&tasks, "\"tod\"", english).is_empty());
+        assert_eq!(search(&tasks, "to", None), [4]);
+        // Danish names match from either word, and English names do not.
+        assert_eq!(search(&tasks, "dag", danish), [1]);
+        assert_eq!(search(&tasks, "mor", danish), [2]);
+        assert_eq!(search(&tasks, "i", danish), [1, 2, 3, 6, 4]);
+        assert_eq!(search(&tasks, "tid", danish), [5]);
+        assert_eq!(search(&tasks, "ENG", danish), [4]);
+        assert!(search(&tasks, "tomorrow", danish).is_empty());
+        // A closed task keeps the name of its planned date, which its held row shows.
+        tasks[1].status = Status::Done;
+        tasks[1].status_changed_on = Some(today);
+        assert_eq!(search(&tasks, "tom", english), [2]);
+        // History names the day a task was closed, as its headings do.
+        tasks[0].status = Status::Done;
+        tasks[0].status_changed_on = Some(today - chrono::Duration::days(1));
+        tasks[4].status = Status::Cancelled;
+        tasks[4].status_changed_on = Some(today - chrono::Duration::days(3));
+        let history = |input: &str, language: Language| {
+            let query = Query::parse(input).unwrap().with_group_names(language);
+            visible_history(&tasks, &lists, &query, None, today)
+                .iter()
+                .map(|task| task.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(history("tod", Language::En), [2]);
+        assert_eq!(history("yes", Language::En), [1]);
+        assert!(history("tom", Language::En).is_empty());
+        assert!(history("ear", Language::En).is_empty());
+        assert_eq!(history("går", Language::Da), [1]);
+        assert_eq!(history("i", Language::Da), [2, 1]);
+        // Trash has no headings, so only task text matches there.
+        for task in &mut tasks {
+            task.deleted = true;
+        }
+        let trash = Query::parse("to").unwrap().with_group_names(Language::En);
+        assert_eq!(
+            visible_tasks(&tasks, &lists, &trash, None, true, today)
+                .iter()
+                .map(|task| task.id)
+                .collect::<Vec<_>>(),
+            [4]
+        );
     }
 
     #[test]

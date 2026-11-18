@@ -840,7 +840,8 @@ struct App {
     history_origin: Option<(View, PlannedBookmark)>,
     pending_language: Option<Language>,
     description_width: usize,
-    /// The interface language of the last key or frame, for matching virtual picker entries.
+    /// The interface language of the last key or frame. Virtual picker entries and the day
+    /// names that filter words match use it.
     language: Language,
     /// The filter state from before the filter input opened, restored by Back.
     filter_origin: Option<FilterOrigin>,
@@ -975,19 +976,14 @@ impl App {
     }
 
     /// Recomputes the task rows of the current view from the loaded tasks and the query.
+    /// Filter words also match the date group names of the interface language.
     fn rebuild_visible(&mut self) {
         let (list_id, trash) = self.view.scope();
+        let query = self.query.clone().with_group_names(self.language);
         self.visible = if matches!(self.view, View::History(_)) {
-            visible_history(&self.tasks, &self.lists, &self.query, list_id, self.today)
+            visible_history(&self.tasks, &self.lists, &query, list_id, self.today)
         } else {
-            visible_tasks(
-                &self.tasks,
-                &self.lists,
-                &self.query,
-                list_id,
-                trash,
-                self.today,
-            )
+            visible_tasks(&self.tasks, &self.lists, &query, list_id, trash, self.today)
         };
         self.apply_holds();
         self.clamp_selection();
@@ -1136,6 +1132,10 @@ impl App {
         if self.language != language {
             self.language = language;
             self.rebuild_pickers();
+            // Filter words match date group names, which change with the language.
+            let selected_task = self.selected_task().map(|task| task.id);
+            self.rebuild_visible();
+            self.select_task_id(selected_task);
         }
     }
 
@@ -3542,22 +3542,15 @@ fn draw_list_popup(
         width,
         height,
     );
-    let filter_line = if picker.filter.is_empty() {
-        Line::from(Span::styled(
-            format!(" {} ", tr(language, "picker_filter_hint")),
-            Style::default().fg(Color::DarkGray),
-        ))
-    } else {
-        Line::from(format!(
+    let mut block = Block::default().borders(Borders::ALL).title(title);
+    // The footer tells the user to type, so the border shows only typed text.
+    if !picker.filter.is_empty() {
+        block = block.title_bottom(format!(
             " {}: {} ",
             tr(language, "filter"),
             picker.filter.replace(['\r', '\n'], " ")
-        ))
-    };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(title)
-        .title_bottom(filter_line);
+        ));
+    }
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
     if rows.is_empty() {
@@ -10606,7 +10599,16 @@ mod tests {
         let mut app = App::new(&store, today()).unwrap();
         app.handle_key(key(KeyCode::Char('l')), &mut store, &config);
         let screen = rendered(&mut app, &config, 80, 24);
-        assert!(screen.contains("Type to filter"));
+        // Only the footer shows the hint. The popup border stays empty until the user types.
+        assert_eq!(screen.matches("Type to filter").count(), 1, "{screen}");
+        let border = row_text(&screen, 80, "└").unwrap();
+        assert!(
+            border
+                .trim()
+                .chars()
+                .all(|cell| matches!(cell, '└' | '─' | '┘')),
+            "{border}"
+        );
         app.handle_key(key(KeyCode::Char('h')), &mut store, &config);
         // `h` matches Husker, Shopping, Home, and Trash, but not All tasks, Inbox, or Labs.
         assert_eq!(
@@ -10718,9 +10720,84 @@ mod tests {
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         let screen = rendered(&mut app, &config, 80, 24);
         assert!(!screen.contains("Filter: papir"));
-        assert!(screen.contains("Skriv for at filtrere"));
+        assert_eq!(
+            screen.matches("Skriv for at filtrere").count(),
+            1,
+            "{screen}"
+        );
         app.handle_key(key(KeyCode::Char('z')), &mut store, &config);
         app.handle_key(key(KeyCode::Char('z')), &mut store, &config);
         assert!(rendered(&mut app, &config, 80, 24).contains("Ingen lister passer"));
+    }
+
+    #[test]
+    fn filter_words_match_date_group_names_and_keep_a_held_row() {
+        let (_directory, mut store, config) = fixture();
+        // Store::set_status stamps the real local date, so the app uses it too.
+        let local_today = Local::now().date_naive();
+        let mut add = |title: &str, days: Option<i64>| {
+            let mut value = input(1, title);
+            value.due = days.map(|days| local_today + chrono::Duration::days(days));
+            store.create_task(&value).unwrap().id
+        };
+        let mom = add("Call mom", Some(0));
+        let rent = add("Pay rent", Some(1));
+        add("Book tickets", Some(2));
+        let toaster = add("Fix the toaster", None);
+        let mut app = App::new(&store, local_today).unwrap();
+        app.handle_key(key(KeyCode::Char('/')), &mut store, &config);
+        for character in "to".chars() {
+            app.handle_key(key(KeyCode::Char(character)), &mut store, &config);
+        }
+        assert_eq!(visible_ids(&app), vec![mom, rent, toaster]);
+        app.handle_key(key(KeyCode::Char('d')), &mut store, &config);
+        assert_eq!(visible_ids(&app), vec![mom]);
+        app.handle_key(key(KeyCode::Backspace), &mut store, &config);
+        app.handle_key(key(KeyCode::Char('m')), &mut store, &config);
+        assert_eq!(visible_ids(&app), vec![rent]);
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        // Completing the task keeps its planned date, so it still matches `tom`.
+        app.handle_key(key(KeyCode::Char(' ')), &mut store, &config);
+        assert_eq!(visible_ids(&app), vec![rent]);
+        assert!(app.is_held(rent));
+        let screen = rendered(&mut app, &config, 80, 24);
+        assert!(row_text(&screen, 80, "Tomorrow -").is_some(), "{screen}");
+        // A quoted term matches only task text.
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        app.handle_key(key(KeyCode::Char('/')), &mut store, &config);
+        app.paste("\"to\"");
+        assert_eq!(visible_ids(&app), vec![toaster]);
+    }
+
+    #[test]
+    fn a_language_change_applies_date_group_names_to_the_applied_filter() {
+        let (_directory, mut store, mut config) = fixture();
+        let mut add = |title: &str, days: Option<i64>| {
+            let mut value = input(1, title);
+            value.due = days.map(|days| today() + chrono::Duration::days(days));
+            store.create_task(&value).unwrap().id
+        };
+        let mom = add("Call mom", Some(0));
+        let rent = add("Pay rent", Some(1));
+        let run = add("Morning run", None);
+        let mut app = App::new(&store, today()).unwrap();
+        app.handle_key(key(KeyCode::Char('/')), &mut store, &config);
+        app.paste("mo");
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert_eq!(visible_ids(&app), vec![mom, run]);
+        app.select_task_id(Some(run));
+        // In Danish, `mo` also starts I morgen, so Pay rent joins and Morning run stays selected.
+        config.language = Language::Da;
+        rendered(&mut app, &config, 80, 24);
+        assert_eq!(visible_ids(&app), vec![mom, rent, run]);
+        assert_eq!(app.selected_task().unwrap().id, run);
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        app.handle_key(key(KeyCode::Char('/')), &mut store, &config);
+        app.paste("dag");
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert_eq!(visible_ids(&app), vec![mom]);
+        config.language = Language::En;
+        rendered(&mut app, &config, 80, 24);
+        assert!(app.visible.is_empty());
     }
 }

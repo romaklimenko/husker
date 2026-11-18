@@ -196,6 +196,13 @@ had before you pressed `/`. If the text isn't a valid filter yet, such as
 the last valid results. Read [Find tasks](docs/usage.md#find-tasks) for the
 filter syntax.
 
+A word in the filter also matches the date groups Earlier, Today,
+Tomorrow, and Sometime by name, in the language you chose with F3. For
+example, `tod` lists the tasks planned for today and any task whose text
+contains `tod`. In Danish, `dag` lists today's tasks through the name
+I dag. Put the word in double quotes, such as `"tod"`, to search only
+titles and descriptions.
+
 In All tasks and list views, the Today heading is bold black on yellow, and
 today's tasks are bold. Earlier, Done, and Cancelled are dimmed. Their task
 rows are dark gray. The Done headings are green, and the Earlier and
