@@ -104,10 +104,12 @@ An explicit legacy override replaces the new default, including an empty array.
 Configuration that names both `planned` and `all_tasks` is invalid, even when the two arrays are equal.
 The generated example configuration and visible help use `all_tasks` and All tasks.
 The `history` action defaults to `h` in ordinary task navigation and History.
-The `reopen` action defaults to `r` in History. The existing `restore` action remains available for Trash.
-The `delete_list` action defaults to `d` and Delete in the list picker.
-The `new_list` action defaults to `n` and `N`, and `rename_list` defaults to `r` and `R`, both in the list picker only.
-The `quit` action defaults to `q` and `ctrl+c` in task navigation, History, and the list picker. Text inputs keep `ctrl+c` for `copy_selection`.
+The `reopen` action defaults to `r` in History. The existing `restore` action defaults to `r` in Trash.
+The `refresh` action defaults to `r` and F5. It is available on every screen. Its `r` key works only in task navigation outside Trash and History, as the Key conflict validation requirement defines.
+The `delete_list` action defaults to `ctrl+d` and Delete in the list picker.
+The `new_list` action defaults to `ctrl+n`, and `rename_list` defaults to `ctrl+r`, both in the list picker only.
+The `help` action defaults to `?` and F1. Only F1 works in the list pickers, because `?` types into their filter.
+The `quit` action defaults to `q` and `ctrl+c` in task navigation, History, Trash, and the list picker. Only `ctrl+c` works in the list picker. Text inputs keep `ctrl+c` for `copy_selection`.
 The `save` action defaults to `ctrl+s` and `ctrl+enter`.
 The `move_up` action defaults to `alt+up` and `K`. The `move_down` action defaults to `alt+down` and `J`.
 
@@ -130,7 +132,7 @@ Help and Planned date hints use the configured bindings and selected language.
 
 The `move_task` action defaults to `m` and the `undo` action defaults to `u`. Both are available in ordinary task navigation and History.
 
-The `empty_trash` action defaults to `D` and is available only in task navigation. The `empty_trash` action acts only while Trash is open.
+The `empty_trash` action defaults to `D` and is available only in Trash navigation.
 In Trash, the `trash` action opens the Delete forever confirmation for the selected task, and `restore` restores the selected task.
 In the list picker, the `delete_list` action opens the Empty Trash confirmation when the Trash entry is selected.
 The terminal-interface spec owns both confirmations.
@@ -155,7 +157,7 @@ Modifiers print as `Ctrl`, `Alt`, and `Shift`, joined to the key with `+`.
 Named keys print as Enter, Esc, Space, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown, Up, Down, Left, Right, and F1 through F24.
 Character keys print as written in the configuration, such as `q`, `N`, or `?`.
 Danish prints the arrow keys as Op, Ned, Venstre, and Højre. Other key names are identical in both languages.
-Footer hints show the first configured key of an action. Help shows every configured key separated by ` / `.
+Footer hints show the first configured key of an action that works on the current screen. Help shows the configured keys that work in its section's screens, separated by ` / `.
 An action without keys shows `unbound` in English and `ingen genvej` in Danish.
 
 #### Scenario: Replace a shortcut
@@ -222,10 +224,17 @@ An action without keys shows `unbound` in English and `ingen genvej` in Danish.
 - **WHEN** Danish is selected and Help lists the default Up action
 - **THEN** its keys print as `Op / k`
 
-#### Scenario: Keep the lowercase picker keys optional
+#### Scenario: Type a printable picker key into the filter
 
 - **WHEN** `[keys]` contains `new_list = ["N"]`
-- **THEN** only `N` creates a list from the picker and `n` does nothing there
+- **THEN** configuration loading succeeds, `N` in the list picker adds `N` to the picker filter, and no key creates a list
+- **AND** the footer and Help show `unbound` for New list in the list picker
+
+#### Scenario: Refresh with r only in task navigation
+
+- **WHEN** default bindings are active
+- **THEN** `r` refreshes in All tasks and list views, restores in Trash, reopens in History, and types `r` in the task editor, filter input, list-name input, and list pickers
+- **AND** F5 refreshes on every screen
 
 ### Requirement: Key conflict validation
 
@@ -233,7 +242,8 @@ Husker SHALL reject unknown action names, invalid key strings, and shortcuts ass
 
 | Mode | Purpose |
 | --- | --- |
-| Task navigation | Select tasks and invoke task actions. |
+| Task navigation | Select tasks and invoke task actions in All tasks and list views. |
+| Trash navigation | Select deleted tasks, restore them, delete them forever, or empty Trash. |
 | List picker | Select a scope and create, rename, reorder, or delete ordinary lists in a modal popup. |
 | History | Filter, edit, copy, change status, trash, or reopen completed and cancelled tasks. |
 | Deletion confirmation | Confirm moving a list's tasks to the default list before removing the list, deleting a Trash task forever, or emptying Trash. |
@@ -249,20 +259,24 @@ Husker SHALL reject unknown action names, invalid key strings, and shortcuts ass
 | Copy text | Scroll plain task text for native terminal selection. |
 
 The same key may trigger different actions in different modes.
-The list picker retains its existing configurable bindings and conflict checks and adds `delete_list`, the lowercase `new_list` and `rename_list` defaults, and `page_up` and `page_down`.
+A printable key is a character key without Ctrl or Alt. Shift is allowed, and Ctrl+Alt, which terminals report for AltGr, also counts as printable.
+In the list picker and the editor list picker mode, a printable key never runs an action. It types into the picker filter that the terminal-interface spec defines. Validation ignores printable keys in these two modes.
+A printable `refresh` key works only in task navigation. Validation ignores it in every other mode, so `r` can refresh in task navigation and still restore in Trash and reopen in History.
+Keys that are not printable keep working in every mode where their action is available.
+Trash navigation permits every task-navigation action and adds `restore` and `empty_trash`. Task navigation does not permit `restore` or `empty_trash`.
+The list picker retains its existing configurable bindings and conflict checks and adds `delete_list`, `new_list`, `rename_list`, `page_up`, and `page_down`.
 Text input modes do not execute task-navigation writes.
 Planned date field mode includes every normal task-editor action and the due preset actions.
 Preset actions in that mode edit only the draft field.
 List field mode includes normal task-editor actions except Copy selection, and adds Open and Lists.
 Editor list picker mode permits only Up, Down, First, Last, PageUp, PageDown, Open, Lists, Back, Help, Language, Refresh, and Toggle mouse. The move-task picker uses this mode.
-Neither List mode permits text input or task-navigation writes. Choice Undo and Redo remain built-in List field controls.
+The List field permits no text input. The editor list picker mode permits text input only into its picker filter. Neither mode permits task-navigation writes. Choice Undo and Redo remain built-in List field controls.
 The navigation list picker retains its existing management actions.
 Task navigation and History add `move_task`, `undo`, `page_up`, and `page_down`. Task navigation also accepts the `K` and `J` defaults for reordering beside Alt+Up and Alt+Down.
-Task navigation adds `empty_trash`.
 Configured actions take precedence over built-in text-editing shortcuts in their active mode.
 Discard confirmation uses fixed choice keys defined by the terminal-interface spec, including `y` and `n`, and retains configured Discard and Refresh actions.
 Deletion confirmation uses the same fixed choice keys and retains configured Back and Refresh actions.
-History has a separate input mode so `reopen` and Trash's `restore` can both use `r`. The list picker reuses `r` for `rename_list` because History and Trash actions are unavailable there.
+History and Trash navigation are separate input modes, so `reopen`, `restore`, and the printable `refresh` key can all use `r`.
 The language picker uses the configured Up, Down, First, Last, Apply, and Back actions.
 First and Last are available in task navigation, History, both list pickers, the language picker, and Help.
 PageUp and PageDown are available in task navigation, History, both list pickers, Help, and Copy text.
@@ -357,8 +371,19 @@ Existing configuration files must remove those overrides before loading.
 #### Scenario: Reject an Empty Trash conflict
 
 - **WHEN** `[keys]` assigns `new_task = ["D"]` while `empty_trash` keeps its default
-- **THEN** configuration loading reports the conflict between `empty_trash` and `new_task` in task navigation
+- **THEN** configuration loading reports the conflict between `empty_trash` and `new_task` in Trash navigation
 - **AND** adding `empty_trash = []` or another `empty_trash` key removes that conflict
+
+#### Scenario: Reject a conflict with the refresh key in task navigation
+
+- **WHEN** `[keys]` assigns `new_task = ["r"]` while `refresh` keeps its defaults
+- **THEN** configuration loading reports the conflict between `new_task` and `refresh` in task navigation
+
+#### Scenario: Ignore printable keys in the list pickers
+
+- **WHEN** default bindings are active, where `up` uses `k` and `new_list` uses Ctrl+N
+- **THEN** configuration loading succeeds although `k` would also type text in the list pickers
+- **AND** Up in a list picker answers only to the Up arrow
 
 #### Scenario: Keep Ctrl+C separate between modes
 

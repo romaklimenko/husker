@@ -7,16 +7,16 @@ Planning and search owns filtering and date groups. Profiles and localization ow
 ## Requirements
 ### Requirement: Use keyboard actions
 
-Husker SHALL provide the following default shortcuts in task navigation and the list picker and resolve configurable action shortcuts through the selected configuration.
+Husker SHALL provide the following default shortcuts in task navigation, History, and Trash and resolve configurable action shortcuts through the selected configuration.
 
 | Key | Action |
 | --- | --- |
-| Up or `k` | Select the previous task or picker entry |
-| Down or `j` | Select the next task or picker entry |
-| Left, Home, or `g` | Select the first visible task or picker entry |
-| Right, End, or `G` | Select the last visible task or picker entry |
+| Up or `k` | Select the previous task |
+| Down or `j` | Select the next task |
+| Left, Home, or `g` | Select the first visible task |
+| Right, End, or `G` | Select the last visible task |
 | PageUp or PageDown | Move the selection one displayed page up or down |
-| `l` | Open or cancel the list picker |
+| `l` | Open the list picker |
 | `h` | Open History from ordinary task navigation, or return from History |
 | `t` | Set the selected task due today |
 | `T` | Set the selected task due tomorrow |
@@ -25,27 +25,43 @@ Husker SHALL provide the following default shortcuts in task navigation and the 
 | `m` | Move the selected task to another list |
 | `u` | Undo the last recorded task action |
 | `/` | Edit the task filter |
-| Enter | Choose the picker entry or edit the selected task |
-| Esc | Cancel the picker, clear an active filter, or return from a scoped task view to All tasks |
-| `n` | Create a task from a task view, or create a list from the picker |
-| `N` | Create a list from the picker |
-| `r` | Restore the selected task from Trash, reopen it from History, or rename the selected ordinary list from the picker |
-| `R` | Rename the selected ordinary list from the picker |
+| Enter | Edit the selected task |
+| Esc | Clear an active filter, or return from a scoped task view to All tasks |
+| `n` | Create a task from All tasks or a list view |
+| `r` | Refresh database contents in All tasks and list views, restore the selected task in Trash, or reopen it in History |
 | Space | Toggle the selected task between open and done |
 | `c` | Toggle the selected task between open and cancelled |
-| `d` or Delete | Move a task to Trash. In Trash, start deleting the selected task forever. In the picker, start deleting the selected list, or start emptying Trash when the Trash entry is selected |
+| `d` or Delete | Move a task to Trash. In Trash, start deleting the selected task forever |
 | `D` | Start emptying Trash while Trash is open |
-| Alt+Up or `K` | Move an open task before its eligible neighbor, or move the selected list up |
-| Alt+Down or `J` | Move an open task after its eligible neighbor, or move the selected list down |
+| Alt+Up or `K` | Move an open task before its eligible neighbor |
+| Alt+Down or `J` | Move an open task after its eligible neighbor |
+| F1 or `?` | Show help with the effective shortcuts |
 | F2 | Toggle mouse capture |
 | F3 | Choose and save the interface language |
 | F4 | Show the selected task's plain text for copying |
-| F5 | Refresh database contents |
-| `?` | Show help with the effective shortcuts |
+| F5 | Refresh database contents on every screen |
 | `q` or Ctrl+C | Quit |
 
+The list picker types printable characters into its filter, as the requirement Filter list pickers by typing defines. It uses these default shortcuts.
+
+| Key | Action in the list picker |
+| --- | --- |
+| Up or Down | Select the previous or next picker entry |
+| Left or Home | Select the first picker entry |
+| Right or End | Select the last picker entry |
+| PageUp or PageDown | Move the selection one displayed page up or down |
+| Enter | Choose the selected entry |
+| Esc | Clear the picker filter, or cancel the picker when the filter is empty |
+| Ctrl+N | Create a list |
+| Ctrl+R | Rename the selected ordinary list |
+| Ctrl+D or Delete | Start deleting the selected list, or start emptying Trash when the Trash entry is selected |
+| Alt+Up or Alt+Down | Move the selected list up or down |
+| F1 | Show help |
+| F2, F3, or F5 | Toggle mouse capture, choose the language, or refresh |
+| Ctrl+C | Quit |
+
 Keyboard Up/Down wrap, First/Last jump, and PageUp/PageDown page according to the selection requirement below.
-Ctrl+C quits only in task navigation, History, and the list picker. Text inputs keep Ctrl+C for Copy selection.
+Ctrl+C quits only in task navigation, History, Trash, and the list picker. Text inputs keep Ctrl+C for Copy selection.
 Actions that require a selected task do nothing when no task is selected.
 Creating, renaming, moving, or deleting a list requires the picker. All tasks and Trash cannot be renamed, moved, or deleted.
 The default ordinary list cannot move or be deleted. Other list moves follow the pinned boundaries defined by task storage.
@@ -86,6 +102,17 @@ New-task creation and manual reordering are unavailable in History.
 
 - **WHEN** two open undated tasks are listed and the user presses `J` on the first
 - **THEN** the tasks swap positions as Alt+Down would
+
+#### Scenario: Refresh with r
+
+- **WHEN** All tasks is open with default bindings and the user presses `r`
+- **THEN** Husker refreshes database contents exactly as F5 does
+
+#### Scenario: Keep r for Restore and Reopen
+
+- **WHEN** Trash is open and the user presses `r` on a deleted task
+- **THEN** the task leaves Trash and no refresh message appears
+- **AND** `r` in History reopens the selected task
 
 ### Requirement: Edit task fields
 
@@ -222,9 +249,13 @@ Delete forever and Empty Trash follow their own requirements below. They record 
 
 ### Requirement: Filter tasks interactively
 
-Husker SHALL let the user enter a task filter without leaving the current task view.
+Husker SHALL apply the task filter to the current task view while the user types it.
 
-The filter action opens a single-line input. Enter applies a valid filter and returns to navigation. Esc discards filter edits.
+The filter action opens a single-line input above the task rows.
+Each edit that leaves valid filter text applies that text to the task rows at once and selects the first matching task.
+While the text is not valid, the task rows keep the results of the last valid text and the input border is red.
+Enter keeps valid filter text and returns to navigation. Enter on text that is not valid shows the filter error and keeps the input open.
+Esc closes the input and restores the filter, results, held rows, selected task, and scroll position from before the input opened. When a refresh leaves a deleted list while the input is open, Esc restores the All tasks filter instead.
 While the input is open, the footer shows the configured Apply, Back, and Copy selection keys and the filter syntax hint.
 An empty filter removes text restrictions while preserving any list scope and the default status rules.
 Back in navigation with a nonempty applied filter clears that filter, keeps the current view, and keeps the selected task when it is still visible. It does not leave the view.
@@ -233,7 +264,6 @@ History combines its retained list scope and closed-task restriction with the fi
 An empty History filter includes completed and cancelled tasks from every date.
 An explicit `s:done` or `s:cancelled` narrows History. `s:open` matches nothing there, and `s:all` does not add open tasks.
 Due filters always test stored due dates, including in finished sections and History.
-Invalid syntax keeps the input open with an error and leaves previous results unchanged.
 The `planning-search` spec defines accepted syntax.
 
 #### Scenario: Combine list and text filters
@@ -241,11 +271,21 @@ The `planning-search` spec defines accepted syntax.
 - **WHEN** a user applies `l:private milk #shopping` in the All tasks
 - **THEN** Husker shows only matching tasks according to the `planning-search` spec
 
+#### Scenario: Narrow results while typing
+
+- **WHEN** All tasks holds `Buy milk` and `Call mom`, and the user presses `/` and types `mi`
+- **THEN** only `Buy milk` is listed before the user presses Enter
+
 #### Scenario: Correct an invalid filter
 
-- **WHEN** a user applies a filter with an unterminated quoted value
+- **WHEN** a user types `"milk`, with an unterminated quoted value, and presses Enter
 - **THEN** Husker displays a filter error and keeps the entered filter available for editing
-- **AND** the previously applied results remain unchanged
+- **AND** all tasks remain listed, because the empty text was the last valid filter text
+
+#### Scenario: Discard a typed filter
+
+- **WHEN** Work is filtered by `milk`, the user presses `/`, replaces the text with `mom`, and presses Esc
+- **THEN** Work is filtered by `milk` again with its earlier results and selected task
 
 #### Scenario: Filter History without adding open tasks
 
@@ -295,9 +335,13 @@ Task views list Open, Toggle done, Toggle cancelled, Trash, the four presets as 
 Trash lists Restore, Delete forever, Empty Trash, and Copy text instead of the task edits. History lists Reopen beside the task edits.
 In the task-view section, Help also lists Delete forever with the `trash` keys and Empty Trash with the `empty_trash` keys.
 In the list-picker section, Help also lists Empty Trash with the `delete_list` keys.
+The list picker footer lists Type to filter, Open, Back, New list, Rename list, Delete list or Empty Trash, Reorder, Help, and Quit.
+The editor list picker and move-task picker footers list Type to filter, Choose or Move, Back, and Help.
+A footer entry in a list picker shows the first configured key that works there, so it never shows a printable character.
 Help shows the available actions and effective shortcuts for the current configuration in sections: task views, list picker, task editor, text editing, filter and list-name forms, confirmations, and everywhere.
 The section for the screen that opened Help appears first. Built-in text-editing keys appear with fixed labels.
-Help shows every configured key of an action. Esc closes help without changing stored data.
+Help shows every configured key of an action that works in the screens of its section. The list-picker section omits printable keys, and the everywhere section shows the `refresh` keys that work on every screen.
+The task-view section lists Refresh with its keys that work in task navigation. Esc closes help without changing stored data.
 The configured Up, Down, PageUp, PageDown, First, and Last actions and the mouse wheel scroll help. Mouse clicks in help do nothing.
 
 #### Scenario: Use the full task area
@@ -328,12 +372,20 @@ The configured Up, Down, PageUp, PageDown, First, and Last actions and the mouse
 
 #### Scenario: Open help from the picker
 
-- **WHEN** a user presses `?` in the list picker
+- **WHEN** a user presses F1 in the list picker
 - **THEN** the list picker section appears first and the text-editing section lists Ctrl+A with Select the whole field
+
+#### Scenario: Show picker keys that work while typing
+
+- **WHEN** the list picker is open in an 80-column English terminal with default bindings
+- **THEN** the footer shows `Ctrl+N New list`, `Ctrl+R Rename list`, `F1 Help`, and `Ctrl+C Quit`
+- **AND** the footer shows no `n`, `r`, `?`, or `q` entry
 
 ### Requirement: Refresh dates and external changes
 
-Husker SHALL check for external database commits at least once per second and provide an F5 refresh action in every screen.
+Husker SHALL check for external database commits at least once per second and provide a refresh action, F5 by default, in every screen.
+In All tasks and list views, `r` also refreshes by default. The `profiles-localization` requirement Key conflict validation limits printable refresh keys to that task navigation.
+In this requirement, F5 stands for any key of the refresh action.
 The interface SHALL show a localized notice when another database connection changes data, unless a sync made the change.
 A commit that increased the `commits` counter in the sync state is a sync commit. It refreshes the tasks without the notice.
 The requirement `Sync in the background` defines the message a sync commit shows when it changed lists or tasks.
@@ -375,6 +427,12 @@ When the profile has sync settings, F5 also starts a sync.
 - **WHEN** a sync adds a task from another device while the interface is in navigation mode
 - **THEN** the task appears within one refresh interval with the message `Synced changes from another device.`
 - **AND** no external-update notice appears
+
+#### Scenario: Name the refresh keys that work
+
+- **WHEN** another connection changes a task while All tasks is open with default bindings
+- **THEN** the notice names `r / F5` as the refresh keys
+- **AND** the same notice in the task editor names only F5
 
 ### Requirement: Restore the terminal
 
@@ -518,6 +576,12 @@ Husker SHALL let users move a selected nondefault ordinary list with Alt+Up and 
 The move uses the atomic operation defined by task storage and retains selection by list ID.
 All tasks remains the first picker entry. The default list remains first among ordinary lists. Trash remains last.
 Unavailable moves leave the order and selection unchanged.
+While the picker filter has text, Alt+Up and Alt+Down move nothing and show the message `Clear the filter to reorder lists.`
+
+#### Scenario: Keep the order while filtering
+
+- **WHEN** the picker filter is `wo` with Work selected and the user presses Alt+Up
+- **THEN** the list order is unchanged and the message `Clear the filter to reorder lists.` appears
 
 #### Scenario: Keep a moved list selected
 
@@ -814,7 +878,7 @@ The All tasks entry does not add a stored list or change CLI or MCP list results
 
 Husker SHALL open All tasks as the top-level task view and use a modal list picker to choose an ordinary list or Trash.
 The global view heading is `All tasks`. A selected list uses a breadcrumb such as `All tasks > Work`; Trash uses `All tasks > Trash`.
-The `lists` action opens the picker from any task view. Invoking `lists` again or Back while the picker is open cancels it.
+The `lists` action opens the picker from any task view. Back with an empty picker filter cancels the picker. A `lists` key that is not a printable character also cancels it, because printable keys type into the picker filter.
 Canceling the picker preserves the underlying view, filter, selected task, and scroll position.
 The initial picker selection matches the current scope: the ordinary list by ID, or Trash.
 From All tasks or all-list History, the picker selects the ordinary list most recently visited in the running process when it still exists, and All tasks otherwise.
@@ -833,7 +897,7 @@ Editor save and dirty-discard confirmation keep their existing behavior and retu
 
 #### Scenario: Cancel a list choice
 
-- **WHEN** a user opens the picker from a filtered list view, moves its selection, and presses Esc or `l`
+- **WHEN** a user opens the picker from a filtered list view, moves its selection, and presses Esc
 - **THEN** the picker closes and the original task filter, selection, and scroll position remain unchanged
 
 #### Scenario: Keep state when choosing the current list
@@ -1256,7 +1320,8 @@ Husker SHALL display a modal editor list picker containing only ordinary lists i
 Virtual All tasks and Trash entries and all list-management actions are unavailable.
 The current draft list is selected when present. Opening the picker does not change the draft if that ID is unavailable.
 Configured Up and Down wrap selection. First and Last jump to the corresponding boundary. Open chooses the selected list and returns to the List selector.
-Configured Back or Lists cancels and returns to the unchanged List selector, with Esc and `l` as defaults.
+Configured Back with an empty picker filter cancels and returns to the unchanged List selector, with Esc as the default. A `lists` key that is not a printable character also cancels.
+Printable keys type into the picker filter as the requirement Filter list pickers by typing defines.
 Single-click selects a visible row. Double-click on the same row within 400 milliseconds chooses it.
 Wheel events move picker selection only inside the popup. Borders, outside clicks, and outside wheel events do nothing.
 Background editor fields do not receive popup input.
@@ -1266,7 +1331,7 @@ Help and language-picker round trips preserve the editor picker selection, scrol
 
 #### Scenario: Cancel a destination choice
 
-- **WHEN** a user opens the editor picker, selects Work, and presses Esc or `l` with default bindings
+- **WHEN** a user opens the editor picker, selects Work, and presses Esc with default bindings
 - **THEN** the picker closes with the draft's original list and all other field state unchanged
 
 #### Scenario: Keep picker scope separate from navigation
@@ -1484,7 +1549,8 @@ History and Trash never hold rows.
 
 Husker SHALL provide a configurable `move_task` action, bound to `m` by default, in ordinary task navigation and History outside Trash.
 The action opens a modal picker over the current task view containing only ordinary lists in their persistent order with the default marker. The task's current list is selected.
-The picker uses the editor list picker key mode. Up, Down, First, Last, PageUp, and PageDown move its selection. Open chooses. Back or Lists cancels without a write.
+The picker uses the editor list picker key mode. Up, Down, First, Last, PageUp, and PageDown move its selection. Open chooses. Back with an empty picker filter cancels without a write, and so does a `lists` key that is not a printable character.
+Printable keys type into the picker filter as the requirement Filter list pickers by typing defines.
 Help, Language, Refresh, and mouse behavior follow the editor list picker requirement. The underlying task view receives no popup input.
 Choosing the task's current list closes the picker without a write.
 Choosing another list changes only the task's list membership through the list-only mutation defined by task storage, using the originally read version.
@@ -1500,7 +1566,7 @@ No selected task, or a task in Trash, means no action.
 
 #### Scenario: Cancel a move
 
-- **WHEN** the move-task picker is open and the user presses Esc or `l`
+- **WHEN** the move-task picker is open and the user presses Esc
 - **THEN** the picker closes and the task's list and version remain unchanged
 
 #### Scenario: Move a task out of its scoped view
@@ -1816,4 +1882,87 @@ With only one available row, Husker shows the selected task. Trash remains witho
 
 - **WHEN** a user scrolls a Trash view taller than the screen
 - **THEN** task rows appear without group headings
+
+### Requirement: Filter list pickers by typing
+
+Husker SHALL filter the entries of the list picker, the editor list picker, and the move-task picker by the text the user types while the picker is open.
+
+A printable key adds its character to the picker filter. A printable key is a character key without Ctrl or Alt. Shift is allowed, and AltGr, which terminals report as Ctrl+Alt, also counts.
+A printable key never runs an action in these pickers, even when the configuration binds it to one.
+Backspace removes the last character of the picker filter. Backspace on an empty filter does nothing.
+An entry matches when its visible name contains the filter text, ignoring case. The name excludes the count and the default marker. All tasks and Trash match by their localized names.
+Matching entries keep their saved order. After each change that leaves filter text, the selection moves to the first match whose name starts with the filter text, or to the first match when none starts with it. When the filter becomes empty, the selected entry stays selected.
+When no entry matches, the popup shows `No matching lists` in English or `Ingen lister passer` in Danish, and Open does nothing.
+The popup's bottom border shows `Type to filter` in English or `Skriv for at filtrere` in Danish while the filter is empty, and `Filter: ` followed by the text otherwise.
+The popup keeps the height that the unfiltered entries need, so it does not jump while the user types.
+Back with filter text clears the filter and keeps the selected entry selected. Back with an empty filter cancels the picker.
+Every picker opens with an empty filter. Refresh, Help, and the language picker keep the filter text and the selected entry by identity.
+Creating or renaming a list from the list picker clears the filter, so the saved list can be selected.
+Mouse clicks and the wheel act on the displayed entries.
+
+| Key in a list picker | Result |
+| --- | --- |
+| `a` to `z`, `A` to `Z`, digits, space, punctuation, and other characters | Add the character to the filter |
+| Backspace | Remove the last filter character |
+| Esc | Clear the filter, or cancel the picker when the filter is empty |
+| Enter | Choose the selected displayed entry |
+| Up, Down, Home, End, Left, Right, PageUp, PageDown | Move the selection among displayed entries |
+
+#### Scenario: Pick a list by its first letters
+
+- **WHEN** the picker shows All tasks, Inbox, Husker, Labs, and Trash and the user types `hu`
+- **THEN** the picker shows only Husker, selected, and Enter opens `All tasks > Husker`
+
+#### Scenario: Prefer a name that starts with the text
+
+- **WHEN** the ordinary lists are `Shopping` and `Home` and the user types `ho` in the move-task picker
+- **THEN** both lists match and Home is selected
+
+#### Scenario: Type a letter that is also a shortcut
+
+- **WHEN** the list picker is open with default bindings and the user types `j`, `k`, `n`, `r`, `d`, `l`, `q`, or `?`
+- **THEN** the character is added to the filter and no selection move, list creation, rename, deletion, cancel, quit, or Help happens
+
+#### Scenario: Clear the filter before closing
+
+- **WHEN** the editor list picker has the filter `la` and the user presses Esc twice
+- **THEN** the first Esc clears the filter and keeps the editor picker open, and the second Esc returns to the List selector with the draft unchanged
+
+#### Scenario: Show that nothing matches
+
+- **WHEN** the user types `zz` in the list picker and no entry name contains `zz`
+- **THEN** the popup shows `No matching lists` and Enter keeps the picker open
+
+### Requirement: Color planning groups by date and status
+
+Husker SHALL style the planning-group headings and task rows of All tasks and list views by group.
+
+| Group | Heading | Task rows |
+| --- | --- | --- |
+| Earlier | Dark gray | Dark gray |
+| Today | Bold black text on a yellow background | Bold |
+| Tomorrow, the dated groups, and Sometime | Yellow | Default color |
+| Done today and Done | Green | Dark gray |
+| Cancelled today and Cancelled | Dark gray | Dark gray |
+
+The selected row keeps the selection style: cyan, bold, and the `> ` marker.
+A just-closed task held in its row keeps the dark gray style under its open heading.
+History and Trash keep their styles: yellow headings in History, no headings in Trash, and task rows in the default color.
+
+#### Scenario: Highlight today's tasks
+
+- **WHEN** All tasks shows one task planned today and one planned tomorrow
+- **THEN** the Today heading is bold black on yellow and its task row is bold
+- **AND** the Tomorrow heading is yellow and its task row uses the default color
+
+#### Scenario: Dim past and finished tasks
+
+- **WHEN** Work shows an open task planned yesterday and a task done today
+- **THEN** the Earlier heading and its row are dark gray
+- **AND** the Done today heading is green and its row is dark gray
+
+#### Scenario: Keep the selection visible on a dimmed row
+
+- **WHEN** the selected task is in Earlier
+- **THEN** its row is cyan and bold with the `> ` marker
 
