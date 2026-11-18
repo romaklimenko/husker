@@ -114,6 +114,8 @@ List names and text compare their Unicode lowercase forms.
 Accents remain significant.
 Any term beginning with `#` is literal text, including a bare `#` or `#area:work`.
 Date groups accept the filter values in the date-groups table.
+The terminal task filter also matches an unquoted text term against the day name of the task's heading, as the requirement Match day names in the task filter of the `terminal-interface` spec defines.
+The `husker tasks` command, the local MCP server, and the online server match every text term against titles and descriptions only.
 
 | Status value | Matching rule |
 | --- | --- |
@@ -153,6 +155,11 @@ Filters never change whether the containing view includes Trash.
 
 - **WHEN** the query is `s:done due:none`
 - **THEN** the filter selects only done tasks without due dates
+
+#### Scenario: Keep text matching exact for automation
+
+- **WHEN** today is `2026-11-18`, `Call mom` is due `2026-11-18`, `Fix the toaster` has no due date, and `husker tasks to` runs
+- **THEN** only `Fix the toaster` is listed
 
 ### Requirement: Quoted filter text
 
@@ -294,3 +301,4 @@ Display headings do not add new query tokens or change task due dates, status da
 
 - **WHEN** today is `2026-11-08` and the query is `due:next`
 - **THEN** tasks due November 16 or later match and earlier due dates do not match
+
