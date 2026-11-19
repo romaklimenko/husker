@@ -215,10 +215,22 @@ Use Ctrl+Left and Ctrl+Right to move by word, Shift with movement keys to
 select text, Ctrl+C to copy the selection, and Ctrl+Z to undo typing.
 The editor heading shows an existing task's ID.
 
-Use Up/Down or `k`/`j` to move through tasks. Selection wraps at either
-end. Left, Home, or `g` selects the first item. Right, End, or `G` selects
-the last. PageUp and PageDown move by one screen. These keys also work in
-History and Trash. In the list pickers, letters type into the picker's
+Use Up/Down or `k`/`j` to move through tasks. Up on the first task wraps
+to the last. Right, End, or `G` selects the last task. PageUp and PageDown
+move by one screen.
+
+In All tasks and list views, Left, Home, or `g` skips the tasks under
+Earlier and selects the first task after them. Down on the last task wraps
+to that same task. For example, suppose All tasks shows `Old report` under
+Earlier, `Pay rent` under Today, and `Call the bank` under Tomorrow. Press
+Left to select `Pay rent`. Press Right to select `Call the bank`, then Down
+to wrap back to `Pay rent`. Press Up from `Pay rent` to reach `Old report`.
+If every task is under Earlier, Left and Down on the last task select the
+first task. See [Jump past Earlier to today's tasks](docs/usage.md#jump-past-earlier-to-todays-tasks).
+
+The same keys work in History and Trash, which have no Earlier heading.
+There, Left, Home, or `g` selects the first task, and Down on the last task
+wraps to the first. In the list pickers, letters type into the picker's
 filter, so use the arrow keys, Home, End, PageUp, and PageDown there.
 Left and Right keep their cursor and scrolling controls in text fields and
 the F4 copy view.

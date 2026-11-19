@@ -1081,8 +1081,8 @@ Trash:
 | Key | Action |
 | --- | --- |
 | Up or `k` | Select the previous item, wrapping from first to last. |
-| Down or `j` | Select the next item, wrapping from last to first. |
-| Left, Home, or `g` | Select the first item. |
+| Down or `j` | Select the next item. On the last item, wrap to the item that Left selects. |
+| Left, Home, or `g` | Select the first item. In All tasks and list views, skip the tasks under Earlier. |
 | Right, End, or `G` | Select the last item. |
 | PageUp or PageDown | Move the selection by one screen without wrapping. |
 | Enter | Edit a task. |
@@ -1123,8 +1123,14 @@ applied, the keys move only through matching tasks. Group headings are
 skipped, and the selected item scrolls into view. An empty result stays empty.
 A result with one item keeps that item selected.
 
-For example, press End to select the last task, then Down to return to the
-first. In the language picker, Home selects English and End selects Dansk.
+In All tasks and list views, Left, Home, and `g` skip the tasks under
+Earlier, and Down on the last task wraps to the first task after Earlier.
+See [Jump past Earlier to today's tasks](#jump-past-earlier-to-todays-tasks).
+In History and Trash, Left, Home, and `g` select the first task, and Down
+on the last task wraps to the first. For example, in Trash, press End to
+select the last task, then Down to return to the first. The pickers work
+the same way with Left and Home. In the language picker, Home selects
+English and End selects Dansk.
 Press Enter to apply the selected language; moving selection alone does not save it.
 
 Mouse-wheel movement stops at each end. Reordering with Alt+Up, Alt+Down,
@@ -1141,6 +1147,58 @@ In the discard prompt and in the confirmations for deleting a list,
 deleting a task forever, and emptying Trash, `y` chooses Yes and `n`
 chooses No without pressing Enter.
 Backspace edits text in an input field. It does not delete a task.
+
+### Jump past Earlier to today's tasks
+
+In All tasks and list views, press Left, Home, or `g` to select the first
+task after the Earlier heading. Earlier, shown as Tidligere in Danish,
+holds the open tasks planned before today. Left therefore takes you to the
+start of today's work, even while older tasks are still open. Down on the
+last task wraps to the same task.
+
+For example, All tasks shows these three tasks:
+
+| Heading | Task |
+| --- | --- |
+| Earlier | `Old report`, planned for yesterday |
+| Today | `Pay rent` |
+| Tomorrow | `Call the bank` |
+
+1. Press Left. `Pay rent` is selected.
+2. Press Right to select `Call the bank`, the last task.
+3. Press Down. The selection wraps to `Pay rent` and skips `Old report`.
+4. Press Up. `Old report` is selected, because Up and Down move one row at
+   a time.
+
+The same rule covers these cases:
+
+- If nothing is planned for today, Left selects the first task under the
+  next heading, such as Tomorrow, a date, Sometime, or Done today.
+- If every task in the view is under Earlier, Left selects the first task,
+  and Down on the last task wraps to it. For example, the filter
+  `due:overdue` shows only tasks under Earlier.
+- A task you just marked done or cancelled keeps its row under the same
+  heading until the view changes. If that heading is Earlier, Left still
+  skips the task. See [Complete, cancel, and restore tasks](#complete-cancel-and-restore-tasks).
+- If the first task after Earlier is also the last task, Down keeps it
+  selected. Press Up to reach the tasks under Earlier.
+- A key you bind to `first` in `config.toml` follows the same rule.
+
+Up on the first task wraps to the last task. PageUp, PageDown, and the
+mouse wheel move through the tasks under Earlier like any other tasks.
+
+When Husker starts, and when you open a list or type a filter, Husker
+selects the first task, even if it is under Earlier. Press Left to jump
+past Earlier.
+
+History and Trash have no Earlier heading. In those views, Left, Home, and
+`g` select the first task, and Down on the last task wraps to the first.
+In the list pickers and the language picker, Left and Home select the
+first item, and Down on the last item wraps to the first.
+
+Help lists the action of Left, Home, and `g` as
+`Select first item, skipping Earlier`, or
+`Vælg første punkt, spring Tidligere over` in Danish.
 
 ### Use Option+arrows in macOS Terminal
 
@@ -1363,15 +1421,17 @@ husker config --example
 ```
 
 Use `first` and `last` to customize boundary selection. For example,
-`first = ["ctrl+home"]` replaces Home, `g`, and Left. Use `last = []` to
-disable End, `G`, and Right for selecting the last item.
+`first = ["ctrl+home"]` replaces Home, `g`, and Left. Ctrl+Home then
+follows the same rule as Left: in All tasks and list views, it skips the
+tasks under Earlier. Use `last = []` to disable End, `G`, and Right for
+selecting the last item.
 
 If a custom action already uses `g`, `G`, Home, End, Left, or Right in a selection screen,
 the new defaults can cause a shortcut conflict. For example,
 `history = ["g"]` conflicts with First. Keep that History shortcut by adding
 `first = []` under `[keys]`, or rebind First to another key. Use `last = []`
 for an existing action that conflicts with Last.
-To keep a custom Left shortcut and retain the earlier First keys, set
+To keep a custom Left shortcut and keep Home and `g` for First, set
 `first = ["home", "g"]`. For a custom Right shortcut, use `last = ["end", "G"]`.
 
 The same applies to the defaults added in 0.12.0. If a custom action already
@@ -1528,6 +1588,16 @@ Install the current version from the repository:
 ```text
 cargo install --path . --locked
 ```
+
+Version 0.21.0 changes Left, Home, and `g` in All tasks and list views.
+They now skip the tasks under Earlier and select the first task after
+them, such as the first task under Today. Down on the last task wraps to
+that task too. In 0.20.1, Left and Down on the last task both selected the
+first task, which was often under Earlier. To reach a task under Earlier,
+press Up from the first task after Earlier, or press PageUp. A key you bound to `first` in
+`config.toml` follows the same rule. History, Trash, and the pickers don't
+change. See [Jump past Earlier to today's tasks](#jump-past-earlier-to-todays-tasks).
+Version 0.21.0 doesn't change the database.
 
 Version 0.20.1 changes how the task filter reads a Danish day name typed
 with a space. Words in a row that start a day name, such as `i mo`, count

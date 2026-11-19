@@ -880,6 +880,26 @@ The script never contacts Azure. The host check in
 the Azure Functions host on your computer. The Azure front end before
 the host and a cold start in Azure stay untested.
 
+## Checks for version 0.21.0
+
+The change that makes Left and the wrap of Down skip Earlier completed these checks on November 19, 2026, on Windows 11 with Rust 1.91.1:
+
+| Check | Result |
+| --- | --- |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Unit tests | 399 passed. A new UI test covers Left, Home, and `g` with tasks under Earlier, Down on the last task, Up from the start task, a list view with nothing planned today, a start task that is also the last task, a filter that leaves only Earlier, a held row under Earlier, `s:all` with a Done today row after Earlier, the Help label, History, and Trash. The existing wrap test now expects the start task in All tasks and the Work list. |
+| Mutation check | With the start row forced to the first row, the new test and the existing wrap test failed. |
+| Integration tests | CLI 9, MCP 8, online 9, sync 8, and package 2 passed. |
+| Pseudo-terminal run | The 0.21.0 release executable ran in an isolated psmux server, 100 columns by 30 rows, against a temporary profile with two tasks under Earlier and one each under Today, Tomorrow, and Sometime. Startup selected the first Earlier task. Left, Home, `g`, and Down on the last task selected `Pay rent` under Today. Up from it reached both Earlier tasks and then wrapped to the last task. PageUp reached the first Earlier task. With `due:overdue`, Down and Left selected the first task. A task just marked done under Earlier stayed held, and Left selected `Pay rent`. Help showed `Home / g / Left` with `Select first item, skipping Earlier`. |
+| Review | An independent code review found no significant issue. Its notes led to a guard against a date change at midnight in the new test, a Trash case that the All tasks rule would fail, and the `s:all` case. A docs review added the filter rule to the spec. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.21.0. |
+| OpenSpec | `openspec validate jump-to-today --strict` passed. |
+
+Not verified:
+
+- Linux and macOS.
+
 ## Checks for version 0.20.1
 
 The Danish day-name phrase change completed these checks on November 18, 2026, on Windows 11 with Rust 1.91.1:

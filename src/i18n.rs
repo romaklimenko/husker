@@ -388,7 +388,10 @@ pub fn tr(language: Language, key: &str) -> &'static str {
         ),
         "action_up" => ("Move up", "Gå op"),
         "action_down" => ("Move down", "Gå ned"),
-        "action_first" => ("Select first item", "Vælg første punkt"),
+        "action_first" => (
+            "Select first item, skipping Earlier",
+            "Vælg første punkt, spring Tidligere over",
+        ),
         "action_last" => ("Select last item", "Vælg sidste punkt"),
         "action_page_up" => ("Page up", "Side op"),
         "action_page_down" => ("Page down", "Side ned"),

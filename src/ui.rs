@@ -30,7 +30,7 @@ use crate::editor_date::parse_editor_date;
 use crate::i18n::{Language, error_message, sync_failure_message, tr};
 use crate::input::Input;
 use crate::model::{Status, Task, TaskInput, TaskList};
-use crate::planning::{DuePreset, GroupLayout, date_label, group_rows, suggested_list_id};
+use crate::planning::{Bucket, DuePreset, GroupLayout, date_label, group_rows, suggested_list_id};
 use crate::query::{Query, visible_history, visible_tasks};
 use crate::store::{
     EmptyTrashOutcome, ListDeletionOutcome, ListDeletionPreview, Store, SyncCounters,
@@ -230,6 +230,20 @@ fn navigation_selection(current: usize, count: usize, action: Action) -> usize {
             }
         }
         _ => current,
+    }
+}
+
+/// Moves the selection of a task view. First, and Down on the last row, select `start`
+/// instead of the first row. Other actions move as `navigation_selection` does.
+fn task_selection(current: usize, count: usize, start: usize, action: Action) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    let start = start.min(count - 1);
+    match action {
+        Action::First => start,
+        Action::Down if current >= count - 1 => start,
+        _ => navigation_selection(current, count, action),
     }
 }
 
@@ -1493,6 +1507,26 @@ impl App {
         self.visible.len()
     }
 
+    /// The row that First selects and that Down wraps to: in All tasks and list views,
+    /// the first row that is not under the Earlier heading. A held row counts under the
+    /// heading it shows. Without such a row, and in History and Trash, it is row 0.
+    fn first_row_from_today(&self) -> usize {
+        if !matches!(self.view, View::Planned | View::List(_)) {
+            return 0;
+        }
+        group_rows(
+            &self.visible,
+            &|task| self.is_held(task.id),
+            GroupLayout::Planned,
+            self.today,
+            self.language,
+        )
+        .iter()
+        .find(|group| group.key != Bucket::Overdue.key())
+        .and_then(|group| group.rows.first())
+        .map_or(0, |row| row.index)
+    }
+
     fn clamp_selection(&mut self) {
         self.selection = self.selection.min(self.row_count().saturating_sub(1));
     }
@@ -2041,7 +2075,8 @@ impl App {
         match action {
             Action::Quit => return Ok(true),
             action @ (Action::Up | Action::Down | Action::First | Action::Last) => {
-                self.selection = navigation_selection(self.selection, self.row_count(), action);
+                let start = self.first_row_from_today();
+                self.selection = task_selection(self.selection, self.row_count(), start, action);
                 self.clamp_selection();
             }
             action @ (Action::PageUp | Action::PageDown) => {
@@ -8457,17 +8492,28 @@ mod tests {
             app.selection = 0;
             let ids = app.visible.iter().map(|task| task.id).collect::<Vec<_>>();
             assert!(ids.len() >= 6);
+            let last = ids.len() - 1;
+            // All tasks and the Work list show `Keep open 0` and `Keep open 6` under
+            // Earlier. First and the wrap of Down skip them. History and Trash have no
+            // Earlier heading.
+            let start = if matches!(view, View::Planned | View::List(_)) {
+                2
+            } else {
+                0
+            };
             for (code, expected) in [
-                (KeyCode::Up, ids.len() - 1),
-                (KeyCode::Down, 0),
-                (KeyCode::Char('k'), ids.len() - 1),
-                (KeyCode::Char('j'), 0),
-                (KeyCode::End, ids.len() - 1),
-                (KeyCode::Char('g'), 0),
-                (KeyCode::Char('G'), ids.len() - 1),
-                (KeyCode::Home, 0),
-                (KeyCode::Right, ids.len() - 1),
-                (KeyCode::Left, 0),
+                (KeyCode::Up, last),
+                (KeyCode::Down, start),
+                (KeyCode::Up, start.checked_sub(1).unwrap_or(last)),
+                (KeyCode::Char('k'), start.checked_sub(2).unwrap_or(last - 1)),
+                (KeyCode::Char('G'), last),
+                (KeyCode::Char('j'), start),
+                (KeyCode::End, last),
+                (KeyCode::Char('g'), start),
+                (KeyCode::Char('G'), last),
+                (KeyCode::Home, start),
+                (KeyCode::Right, last),
+                (KeyCode::Left, start),
             ] {
                 app.handle_key(key(code), &mut readonly, &config);
                 assert_eq!(
@@ -8481,10 +8527,11 @@ mod tests {
                 ));
                 if expected == 0 {
                     assert!(app.list_state.offset() <= 1);
-                } else {
+                } else if expected == last {
                     assert!(app.list_state.offset() > 0);
                 }
             }
+            app.selection = 0;
             app.handle_mouse(
                 mouse(MouseEventKind::ScrollUp, 0, 4),
                 Instant::now(),
@@ -8538,6 +8585,167 @@ mod tests {
         assert_eq!(app.visible.len(), count - 1);
         assert_eq!(app.selection, count - 2);
         assert_eq!(readonly.tasks().unwrap(), changed);
+    }
+
+    #[test]
+    fn first_and_down_wrap_skip_tasks_under_earlier() {
+        let (_directory, mut store, config) = fixture();
+        let work = store.create_list("Work").unwrap();
+        // Marking a task done stamps the real date, so the held-row check needs it as today.
+        let today = Local::now().date_naive();
+        let day = |offset: i64| Some(today + chrono::Duration::days(offset));
+        for (list_id, title, due) in [
+            (1, "Two days ago", day(-2)),
+            (1, "Yesterday", day(-1)),
+            (1, "Pay rent", day(0)),
+            (1, "Call the bank", day(1)),
+            (1, "Someday", None),
+            (work.id, "Work earlier", day(-3)),
+            (work.id, "Work later", day(-1)),
+            (work.id, "Work sometime", None),
+        ] {
+            let mut value = input(list_id, title);
+            value.due = due;
+            store.create_task(&value).unwrap();
+        }
+        let mut app = App::new(&store, today).unwrap();
+        let title = |app: &App| app.selected_task().unwrap().title.clone();
+        let titles = app
+            .visible
+            .iter()
+            .map(|task| task.title.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            titles,
+            [
+                "Work earlier",
+                "Two days ago",
+                "Yesterday",
+                "Work later",
+                "Pay rent",
+                "Call the bank",
+                "Someday",
+                "Work sometime",
+            ]
+        );
+        assert_eq!(
+            app.selection, 0,
+            "opening a view still selects the first row"
+        );
+        for code in [KeyCode::Left, KeyCode::Home, KeyCode::Char('g')] {
+            app.selection = 1;
+            app.handle_key(key(code), &mut store, &config);
+            assert_eq!(title(&app), "Pay rent", "{code:?}");
+        }
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        assert_eq!(title(&app), "Work later", "Up still reaches Earlier");
+        app.handle_key(key(KeyCode::End), &mut store, &config);
+        assert_eq!(title(&app), "Work sometime");
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        assert_eq!(
+            title(&app),
+            "Pay rent",
+            "Down on the last row wraps to today"
+        );
+        app.selection = 0;
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        assert_eq!(
+            title(&app),
+            "Work sometime",
+            "Up on the first row still wraps"
+        );
+        app.handle_key(key(KeyCode::Char('j')), &mut store, &config);
+        assert_eq!(title(&app), "Pay rent");
+        let first = help_lines(&config, HelpOrigin::Tasks)
+            .iter()
+            .map(|line| line.to_string())
+            .find(|line| line.ends_with(" Select first item, skipping Earlier"))
+            .unwrap();
+        assert!(first.starts_with("Home / g / "), "{first}");
+
+        // With nothing planned today, the first row after Earlier starts the view.
+        app.set_view(View::List(work.id), &store).unwrap();
+        assert_eq!(title(&app), "Work earlier");
+        app.handle_key(key(KeyCode::Home), &mut store, &config);
+        assert_eq!(title(&app), "Work sometime");
+        // The start row is also the last row, so Down keeps it.
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        assert_eq!(title(&app), "Work sometime");
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        assert_eq!(title(&app), "Work later");
+
+        // When every row is under Earlier, the first row starts the view.
+        app.set_view(View::Planned, &store).unwrap();
+        app.filter = "due:overdue".into();
+        app.query = Query::parse(&app.filter).unwrap();
+        app.refresh(&store).unwrap();
+        assert_eq!(app.visible.len(), 4);
+        app.handle_key(key(KeyCode::End), &mut store, &config);
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        assert_eq!(title(&app), "Work earlier");
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        app.handle_key(key(KeyCode::Char('g')), &mut store, &config);
+        assert_eq!(title(&app), "Work earlier");
+
+        // A held row keeps the heading it showed, so a just-closed Earlier task is skipped.
+        app.filter.clear();
+        app.query = Query::parse("").unwrap();
+        app.refresh(&store).unwrap();
+        app.selection = 3;
+        assert_eq!(title(&app), "Work later");
+        app.handle_key(key(KeyCode::Char(' ')), &mut store, &config);
+        if Local::now().date_naive() != today {
+            // Midnight passed, so the done task left Done today and is no longer held.
+            return;
+        }
+        let held = app
+            .visible
+            .iter()
+            .position(|task| task.title == "Work later")
+            .unwrap();
+        assert_eq!(held, 3);
+        assert_eq!(app.visible[held].status, Status::Done);
+        assert!(app.is_held(app.visible[held].id));
+        app.handle_key(key(KeyCode::Left), &mut store, &config);
+        assert_eq!(title(&app), "Pay rent");
+
+        // With closed tasks shown, a status group after Earlier holds the start row.
+        app.set_view(View::List(work.id), &store).unwrap();
+        app.filter = "s:all due:overdue".into();
+        app.query = Query::parse(&app.filter).unwrap();
+        app.refresh(&store).unwrap();
+        let titles = app
+            .visible
+            .iter()
+            .map(|task| task.title.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(titles, ["Work earlier", "Work later"]);
+        app.handle_key(key(KeyCode::Char('g')), &mut store, &config);
+        assert_eq!(title(&app), "Work later");
+
+        // History and Trash have no Earlier heading and start at the first row.
+        app.set_view(View::Planned, &store).unwrap();
+        app.open_history(&store).unwrap();
+        assert_eq!(app.visible.len(), 1);
+        app.handle_key(key(KeyCode::Left), &mut store, &config);
+        assert_eq!(app.selection, 0);
+        app.set_view(View::Planned, &store).unwrap();
+        for task in store.tasks().unwrap() {
+            if task.due.is_some_and(|due| due < today) || task.title == "Call the bank" {
+                store.set_deleted(task.id, task.version, true).unwrap();
+            }
+        }
+        app.set_view(View::Trash, &store).unwrap();
+        assert_eq!(app.visible.len(), 5);
+        // The rule of All tasks would skip the first row here, so this checks the view.
+        assert!(app.visible[0].due.is_some_and(|due| due < today));
+        assert!(app.visible.iter().any(|task| task.title == "Call the bank"));
+        app.selection = 2;
+        app.handle_key(key(KeyCode::Home), &mut store, &config);
+        assert_eq!(app.selection, 0);
+        app.handle_key(key(KeyCode::End), &mut store, &config);
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        assert_eq!(app.selection, 0);
     }
 
     #[test]
