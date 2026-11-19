@@ -252,13 +252,14 @@ Delete forever and Empty Trash follow their own requirements below. They record 
 Husker SHALL apply the task filter to the current task view while the user types it.
 
 The filter action opens a single-line input above the task rows.
-Each edit that leaves valid filter text applies that text to the task rows at once and selects the first matching task.
+Each edit that leaves valid filter text applies that text to the task rows at once and selects the start item of the matching tasks.
+The requirement Select the start item when no task is known defines the start item.
 While the text is not valid, the task rows keep the results of the last valid text and the input border is red.
-Enter keeps valid filter text and returns to navigation. Enter on text that is not valid shows the filter error and keeps the input open.
+Enter keeps valid filter text, returns to navigation, and selects the start item of the matching tasks. Enter on text that is not valid shows the filter error and keeps the input open.
 Esc closes the input and restores the filter, results, held rows, selected task, and scroll position from before the input opened. When a refresh leaves a deleted list while the input is open, Esc restores the All tasks filter instead.
 While the input is open, the footer shows the configured Apply, Back, and Copy selection keys and the filter syntax hint.
 An empty filter removes text restrictions while preserving any list scope and the default status rules.
-Back in navigation with a nonempty applied filter clears that filter, keeps the current view, and keeps the selected task when it is still visible. It does not leave the view.
+Back in navigation with a nonempty applied filter clears that filter, keeps the current view, and keeps the selected task when it is still visible. Otherwise it selects the start item. It does not leave the view.
 A list-scoped view combines its list scope with the filter.
 History combines its retained list scope and closed-task restriction with the filter.
 An empty History filter includes completed and cancelled tasks from every date.
@@ -883,7 +884,8 @@ Canceling the picker preserves the underlying view, filter, selected task, and s
 The initial picker selection matches the current scope: the ordinary list by ID, or Trash.
 From All tasks or all-list History, the picker selects the ordinary list most recently visited in the running process when it still exists, and All tasks otherwise.
 Choosing the current scope closes the picker without resetting task state.
-Choosing a different ordinary list or Trash starts that view with an empty filter and its first task selected, if present.
+Choosing a different ordinary list or Trash starts that view with an empty filter and its start item selected, if present.
+The requirement Select the start item when no task is known defines the start item.
 Back with an active filter clears the filter as defined by the filter requirement. Back without a filter from an ordinary list or Trash returns to All tasks. Back at All tasks without a filter leaves it unchanged.
 The `all_tasks` action and choosing All tasks also return to All tasks with the saved parent state defined below.
 All tasks groups, task ordering, and filter matching follow the `planning-search` spec. Trash shows deleted tasks without planned groups.
@@ -918,7 +920,7 @@ Editor save and dirty-discard confirmation keep their existing behavior and retu
 - **AND** after Work is deleted elsewhere the picker opens with All tasks selected
 
 History is a separate task view defined below. Choosing its underlying task scope in the picker restores its saved origin state.
-Choosing another ordinary list exits History and starts that list with an empty filter and its first task selected.
+Choosing another ordinary list exits History and starts that list with an empty filter and its start item selected.
 Choosing All tasks exits History and restores the saved root state.
 If the current ordinary list is deleted locally or externally, Husker returns to All tasks using the saved root state.
 An open task editor keeps its draft when its list is deleted.
@@ -937,11 +939,11 @@ A later stale save cannot overwrite the transferred task. List-name validation o
 
 ### Requirement: Restore All tasks after visiting a scoped view
 
-Husker SHALL retain the All tasks filter, parsed query, selected task ID, selection index, and task scroll state when leaving All tasks for an ordinary list or Trash.
+Husker SHALL retain the All tasks filter, parsed query, selected task ID, and task scroll state when leaving All tasks for an ordinary list or Trash.
 Switching between ordinary lists or Trash preserves that original All tasks state.
 Back from a scoped view, the `all_tasks` action, and choosing All tasks restore that state against fresh database contents.
 If the saved selected task is still visible, it becomes selected again by ID.
-If the saved task is no longer visible, Husker clamps the saved selection index to the current result count.
+If the saved task is no longer visible, Husker selects the start item, as the requirement Select the start item when no task is known defines.
 An empty result has no selected task. Rendering clamps the restored scroll position to the available rows and keeps the selected task visible.
 Invoking `all_tasks` while already at All tasks preserves the current filter, selection, and scroll position.
 The saved All tasks state lasts only for the running process.
@@ -959,7 +961,7 @@ The saved All tasks state lasts only for the running process.
 #### Scenario: Recover after the selected task leaves the results
 
 - **WHEN** the saved All tasks task is removed from its results while a scoped view is open
-- **THEN** returning to All tasks selects the nearest valid saved index or no task when the results are empty
+- **THEN** returning to All tasks selects its start item, or no task when the results are empty
 
 ### Requirement: Review retained completed and cancelled tasks
 
@@ -976,8 +978,8 @@ Unknown closure dates remain Unknown date even when a task has a known planned d
 History uses breadcrumbs such as `All tasks > History` and `All tasks > Work > History`.
 History is a view of retained task records. It does not claim to preserve every status transition, edit, or previous task text.
 Reopening clears the task's status date and timestamp according to task storage and removes the task from History after the write succeeds.
-History starts with an empty filter and remembers the origin view, filter, parsed query, task ID, selection index, and scroll state.
-The `history` action restores that origin against fresh data, preserving task identity when present and clamping the prior index otherwise.
+History starts with an empty filter and remembers the origin view, filter, parsed query, task ID, and scroll state.
+The `history` action restores that origin against fresh data, preserving task identity when present and selecting the start item otherwise.
 Back with an active History filter clears the filter first. Back without a filter restores the origin in the same way as the `history` action.
 The `all_tasks` action returns to the saved root task state. Choosing a picker entry follows the navigation requirement.
 History supports filtering, editing, copying, status changes, task Trash, moving tasks to another list, undo, reopening, and reading task descriptions.
@@ -1469,7 +1471,7 @@ Group headings remain unselectable and do not count as items.
 Selection uses the filtered visible results. After wrapping, jumping, or paging, the selected target is visible within the existing scrollable layout.
 Selection does not save tasks, choose a list, change the interface language, or alter task and list positions.
 Refresh retains its existing identity-preservation and missing-selection clamping rules. It does not wrap a removed selection.
-Opening a view, typing a filter, and applying or clearing a filter keep their existing selection rules. None of them selects the start item.
+The requirement Select the start item when no task is known defines when Husker selects the start item without a movement key.
 Mouse wheels remain bounded. Text cursor movement, Help and Copy text scrolling, and reordering retain their bounded behavior.
 First and Last have no selection action in text fields, the closed List selector, Copy text, or confirmation screens.
 Left and Right retain text-cursor movement in text inputs and horizontal scrolling in Copy text.
@@ -2105,4 +2107,65 @@ When the interface language changes, an applied filter uses the names of the new
 
 - **WHEN** Danish is selected, All tasks holds `Buy oat milk` without a due date, and the user applies `buy milk`
 - **THEN** `Buy oat milk` is listed, because `buy` and `milk` do not start a day name together and each matches the title
+
+### Requirement: Select the start item when no task is known
+
+Husker SHALL select the start item of a task view whenever it shows rows without a known task to select.
+
+The requirement Wrap keyboard selection and jump to boundaries defines the start item. In All tasks and list views, it is the first task whose row is not under the Earlier heading, or the first task when every visible task is under Earlier. In History and Trash, it is the first task.
+A known task is a task that was selected or saved for the view and is still among its visible results.
+A filter edit and Enter in the filter input have no known task. They select the start item of the matching tasks even when the selected task still matches.
+A refresh, Esc in the filter input, and a language change keep the row position when the selected task leaves the results. They do not select the start item in that case.
+A view has saved state in two cases: All tasks after the user leaves it for a list view or Trash, and the view from which History was opened. The requirements Restore All tasks after visiting a scoped view and Review retained completed and cancelled tasks define that state.
+The following table lists each situation and the task that Husker selects.
+
+| Situation | Selected task |
+| --- | --- |
+| Husker starts | The start item of All tasks |
+| A list view, Trash, or History opens without saved state | The start item |
+| A view returns to its saved state, and the saved task is visible | The saved task |
+| A view returns to its saved state, and the saved task is no longer visible | The start item |
+| The current list is deleted, and All tasks returns to its saved state | The saved task when visible, otherwise the start item |
+| A refresh finds rows in a view that had no selected task | The start item |
+| A refresh while a task is selected | The selected task, or the same row position when the task left the results |
+| An edit in the filter input leaves valid filter text | The start item of the matching tasks |
+| Enter applies valid filter text | The start item of the matching tasks |
+| Esc closes the filter input | The task selected before the input opened, or that row position when the task is gone. The start item when no task was selected. |
+| The interface language changes | The selected task, or the same row position when the task left the results. The start item when no task was selected. |
+| Back clears an applied filter | The selected task when still visible, otherwise the start item |
+| Choosing the current scope in the list picker | The selected task stays selected |
+
+An empty view has no selection. Selecting the start item changes no stored data and does not end a held row.
+
+#### Scenario: Start at today's first task
+
+- **WHEN** Husker starts and All tasks shows `Old report` under Earlier, `Pay rent` under Today, and `Someday` under Sometime
+- **THEN** `Pay rent` is selected
+
+#### Scenario: Select the start item while typing a filter
+
+- **WHEN** All tasks shows `Work earlier` under Earlier and `Work soon` under a later date, and the user presses `/` and types `work`
+- **THEN** `Work soon` is selected after each letter
+- **AND** `Work soon` stays selected after Enter
+
+#### Scenario: Replace a saved task that is gone
+
+- **WHEN** All tasks shows `Old report` under Earlier, `Pay rent` under Today, `Call the bank` under Tomorrow, and `Someday` under Sometime. The user leaves All tasks for Work with `Call the bank` selected, `Call the bank` moves to Trash, and the user presses Esc in Work
+- **THEN** All tasks returns with `Pay rent`, its start item, selected
+
+#### Scenario: Return to a saved task that is still visible
+
+- **WHEN** the user leaves All tasks for Work with `Someday` selected and presses Esc in Work
+- **THEN** All tasks returns with `Someday` selected
+
+#### Scenario: Clear a filter whose selected task is not in the default results
+
+- **WHEN** All tasks holds `Old report` under Earlier and `Pay rent` under Today, the user filters it by `s:done`, and selects `Filed taxes`, which was completed last week
+- **THEN** Esc clears the filter and selects `Pay rent`, because the default results do not show `Filed taxes`
+
+#### Scenario: Fill an empty view
+
+- **WHEN** the Later list is empty and open, and a refresh brings `Later old` under Earlier and `Later today` under Today
+- **THEN** `Later today` is selected
+- **AND** after the user selects `Later old`, a later refresh keeps `Later old` selected
 
