@@ -13,7 +13,7 @@ Husker SHALL provide the following default shortcuts in task navigation, History
 | --- | --- |
 | Up or `k` | Select the previous task |
 | Down or `j` | Select the next task |
-| Left, Home, or `g` | Select the first visible task |
+| Left, Home, or `g` | Select the first visible task, skipping the rows under Earlier |
 | Right, End, or `G` | Select the last visible task |
 | PageUp or PageDown | Move the selection one displayed page up or down |
 | `l` | Open the list picker |
@@ -1452,8 +1452,14 @@ Husker SHALL wrap configured Up and Down selection and support configured First 
 | Move-task picker | Ordinary destination lists in their existing order. |
 | Language picker | English, then Dansk. |
 
-Up on the first item selects the last item. Down on the last item selects the first item.
-First selects the first item and Last selects the last item without changing result order or applying a picker choice.
+Up on the first item selects the last item. Down on the last item selects the start item.
+First selects the start item and Last selects the last item without changing result order or applying a picker choice.
+The ordinary task view is All tasks or a list view. Its start item is the first task whose row is not under the Earlier heading.
+When every visible task in the ordinary task view is under Earlier, its start item is the first task.
+In every other mode, the start item is the first item. History and Trash have no Earlier heading.
+A row is under Earlier when the nearest heading above it is Earlier, or Tidligere in Danish. A held row counts under the heading it shows. The `planning-search` spec owns the date groups.
+When the last item is also the start item, Down on it keeps it selected.
+Up and Down reach every item. When tasks under Earlier precede the start item, Up from the start item selects the last task under Earlier.
 Default keys are Up or `k` and Down or `j`.
 First defaults to Home, `g`, and Left. Last defaults to End, `G`, and Right.
 Configured PageUp and PageDown move the selection by the number of selectable rows last displayed in that selection area, not counting heading rows, clamped at the first or last item without wrapping. They are unavailable in the language picker.
@@ -1463,20 +1469,49 @@ Group headings remain unselectable and do not count as items.
 Selection uses the filtered visible results. After wrapping, jumping, or paging, the selected target is visible within the existing scrollable layout.
 Selection does not save tasks, choose a list, change the interface language, or alter task and list positions.
 Refresh retains its existing identity-preservation and missing-selection clamping rules. It does not wrap a removed selection.
+Opening a view, typing a filter, and applying or clearing a filter keep their existing selection rules. None of them selects the start item.
 Mouse wheels remain bounded. Text cursor movement, Help and Copy text scrolling, and reordering retain their bounded behavior.
 First and Last have no selection action in text fields, the closed List selector, Copy text, or confirmation screens.
 Left and Right retain text-cursor movement in text inputs and horizontal scrolling in Copy text.
 
 #### Scenario: Wrap a filtered task list without selecting headings
 
-- **WHEN** a query shows tasks 3 and 8 under separate date headings and task 3 is selected
+- **WHEN** a query shows task 3 under Today and task 8 under Tomorrow and task 3 is selected
 - **THEN** Up selects task 8 and makes its row visible
 - **AND** Down returns to task 3 without selecting either heading
 
 #### Scenario: Jump through a long task view
 
-- **WHEN** a task view has more rows than fit on screen and the user invokes Last then First
+- **WHEN** a task view with no task under Earlier has more rows than fit on screen and the user invokes Last then First
 - **THEN** the last visible-result task and then the first visible-result task are selected and scrolled into view
+
+#### Scenario: Skip Earlier with First and with Down from the last task
+
+- **WHEN** All tasks shows `Old report` under Earlier, `Pay rent` under Today, and `Call the bank` under Tomorrow, and `Old report` is selected
+- **THEN** Left selects `Pay rent`
+- **AND** Right selects `Call the bank`, and Down then selects `Pay rent`
+- **AND** Up then selects `Old report`
+
+#### Scenario: Start after Earlier when nothing is planned today
+
+- **WHEN** a list view shows two tasks under Earlier and one task under Sometime
+- **THEN** Home selects the task under Sometime
+
+#### Scenario: Use the first task when every task is under Earlier
+
+- **WHEN** the filter `due:overdue` shows three tasks, all under Earlier, and the third is selected
+- **THEN** Down selects the first task, and `g` keeps it selected
+
+#### Scenario: Count a held row under its heading
+
+- **WHEN** All tasks shows one task under Earlier and one under Today, and the user marks the Earlier task done
+- **THEN** the done task stays held under Earlier
+- **AND** Left selects the task under Today
+
+#### Scenario: Keep the last task when it is the start item
+
+- **WHEN** All tasks shows two tasks under Earlier and one task under Today, and the task under Today is selected
+- **THEN** Down keeps the task under Today selected
 
 #### Scenario: Wrap History and Trash
 
