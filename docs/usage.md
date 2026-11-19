@@ -308,6 +308,8 @@ To find a list quickly, type part of its name. See
 
 Choose a list and press Enter. For example, choosing Private shows
 `All tasks > Private`. New tasks created there belong to Private.
+Husker selects the first task after the Earlier heading, the same task
+that Left selects. See [Jump past Earlier to today's tasks](#jump-past-earlier-to-todays-tasks).
 Press Esc to return to All tasks with its previous filter, selected task,
 and scroll position. Choosing All tasks in the picker gives the same result.
 For example, if All tasks was filtered by `milk`, that filter returns after
@@ -315,7 +317,16 @@ you leave Private. If Private itself has a filter applied, the first Esc
 clears that filter and keeps you in Private. Press Esc again to leave.
 Esc at All tasks without a filter leaves the view unchanged.
 
-Choosing a different list or Trash starts that view without a filter.
+If the task you had selected in All tasks is gone when you return, Husker
+selects the first task after Earlier instead. For example, select
+`[Private] Call the dentist` in All tasks and open Private. Select
+`Call the dentist` and press `d` to move it to Trash. Press Esc. All tasks
+no longer lists `Call the dentist`, so Husker selects the first task after
+Earlier.
+
+Choosing a different list or Trash starts that view without a filter. A
+list starts on its first task after Earlier. Trash has no Earlier heading,
+so it starts on its first task.
 Choosing the current list again preserves its filter, task selection,
 and scroll position.
 
@@ -449,7 +460,9 @@ The removed list's name and its task grouping are not retained.
 
 The picker stays open with the default list selected after deletion.
 If you were viewing the removed list, the tasks behind the picker return
-to All tasks. The default list and All tasks cannot be deleted. Delete or
+to All tasks. All tasks selects the task you had selected there before you
+opened the list. If that task is gone, Husker selects the first task after
+Earlier. The default list and All tasks cannot be deleted. Delete or
 Ctrl+D on the Trash entry empties Trash instead of removing it. See
 [Empty Trash](#empty-trash).
 
@@ -562,9 +575,13 @@ session.
 ## Find tasks
 
 Press `/` and type a query. The task rows narrow with each character you
-type, and the first matching task is selected. For example, in All tasks
-with `Buy milk` and `Call mom`, press `/` and type `mi`. Only `Buy milk` is
-listed. Press Enter to keep the filter and return to the task rows.
+type. After each character, Husker selects the first matching task after
+the Earlier heading, the same task that Left selects. For example, in All
+tasks with `Buy milk` and `Call mom`, press `/` and type `mi`. Only
+`Buy milk` is listed, and it's selected. Press Enter to keep the filter and
+return to the task rows. Enter selects the first matching task after
+Earlier too, even if you didn't change the text. See
+[Jump past Earlier to today's tasks](#jump-past-earlier-to-todays-tasks).
 While you type, the footer shows the hint
 `Combine text, l:list, due:today, and s:done. #words are text.`
 
@@ -574,10 +591,18 @@ you pressed `/`. For example, Work is filtered by `milk`. You press `/`,
 replace the text with `mom`, and press Esc. Work is filtered by `milk`
 again, with the same task selected.
 
-To clear an applied filter, press Esc in the task list. The view and the
-selected task stay as they are, and the footer entry `Esc Clear filter`
-disappears. Applying an empty query clears the filter too.
+To clear an applied filter, press Esc in the task list. The view stays as
+it is, and the footer entry `Esc Clear filter` disappears. If the selected
+task is still listed without the filter, it stays selected. Otherwise
+Husker selects the first task after Earlier. For example, filter All tasks
+with `s:done` and select a task you completed last week. Press Esc. All
+tasks doesn't list that task without the filter, so Husker selects the
+first task after Earlier.
 If you opened a particular list, clearing the filter keeps that list selected.
+
+You can also clear the filter by deleting its text in the input and
+pressing Enter. Like every filter you type, this selects the first task
+after Earlier, even if the task you had selected is still listed.
 
 Combine terms to narrow the results. Every term must match:
 
@@ -771,13 +796,17 @@ You can also use the usual status and Trash shortcuts, press `m` to move
 the task to another list, and press `u` to undo your last task action.
 New-task creation and manual reordering are unavailable in History.
 
+History starts with its first task selected.
 Press `h` to return to the view where you opened History.
-Your previous filter, selected task, and scroll position return.
+Your previous filter, selected task, and scroll position return. If that
+task is gone, for example because an agent moved it to Trash while you
+were in History, Husker selects the first task after Earlier instead.
 Esc does the same when History has no filter applied. With a filter
 applied, the first Esc clears the filter and a second Esc returns.
 Press `l` to choose All tasks or another task list and leave History.
 Choosing the same list restores the view from before you opened History.
-Choosing another list starts with an empty filter.
+Choosing another list starts with an empty filter and its first task
+after Earlier selected.
 
 History shows each task's current status. Reopening clears its recorded
 completion date and time. Husker does not keep a log of earlier status changes or
@@ -1009,6 +1038,13 @@ Press one of those keys to acknowledge a notice that is already visible.
 This notice has no time limit. A refresh also moves a task you marked done
 or cancelled from its held row to Done today or Cancelled today.
 
+A refresh keeps the selected task. If another process moved that task out
+of the view, for example to Trash, the selection stays at the same
+position in the list, or on the last task if the list is now shorter. If
+the view was empty and the refresh brings in tasks, Husker selects the
+first task after Earlier. See
+[Jump past Earlier to today's tasks](#jump-past-earlier-to-todays-tasks).
+
 If you set up [sync between computers](sync.md), a refresh with `r` or F5
 also starts a sync at once and does not wait for it to finish. Changes
 that a sync brings in from another computer do not show the notice. They
@@ -1125,6 +1161,8 @@ A result with one item keeps that item selected.
 
 In All tasks and list views, Left, Home, and `g` skip the tasks under
 Earlier, and Down on the last task wraps to the first task after Earlier.
+Husker also selects that task when it starts, when you open a list, and
+when you filter the tasks.
 See [Jump past Earlier to today's tasks](#jump-past-earlier-to-todays-tasks).
 In History and Trash, Left, Home, and `g` select the first task, and Down
 on the last task wraps to the first. For example, in Trash, press End to
@@ -1154,7 +1192,8 @@ In All tasks and list views, press Left, Home, or `g` to select the first
 task after the Earlier heading. Earlier, shown as Tidligere in Danish,
 holds the open tasks planned before today. Left therefore takes you to the
 start of today's work, even while older tasks are still open. Down on the
-last task wraps to the same task.
+last task wraps to the same task. Husker also selects this task for you
+when it starts.
 
 For example, All tasks shows these three tasks:
 
@@ -1164,11 +1203,12 @@ For example, All tasks shows these three tasks:
 | Today | `Pay rent` |
 | Tomorrow | `Call the bank` |
 
-1. Press Left. `Pay rent` is selected.
+1. Start Husker. `Pay rent` is selected.
 2. Press Right to select `Call the bank`, the last task.
 3. Press Down. The selection wraps to `Pay rent` and skips `Old report`.
 4. Press Up. `Old report` is selected, because Up and Down move one row at
    a time.
+5. Press Left. `Pay rent` is selected again.
 
 The same rule covers these cases:
 
@@ -1187,12 +1227,33 @@ The same rule covers these cases:
 Up on the first task wraps to the last task. PageUp, PageDown, and the
 mouse wheel move through the tasks under Earlier like any other tasks.
 
-When Husker starts, and when you open a list or type a filter, Husker
-selects the first task, even if it is under Earlier. Press Left to jump
-past Earlier.
+Husker selects the first task after Earlier for you whenever it has no
+task to keep selected, and after each change to the filter. This table
+shows which task is selected in each case:
+
+| When | Selected task |
+| --- | --- |
+| You start Husker | The first task after Earlier in All tasks. |
+| You open a list from the list picker | The first task after Earlier in that list. |
+| You type a character in the filter input | The first matching task after Earlier. |
+| You press Enter in the filter input | The first matching task after Earlier, even if you didn't change the text. |
+| You press Esc in the filter input | The task you had selected before you pressed `/`. |
+| You press Esc to clear an applied filter | The same task if it's still listed. Otherwise the first task after Earlier. |
+| You return to All tasks from a list or Trash | The task you had selected in All tasks if it's still listed. Otherwise the first task after Earlier. |
+| You return from History to the view where you opened it | The task you had selected in that view if it's still listed. Otherwise the first task after Earlier. |
+| A refresh runs, because you pressed `r` or F5 or another process changed tasks | The same task. If it left the view, the selection stays at the same position in the list, or on the last task if the list is now shorter. |
+| A refresh brings tasks into a view that was empty | The first task after Earlier. |
+
+For example, with the three tasks above, press `/`, type `zzz`, and press
+Enter. No task matches, so no task is selected. Press Esc to clear the
+filter. Husker selects `Pay rent`.
+
+To reach a task under Earlier from the first task after Earlier, press Up
+or PageUp.
 
 History and Trash have no Earlier heading. In those views, Left, Home, and
 `g` select the first task, and Down on the last task wraps to the first.
+Opening History or Trash also selects the first task.
 In the list pickers and the language picker, Left and Home select the
 first item, and Down on the last item wraps to the first.
 
@@ -1588,6 +1649,26 @@ Install the current version from the repository:
 ```text
 cargo install --path . --locked
 ```
+
+Version 0.21.1 changes which task Husker selects for you in All tasks and
+list views. Husker now selects the first task after Earlier, the same task
+that Left selects, in these cases:
+
+- When Husker starts and when you open a list.
+- After each character you type in the filter input, and when you press
+  Enter there.
+- When you clear a filter with Esc, or return to All tasks or from
+  History, and the task you had selected is gone.
+- When a refresh brings tasks into a view that was empty.
+
+In 0.21.0, Husker selected the first task in these cases, which was often
+under Earlier. When the task you had selected was gone after you cleared a
+filter or returned to a view, 0.21.0 kept the selection at the same
+position in the list instead. To reach a task under Earlier, press Up from
+the first task after Earlier, or press PageUp. A refresh still keeps the
+selected task, and History and Trash still start on their first task. See
+[Jump past Earlier to today's tasks](#jump-past-earlier-to-todays-tasks).
+Version 0.21.1 doesn't change the database.
 
 Version 0.21.0 changes Left, Home, and `g` in All tasks and list views.
 They now skip the tasks under Earlier and select the first task after

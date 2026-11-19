@@ -880,6 +880,26 @@ The script never contacts Azure. The host check in
 the Azure Functions host on your computer. The Azure front end before
 the host and a cold start in Azure stay untested.
 
+## Checks for version 0.21.1
+
+The change that selects today's first task when no task is known completed these checks on November 19, 2026, on Windows 11 with Rust 1.91.1:
+
+| Check | Result |
+| --- | --- |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Unit tests | 400 passed. A new UI test covers startup, opening a list, each typed filter letter, Enter with and without an edit, clearing a filter with a visible task, with no result, and with a task that is gone, returning to a saved task that is visible and one that is gone, a refresh that keeps the row position of a gone task, Esc in the filter input of an empty view that receives tasks, a refresh that keeps a task, a deleted current list, and Enter that finds the current list deleted. The planned bookmark test now expects the start task when the saved task is gone. |
+| Mutation checks | Each of the eight code paths was undone in turn: the start rule in `refresh`, the kept row position in `refresh`, the deleted-list case, a typed filter, Enter, Enter after a deleted list, clearing a filter, and Esc in the filter input without an earlier task. The new test failed each time. |
+| Integration tests | CLI 9, MCP 8, online 9, sync 8, and package 2 passed. |
+| Pseudo-terminal run | The 0.21.1 release executable ran in an isolated psmux server, 100 columns by 30 rows, against a temporary profile with three tasks under Earlier. Startup selected `Pay rent` under Today, with the Earlier tasks shown above it. Typing `work` letter by letter and Enter selected `Work soon`, and Esc kept it. Opening the Work list selected `Work soon`, and Esc returned to All tasks with `Pay rent`. A filter with no result, cleared with Esc, selected `Pay rent`. |
+| Review | An independent code review found no significant bug. It found that no test kept the row position of a gone task, that Enter after a deleted list replaced the saved task of All tasks, that Esc in the filter input and a language change still fell back to row 0, and that the saved row index was unused. All were fixed, with tests for the first three. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.21.1. |
+| OpenSpec | `openspec validate select-today-by-default --strict` passed. |
+
+Not verified:
+
+- Linux and macOS.
+
 ## Checks for version 0.21.0
 
 The change that makes Left and the wrap of Down skip Earlier completed these checks on November 19, 2026, on Windows 11 with Rust 1.91.1:

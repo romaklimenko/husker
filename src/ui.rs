@@ -695,7 +695,6 @@ struct PlannedBookmark {
     filter: String,
     query: Query,
     selected_task: Option<i64>,
-    selection: usize,
     list_state: ListState,
 }
 
@@ -965,6 +964,7 @@ impl App {
             self.sync_counters = counters;
         }
         let mut selected_task = self.selected_task().map(|task| task.id);
+        let mut view_reset = false;
         let lists = store.lists()?;
         let tasks = store.tasks()?;
         if unexplained && (lists != self.lists || tasks != self.tasks) {
@@ -981,9 +981,14 @@ impl App {
             self.filter_origin = None;
             let bookmark = self.planned_bookmark.take();
             selected_task = self.restore_view_state(View::Planned, bookmark);
+            view_reset = true;
         }
         self.rebuild_visible();
-        self.select_task_id(selected_task);
+        if view_reset {
+            self.select_task_or_start(selected_task);
+        } else {
+            self.reselect(selected_task);
+        }
         self.rebuild_pickers();
         self.data_version = data_version;
         Ok(())
@@ -1149,7 +1154,7 @@ impl App {
             // Filter words match date group names, which change with the language.
             let selected_task = self.selected_task().map(|task| task.id);
             self.rebuild_visible();
-            self.select_task_id(selected_task);
+            self.reselect(selected_task);
         }
     }
 
@@ -1996,12 +2001,16 @@ impl App {
                         let query = Query::parse(&buffer.text)?;
                         self.filter = buffer.text.clone();
                         self.query = query;
-                        self.selection = 0;
                         self.screen = Screen::Navigation;
                         self.filter_origin = None;
                         self.filter_invalid = false;
                         self.held.clear();
+                        let view = self.view;
                         self.refresh(store)?;
+                        // A refresh that left a deleted list already chose the selection.
+                        if self.view == view {
+                            self.select_start();
+                        }
                         self.message = None;
                     }
                     Some(Action::Discard | Action::Back) => self.discard_typed_filter(store)?,
@@ -2138,14 +2147,19 @@ impl App {
         self.last_click = None;
     }
 
-    /// Removes the applied filter and keeps the current view and selected task.
+    /// Removes the applied filter and keeps the current view and selected task. Without a
+    /// visible selected task, it selects the row that First selects.
     fn clear_filter(&mut self, store: &Store) -> Result<()> {
         let selected = self.selected_task().map(|task| task.id);
         self.filter.clear();
         self.query = Query::default();
         self.held.clear();
+        let view = self.view;
         self.refresh(store)?;
-        self.select_task_id(selected);
+        // A refresh that left a deleted list already chose the selection.
+        if self.view == view {
+            self.select_task_or_start(selected);
+        }
         Ok(())
     }
 
@@ -2319,8 +2333,8 @@ impl App {
             Ok(query) => {
                 self.query = query;
                 self.filter_invalid = false;
-                self.selection = 0;
                 self.rebuild_visible();
+                self.select_start();
             }
             Err(_) => self.filter_invalid = true,
         }
@@ -2340,8 +2354,13 @@ impl App {
         self.held = origin.held;
         self.list_state = origin.list_state;
         self.refresh(store)?;
-        self.selection = origin.selection;
-        self.select_task_id(origin.selected_task);
+        match origin.selected_task {
+            Some(id) => {
+                self.selection = origin.selection;
+                self.select_task_id(Some(id));
+            }
+            None => self.select_start(),
+        }
         Ok(())
     }
 
@@ -2404,7 +2423,6 @@ impl App {
             filter: self.filter.clone(),
             query: self.query.clone(),
             selected_task: self.selected_task().map(|task| task.id),
-            selection: self.selection,
             list_state: self.list_state,
         }
     }
@@ -2421,12 +2439,39 @@ impl App {
             .as_ref()
             .and_then(|bookmark| bookmark.selected_task);
         if let Some(bookmark) = bookmark {
-            self.selection = bookmark.selection;
             self.list_state = bookmark.list_state;
             self.filter = bookmark.filter;
             self.query = bookmark.query;
         }
         selected_task
+    }
+
+    /// Selects the row that First selects. Used when no task is known for the rows.
+    fn select_start(&mut self) {
+        self.selection = self.first_row_from_today();
+        self.clamp_selection();
+    }
+
+    /// Selects the task again after the rows changed. A task that left the rows keeps its
+    /// row position. Without a selected task, it selects the row that First selects.
+    fn reselect(&mut self, selected_task: Option<i64>) {
+        match selected_task {
+            Some(id) => self.select_task_id(Some(id)),
+            None => self.select_start(),
+        }
+    }
+
+    /// Selects the task when it is visible, and the row that First selects otherwise.
+    fn select_task_or_start(&mut self, selected_task: Option<i64>) {
+        match self
+            .visible
+            .iter()
+            .position(|task| Some(task.id) == selected_task)
+        {
+            Some(index) => self.selection = index,
+            None => self.select_start(),
+        }
+        self.clamp_selection();
     }
 
     fn select_task_id(&mut self, selected_task: Option<i64>) {
@@ -6277,7 +6322,7 @@ mod tests {
     }
 
     #[test]
-    fn planned_bookmark_restores_by_id_and_clamps_when_the_saved_task_leaves_results() {
+    fn planned_bookmark_restores_by_id_and_starts_over_when_the_saved_task_leaves_results() {
         let (directory, mut store, config) = fixture();
         let work = store.create_list("Work").unwrap();
         let first = store.create_task(&input(1, "Keep first")).unwrap();
@@ -6301,8 +6346,9 @@ mod tests {
         app.handle_key(key(KeyCode::Esc), &mut store, &config);
         assert_eq!(app.filter, "keep");
         assert_eq!(app.visible.len(), 2);
-        assert_eq!(app.selection, 1);
-        assert_eq!(app.selected_task().unwrap().id, first.id);
+        // No task is under Earlier, so the start row is the first row.
+        assert_eq!(app.selection, 0);
+        assert_eq!(app.selected_task().unwrap().id, second.id);
         assert!(app.external_update);
     }
 
@@ -8588,6 +8634,154 @@ mod tests {
     }
 
     #[test]
+    fn default_selection_starts_after_earlier() {
+        let (_directory, mut store, config) = fixture();
+        let work = store.create_list("Work").unwrap();
+        let later = store.create_list("Later").unwrap();
+        let day = |offset: i64| Some(today() + chrono::Duration::days(offset));
+        let mut ids = std::collections::HashMap::new();
+        for (list_id, title, due) in [
+            (work.id, "Work earlier", day(-2)),
+            (1, "Old report", day(-1)),
+            (1, "Pay rent", day(0)),
+            (1, "Call the bank", day(1)),
+            (1, "Pick up parcel", day(2)),
+            (work.id, "Work soon", day(3)),
+            (1, "Someday", None),
+        ] {
+            let mut value = input(list_id, title);
+            value.due = due;
+            ids.insert(title, store.create_task(&value).unwrap().id);
+        }
+        let title = |app: &App| {
+            app.selected_task()
+                .map_or_else(String::new, |task| task.title.clone())
+        };
+        let select = |app: &mut App, wanted: &str| {
+            app.selection = app
+                .visible
+                .iter()
+                .position(|task| task.title == wanted)
+                .unwrap();
+        };
+
+        let mut app = App::new(&store, today()).unwrap();
+        assert_eq!(title(&app), "Pay rent", "startup");
+        app.set_view(View::List(work.id), &store).unwrap();
+        assert_eq!(title(&app), "Work soon", "opening a list");
+        app.set_view(View::Planned, &store).unwrap();
+        // A refresh keeps the row position of a selected task that left the results.
+        select(&mut app, "Pick up parcel");
+        let gone = store.task(ids["Pick up parcel"]).unwrap();
+        store.set_deleted(gone.id, gone.version, true).unwrap();
+        app.refresh(&store).unwrap();
+        assert_eq!(title(&app), "Work soon", "a refresh keeps the row position");
+
+        // Each edit of the filter and Enter select the start row of the matches.
+        app.handle_key(key(KeyCode::Char('/')), &mut store, &config);
+        for letter in "work".chars() {
+            app.handle_key(key(KeyCode::Char(letter)), &mut store, &config);
+            assert_eq!(title(&app), "Work soon", "typing {letter}");
+        }
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert_eq!(app.filter, "work");
+        assert_eq!(title(&app), "Work soon", "Enter");
+        // Clearing a filter keeps a visible selected task.
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        assert_eq!(title(&app), "Work earlier");
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(app.filter.is_empty());
+        assert_eq!(title(&app), "Work earlier", "clearing keeps the task");
+        // Clearing a filter without a selected task selects the start row.
+        app.handle_key(key(KeyCode::Char('/')), &mut store, &config);
+        app.paste("nothing matches");
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert!(app.visible.is_empty());
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert_eq!(title(&app), "Pay rent", "clearing an empty result");
+        // Enter without an edit selects the start row too.
+        select(&mut app, "Someday");
+        app.handle_key(key(KeyCode::Char('/')), &mut store, &config);
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert_eq!(title(&app), "Pay rent", "Enter without an edit");
+        // Clearing a filter after its selected task is gone selects the start row.
+        app.handle_key(key(KeyCode::Char('/')), &mut store, &config);
+        app.paste("work");
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert_eq!(title(&app), "Work soon");
+        let gone = store.task(ids["Work soon"]).unwrap();
+        store.set_deleted(gone.id, gone.version, true).unwrap();
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(app.filter.is_empty());
+        assert_eq!(title(&app), "Pay rent", "clearing after the task is gone");
+
+        // Returning to All tasks selects its saved task while it is visible.
+        select(&mut app, "Someday");
+        app.set_view(View::List(work.id), &store).unwrap();
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert_eq!(app.view, View::Planned);
+        assert_eq!(title(&app), "Someday", "a saved task stays selected");
+        // A saved task that left the results no longer keeps its row position.
+        select(&mut app, "Call the bank");
+        app.set_view(View::List(work.id), &store).unwrap();
+        let gone = store.task(ids["Call the bank"]).unwrap();
+        store.set_deleted(gone.id, gone.version, true).unwrap();
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert_eq!(app.view, View::Planned);
+        assert_eq!(title(&app), "Pay rent", "a saved task that is gone");
+
+        // An empty view that receives tasks selects its start row.
+        select(&mut app, "Work earlier");
+        app.set_view(View::List(later.id), &store).unwrap();
+        assert!(app.visible.is_empty());
+        // The tasks arrive while the filter input is open, and the typed `old` selects
+        // `Later old`. Esc restores no task, because none was selected when the input
+        // opened, so it selects the start row.
+        app.handle_key(key(KeyCode::Char('/')), &mut store, &config);
+        for (title, due) in [("Later old", day(-1)), ("Later today", day(0))] {
+            let mut value = input(later.id, title);
+            value.due = due;
+            store.create_task(&value).unwrap();
+        }
+        app.refresh(&store).unwrap();
+        app.paste("old");
+        assert_eq!(title(&app), "Later old");
+        app.handle_key(key(KeyCode::Esc), &mut store, &config);
+        assert!(matches!(app.screen, Screen::Navigation));
+        assert_eq!(
+            title(&app),
+            "Later today",
+            "tasks arriving in an empty view"
+        );
+        // A refresh keeps a selected task.
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        app.refresh(&store).unwrap();
+        assert_eq!(title(&app), "Later old", "a refresh keeps the task");
+
+        // When the current list is deleted, All tasks returns. Its saved task, Work
+        // earlier in row 0, is gone, so the start row is selected, not row 0.
+        let saved = store.task(ids["Work earlier"]).unwrap();
+        store.set_deleted(saved.id, saved.version, true).unwrap();
+        let preview = store.preview_list_deletion(later.id).unwrap();
+        store.delete_list(&preview).unwrap();
+        app.refresh(&store).unwrap();
+        assert_eq!(app.view, View::Planned);
+        assert!(app.selection > 0);
+        assert_eq!(app.selection, app.first_row_from_today());
+        assert_eq!(app.selected_task().unwrap().due, day(0));
+
+        // Enter that finds the current list deleted keeps the saved task of All tasks.
+        select(&mut app, "Someday");
+        app.set_view(View::List(work.id), &store).unwrap();
+        app.handle_key(key(KeyCode::Char('/')), &mut store, &config);
+        let preview = store.preview_list_deletion(work.id).unwrap();
+        store.delete_list(&preview).unwrap();
+        app.handle_key(key(KeyCode::Enter), &mut store, &config);
+        assert_eq!(app.view, View::Planned);
+        assert_eq!(title(&app), "Someday", "Enter after the list is deleted");
+    }
+
+    #[test]
     fn first_and_down_wrap_skip_tasks_under_earlier() {
         let (_directory, mut store, config) = fixture();
         let work = store.create_list("Work").unwrap();
@@ -8628,10 +8822,7 @@ mod tests {
                 "Work sometime",
             ]
         );
-        assert_eq!(
-            app.selection, 0,
-            "opening a view still selects the first row"
-        );
+        assert_eq!(title(&app), "Pay rent", "startup selects the start row");
         for code in [KeyCode::Left, KeyCode::Home, KeyCode::Char('g')] {
             app.selection = 1;
             app.handle_key(key(code), &mut store, &config);
@@ -8665,7 +8856,8 @@ mod tests {
 
         // With nothing planned today, the first row after Earlier starts the view.
         app.set_view(View::List(work.id), &store).unwrap();
-        assert_eq!(title(&app), "Work earlier");
+        assert_eq!(title(&app), "Work sometime");
+        app.selection = 0;
         app.handle_key(key(KeyCode::Home), &mut store, &config);
         assert_eq!(title(&app), "Work sometime");
         // The start row is also the last row, so Down keeps it.

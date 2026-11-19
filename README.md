@@ -13,7 +13,10 @@ cargo install --path . --locked
 husker
 ```
 
-Husker opens All tasks. Press `n`, type a title, and press Enter to save.
+Husker opens All tasks and selects your first task for today. Open tasks
+planned before today stay above it under Earlier. If nothing is planned
+for today, Husker selects the first task after Earlier.
+Press `n`, type a title, and press Enter to save.
 The new task starts in the same list as the newest task outside Trash,
 even if an agent or `husker add` created that task. In a new profile, it
 starts in Inbox. See [Start a new task in the right list](docs/usage.md#start-a-new-task-in-the-right-list).
@@ -190,7 +193,8 @@ screen, such as `r / F5 Refresh data` in All tasks or `F5 Refresh data` in
 the task editor.
 
 Press `/` and type to filter the tasks. The task rows narrow while you
-type. Press Enter to keep the filter, or Esc to go back to the filter you
+type, and Husker selects the first matching task after Earlier. Press
+Enter to keep the filter, or Esc to go back to the filter you
 had before you pressed `/`. If the text isn't a valid filter yet, such as
 `"milk` with no closing quote, the input border turns red and the rows keep
 the last valid results. Read [Find tasks](docs/usage.md#find-tasks) for the
@@ -226,7 +230,12 @@ Earlier, `Pay rent` under Today, and `Call the bank` under Tomorrow. Press
 Left to select `Pay rent`. Press Right to select `Call the bank`, then Down
 to wrap back to `Pay rent`. Press Up from `Pay rent` to reach `Old report`.
 If every task is under Earlier, Left and Down on the last task select the
-first task. See [Jump past Earlier to today's tasks](docs/usage.md#jump-past-earlier-to-todays-tasks).
+first task.
+When Husker starts, when you open a list, and after you type or apply a
+filter, Husker selects that same task for you. It does the same when you
+clear a filter or return to All tasks and the task you had selected is
+gone. A refresh keeps the selected task. See
+[Jump past Earlier to today's tasks](docs/usage.md#jump-past-earlier-to-todays-tasks).
 
 The same keys work in History and Trash, which have no Earlier heading.
 There, Left, Home, or `g` selects the first task, and Down on the last task
