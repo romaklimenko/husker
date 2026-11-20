@@ -392,7 +392,10 @@ pub fn tr(language: Language, key: &str) -> &'static str {
             "Select first item, skipping Earlier",
             "Vælg første punkt, spring Tidligere over",
         ),
-        "action_last" => ("Select last item", "Vælg sidste punkt"),
+        "action_last" => (
+            "Select last item, skipping done and cancelled",
+            "Vælg sidste punkt, spring udførte og annullerede over",
+        ),
         "action_page_up" => ("Page up", "Side op"),
         "action_page_down" => ("Page down", "Side ned"),
         "action_open" => ("Open", "Åbn"),

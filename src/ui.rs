@@ -234,15 +234,19 @@ fn navigation_selection(current: usize, count: usize, action: Action) -> usize {
 }
 
 /// Moves the selection of a task view. First, and Down on the last row, select `start`
-/// instead of the first row. Other actions move as `navigation_selection` does.
-fn task_selection(current: usize, count: usize, start: usize, action: Action) -> usize {
+/// instead of the first row. Last, and Up on the first row, select `end` instead of the
+/// last row. Other actions move as `navigation_selection` does.
+fn task_selection(current: usize, count: usize, start: usize, end: usize, action: Action) -> usize {
     if count == 0 {
         return 0;
     }
     let start = start.min(count - 1);
+    let end = end.min(count - 1);
     match action {
         Action::First => start,
+        Action::Last => end,
         Action::Down if current >= count - 1 => start,
+        Action::Up if current == 0 => end,
         _ => navigation_selection(current, count, action),
     }
 }
@@ -1532,6 +1536,20 @@ impl App {
         .map_or(0, |row| row.index)
     }
 
+    /// The row that Last selects and that Up wraps to: in All tasks and list views, the
+    /// last open task. A done or cancelled task is skipped, even in a held row. Without an
+    /// open task, and in History and Trash, it is the last row.
+    fn last_open_row(&self) -> usize {
+        let last = self.row_count().saturating_sub(1);
+        if !matches!(self.view, View::Planned | View::List(_)) {
+            return last;
+        }
+        self.visible
+            .iter()
+            .rposition(|task| task.status == Status::Open)
+            .unwrap_or(last)
+    }
+
     fn clamp_selection(&mut self) {
         self.selection = self.selection.min(self.row_count().saturating_sub(1));
     }
@@ -2085,7 +2103,9 @@ impl App {
             Action::Quit => return Ok(true),
             action @ (Action::Up | Action::Down | Action::First | Action::Last) => {
                 let start = self.first_row_from_today();
-                self.selection = task_selection(self.selection, self.row_count(), start, action);
+                let end = self.last_open_row();
+                self.selection =
+                    task_selection(self.selection, self.row_count(), start, end, action);
                 self.clamp_selection();
             }
             action @ (Action::PageUp | Action::PageDown) => {
@@ -8938,6 +8958,222 @@ mod tests {
         app.handle_key(key(KeyCode::End), &mut store, &config);
         app.handle_key(key(KeyCode::Down), &mut store, &config);
         assert_eq!(app.selection, 0);
+    }
+
+    #[test]
+    fn last_and_up_wrap_skip_done_and_cancelled_tasks() {
+        let (_directory, mut store, config) = fixture();
+        let work = store.create_list("Work").unwrap();
+        // Marking a task done stamps the real date, so the held-row check needs it as today.
+        let today = Local::now().date_naive();
+        let day = |offset: i64| Some(today + chrono::Duration::days(offset));
+        // Fixed closing times keep the order within Done today: the latest first.
+        let closed_at = Utc::now() - chrono::Duration::minutes(1);
+        for (seconds, (list_id, title, due, status)) in [
+            (1, "Old report", day(-1), Status::Open),
+            (1, "Pay rent", day(0), Status::Open),
+            (1, "Call the bank", day(1), Status::Open),
+            (1, "Filed taxes", day(0), Status::Done),
+            (1, "Skipped gym", day(0), Status::Cancelled),
+            (work.id, "Work today", day(0), Status::Open),
+            (work.id, "Work done", day(0), Status::Done),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut value = input(list_id, title);
+            value.due = due;
+            let task = store.create_task(&value).unwrap();
+            if status != Status::Open {
+                let at = closed_at + chrono::Duration::seconds(seconds as i64);
+                store
+                    .set_status_at(task.id, task.version, status, today, at)
+                    .unwrap();
+            }
+        }
+        let mut app = App::new(&store, today).unwrap();
+        let title = |app: &App| app.selected_task().unwrap().title.clone();
+        let titles = |app: &App| {
+            app.visible
+                .iter()
+                .map(|task| task.title.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            titles(&app),
+            [
+                "Old report",
+                "Pay rent",
+                "Work today",
+                "Call the bank",
+                "Work done",
+                "Filed taxes",
+                "Skipped gym",
+            ]
+        );
+        for code in [KeyCode::Right, KeyCode::End, KeyCode::Char('G')] {
+            app.selection = 0;
+            app.handle_key(key(code), &mut store, &config);
+            assert_eq!(title(&app), "Call the bank", "{code:?}");
+        }
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        assert_eq!(title(&app), "Work done", "Down still reaches Done today");
+        app.selection = 0;
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        assert_eq!(
+            title(&app),
+            "Call the bank",
+            "Up on the first row wraps to the last open task"
+        );
+        app.selection = 6;
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        assert_eq!(title(&app), "Pay rent", "Down on the last row still wraps");
+        app.handle_key(key(KeyCode::Char('k')), &mut store, &config);
+        assert_eq!(title(&app), "Old report");
+        app.handle_key(key(KeyCode::Char('k')), &mut store, &config);
+        assert_eq!(title(&app), "Call the bank");
+        let last = help_lines(&config, HelpOrigin::Tasks)
+            .iter()
+            .map(|line| line.to_string())
+            .find(|line| line.ends_with(" Select last item, skipping done and cancelled"))
+            .unwrap();
+        assert!(last.starts_with("End / G / "), "{last}");
+
+        // A held row is a closed task, so Last skips it although it shows under Tomorrow.
+        app.handle_key(key(KeyCode::Char(' ')), &mut store, &config);
+        if Local::now().date_naive() != today {
+            // Midnight passed, so the done task left Done today and is no longer held.
+            return;
+        }
+        assert_eq!(app.visible[3].title, "Call the bank");
+        assert_eq!(app.visible[3].status, Status::Done);
+        assert!(app.is_held(app.visible[3].id));
+        app.handle_key(key(KeyCode::End), &mut store, &config);
+        assert_eq!(title(&app), "Work today");
+        app.selection = 0;
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        assert_eq!(title(&app), "Work today");
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        assert_eq!(title(&app), "Call the bank", "Down reaches the held row");
+
+        // The only open task of the Work list is first, so Up keeps it.
+        app.set_view(View::List(work.id), &store).unwrap();
+        assert_eq!(titles(&app), ["Work today", "Work done"]);
+        assert_eq!(title(&app), "Work today");
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        assert_eq!(title(&app), "Work today");
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        assert_eq!(title(&app), "Work done");
+        app.handle_key(key(KeyCode::Right), &mut store, &config);
+        assert_eq!(title(&app), "Work today");
+
+        // Without an open task, Last and the wrap of Up select the last row.
+        app.set_view(View::Planned, &store).unwrap();
+        app.filter = "s:done".into();
+        app.query = Query::parse(&app.filter).unwrap();
+        app.refresh(&store).unwrap();
+        assert!(app.visible.iter().all(|task| task.status == Status::Done));
+        assert_eq!(app.visible.len(), 3);
+        app.selection = 0;
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        assert_eq!(app.selection, 2);
+        app.selection = 0;
+        app.handle_key(key(KeyCode::Char('G')), &mut store, &config);
+        assert_eq!(app.selection, 2);
+
+        // History and Trash end at their last row, whatever its status.
+        app.filter.clear();
+        app.query = Query::parse("").unwrap();
+        app.refresh(&store).unwrap();
+        app.open_history(&store).unwrap();
+        assert_eq!(app.visible.len(), 4);
+        app.handle_key(key(KeyCode::End), &mut store, &config);
+        assert_eq!(app.selection, 3);
+        app.selection = 0;
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        assert_eq!(app.selection, 3);
+        app.set_view(View::Planned, &store).unwrap();
+        for task in store.tasks().unwrap() {
+            if ["Pay rent", "Filed taxes"].contains(&task.title.as_str()) {
+                store.set_deleted(task.id, task.version, true).unwrap();
+            }
+        }
+        app.set_view(View::Trash, &store).unwrap();
+        assert_eq!(titles(&app), ["Pay rent", "Filed taxes"]);
+        app.handle_key(key(KeyCode::End), &mut store, &config);
+        assert_eq!(title(&app), "Filed taxes");
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        assert_eq!(title(&app), "Filed taxes");
+    }
+
+    #[test]
+    fn up_wraps_to_the_last_open_task_without_earlier_and_with_only_earlier() {
+        let (_directory, mut store, config) = fixture();
+        let work = store.create_list("Work").unwrap();
+        let day = |offset: i64| Some(today() + chrono::Duration::days(offset));
+        let closed_at = Utc::now() - chrono::Duration::minutes(1);
+        for (seconds, (list_id, title, due, status)) in [
+            (1, "Pay rent", day(0), Status::Open),
+            (1, "Call the bank", day(1), Status::Open),
+            (1, "Filed taxes", day(0), Status::Done),
+            (work.id, "Older report", day(-2), Status::Open),
+            (work.id, "Old report", day(-1), Status::Open),
+            (work.id, "Work done", day(0), Status::Done),
+            (work.id, "Work skipped", day(0), Status::Cancelled),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut value = input(list_id, title);
+            value.due = due;
+            let task = store.create_task(&value).unwrap();
+            if status != Status::Open {
+                let at = closed_at + chrono::Duration::seconds(seconds as i64);
+                store
+                    .set_status_at(task.id, task.version, status, today(), at)
+                    .unwrap();
+            }
+        }
+        let mut app = App::new(&store, today()).unwrap();
+        let title = |app: &App| app.selected_task().unwrap().title.clone();
+        let titles = |app: &App| {
+            app.visible
+                .iter()
+                .map(|task| task.title.clone())
+                .collect::<Vec<_>>()
+        };
+
+        // Without Earlier, the start task is first, and Up on it wraps past Done today.
+        app.set_view(View::List(1), &store).unwrap();
+        assert_eq!(titles(&app), ["Pay rent", "Call the bank", "Filed taxes"]);
+        assert_eq!(title(&app), "Pay rent");
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        assert_eq!(title(&app), "Call the bank");
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        assert_eq!(title(&app), "Filed taxes");
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        assert_eq!(title(&app), "Pay rent");
+
+        // When only tasks under Earlier are open, the start task is the first closed task
+        // and the end task is above it. Up and Down together still reach every task.
+        app.set_view(View::List(work.id), &store).unwrap();
+        assert_eq!(
+            titles(&app),
+            ["Older report", "Old report", "Work done", "Work skipped"]
+        );
+        app.handle_key(key(KeyCode::Home), &mut store, &config);
+        assert_eq!(title(&app), "Work done");
+        app.handle_key(key(KeyCode::End), &mut store, &config);
+        assert_eq!(title(&app), "Old report");
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        assert_eq!(title(&app), "Old report", "Up on the first task wraps");
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        assert_eq!(title(&app), "Work skipped");
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        assert_eq!(title(&app), "Work done", "Down on the last task wraps");
     }
 
     #[test]

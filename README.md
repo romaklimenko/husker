@@ -219,28 +219,38 @@ Use Ctrl+Left and Ctrl+Right to move by word, Shift with movement keys to
 select text, Ctrl+C to copy the selection, and Ctrl+Z to undo typing.
 The editor heading shows an existing task's ID.
 
-Use Up/Down or `k`/`j` to move through tasks. Up on the first task wraps
-to the last. Right, End, or `G` selects the last task. PageUp and PageDown
-move by one screen.
+Use Up/Down or `k`/`j` to move through tasks. PageUp and PageDown move by
+one screen.
 
 In All tasks and list views, Left, Home, or `g` skips the tasks under
 Earlier and selects the first task after them. Down on the last task wraps
-to that same task. For example, suppose All tasks shows `Old report` under
-Earlier, `Pay rent` under Today, and `Call the bank` under Tomorrow. Press
-Left to select `Pay rent`. Press Right to select `Call the bank`, then Down
-to wrap back to `Pay rent`. Press Up from `Pay rent` to reach `Old report`.
+to that same task. Right, End, or `G` skips the done and cancelled tasks
+at the bottom and selects the last open task. Up on the first task wraps
+to that same task.
+
+For example, suppose All tasks shows `Old report` under Earlier,
+`Pay rent` under Today, `Call the bank` under Tomorrow, and `Filed taxes`
+under Done today. Press Left to select `Pay rent`. Press Right to select
+`Call the bank`. Press Down to reach `Filed taxes`, then Down again to wrap
+back to `Pay rent`. Press Up to reach `Old report`, then Up again to wrap
+to `Call the bank`.
 If every task is under Earlier, Left and Down on the last task select the
-first task.
+first task. If no task is open, for example with the filter `s:done`,
+Right and Up on the first task select the last task.
+
 When Husker starts, when you open a list, and after you type or apply a
-filter, Husker selects that same task for you. It does the same when you
-clear a filter or return to All tasks and the task you had selected is
-gone. A refresh keeps the selected task. See
-[Jump past Earlier to today's tasks](docs/usage.md#jump-past-earlier-to-todays-tasks).
+filter, Husker selects the first task after Earlier for you. It does the
+same when you clear a filter or return to All tasks and the task you had
+selected is gone. A refresh keeps the selected task. See
+[Jump past Earlier to today's tasks](docs/usage.md#jump-past-earlier-to-todays-tasks)
+and [Jump to the last open task](docs/usage.md#jump-to-the-last-open-task).
 
 The same keys work in History and Trash, which have no Earlier heading.
 There, Left, Home, or `g` selects the first task, and Down on the last task
-wraps to the first. In the list pickers, letters type into the picker's
-filter, so use the arrow keys, Home, End, PageUp, and PageDown there.
+wraps to the first. Right, End, or `G` selects the last task, whatever its
+status, and Up on the first task wraps to it. In the list pickers, letters
+type into the picker's filter, so use the arrow keys, Home, End, PageUp,
+and PageDown there.
 Left and Right keep their cursor and scrolling controls in text fields and
 the F4 copy view.
 Ctrl+C quits from a task view, History, or the list picker.

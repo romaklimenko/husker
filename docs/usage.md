@@ -1116,10 +1116,10 @@ Trash:
 
 | Key | Action |
 | --- | --- |
-| Up or `k` | Select the previous item, wrapping from first to last. |
+| Up or `k` | Select the previous item. On the first item, wrap to the item that Right selects. |
 | Down or `j` | Select the next item. On the last item, wrap to the item that Left selects. |
 | Left, Home, or `g` | Select the first item. In All tasks and list views, skip the tasks under Earlier. |
-| Right, End, or `G` | Select the last item. |
+| Right, End, or `G` | Select the last item. In All tasks and list views, skip the done and cancelled tasks. |
 | PageUp or PageDown | Move the selection by one screen without wrapping. |
 | Enter | Edit a task. |
 | `n` | Create a task in All tasks or a list view. |
@@ -1164,11 +1164,18 @@ Earlier, and Down on the last task wraps to the first task after Earlier.
 Husker also selects that task when it starts, when you open a list, and
 when you filter the tasks.
 See [Jump past Earlier to today's tasks](#jump-past-earlier-to-todays-tasks).
+
+In All tasks and list views, Right, End, and `G` skip the done and
+cancelled tasks at the bottom and select the last open task. Up on the
+first task wraps to the same task.
+See [Jump to the last open task](#jump-to-the-last-open-task).
+
 In History and Trash, Left, Home, and `g` select the first task, and Down
-on the last task wraps to the first. For example, in Trash, press End to
-select the last task, then Down to return to the first. The pickers work
-the same way with Left and Home. In the language picker, Home selects
-English and End selects Dansk.
+on the last task wraps to the first. Right, End, and `G` select the last
+task, whatever its status, and Up on the first task wraps to it. For
+example, in Trash, press End to select the last task, then Down to return
+to the first. The pickers work the same way with Left, Home, Right, and
+End. In the language picker, Home selects English and End selects Dansk.
 Press Enter to apply the selected language; moving selection alone does not save it.
 
 Mouse-wheel movement stops at each end. Reordering with Alt+Up, Alt+Down,
@@ -1204,7 +1211,7 @@ For example, All tasks shows these three tasks:
 | Tomorrow | `Call the bank` |
 
 1. Start Husker. `Pay rent` is selected.
-2. Press Right to select `Call the bank`, the last task.
+2. Press Right to select `Call the bank`, the last open task.
 3. Press Down. The selection wraps to `Pay rent` and skips `Old report`.
 4. Press Up. `Old report` is selected, because Up and Down move one row at
    a time.
@@ -1224,8 +1231,10 @@ The same rule covers these cases:
   selected. Press Up to reach the tasks under Earlier.
 - A key you bind to `first` in `config.toml` follows the same rule.
 
-Up on the first task wraps to the last task. PageUp, PageDown, and the
-mouse wheel move through the tasks under Earlier like any other tasks.
+Up on the first task wraps to the last open task, the task that Right
+selects. See [Jump to the last open task](#jump-to-the-last-open-task).
+PageUp, PageDown, and the mouse wheel move through the tasks under Earlier
+like any other tasks.
 
 Husker selects the first task after Earlier for you whenever it has no
 task to keep selected, and after each change to the filter. This table
@@ -1260,6 +1269,68 @@ first item, and Down on the last item wraps to the first.
 Help lists the action of Left, Home, and `g` as
 `Select first item, skipping Earlier`, or
 `Vælg første punkt, spring Tidligere over` in Danish.
+
+### Jump to the last open task
+
+In All tasks and list views, press Right, End, or `G` to select the last
+open task. Done and cancelled tasks follow the open tasks at the bottom of
+the view, under headings such as Done today and Cancelled today. Right
+skips them, so it takes you to the end of the work that is still open.
+Up on the first task wraps to the same task.
+
+For example, All tasks shows these four tasks:
+
+| Heading | Task |
+| --- | --- |
+| Earlier | `Old report`, planned for yesterday |
+| Today | `Pay rent` |
+| Tomorrow | `Call the bank` |
+| Done today | `Filed taxes` |
+
+1. Start Husker. `Pay rent` is selected.
+2. Press Right. `Call the bank` is selected, because it's the last open
+   task.
+3. Press Down. `Filed taxes` is selected, because Up and Down move one row
+   at a time.
+4. Press Down again. The selection wraps to `Pay rent`.
+5. Press Up. `Old report` is selected.
+6. Press Up again. The selection wraps to `Call the bank` and skips
+   `Filed taxes`.
+
+The same rule covers these cases:
+
+- If no task in the view is open, Right selects the last task, and Up on
+  the first task wraps to it. For example, the filter `s:done` shows only
+  done tasks.
+- A task you just marked done or cancelled keeps its row under the same
+  heading until the view changes. Right skips that task, even under Today
+  or Tomorrow, because it's no longer open. For example, select
+  `Call the bank` and press Space. `Call the bank` stays under Tomorrow
+  with a `[x]` marker, and `Pay rent` is selected. Press Down to select
+  `Call the bank` again, then press Right. `Pay rent` is selected, because
+  it's now the last open task.
+  See [Complete, cancel, and restore tasks](#complete-cancel-and-restore-tasks).
+- If the last open task is also the first task, Up keeps it selected.
+  Press Down to reach the done and cancelled tasks.
+- A key you bind to `last` in `config.toml` follows the same rule.
+
+Left works by heading, not by status. For example, if you mark `Pay rent`
+done, its row stays under Today, so Left still selects it until the view
+changes.
+
+To reach the done and cancelled tasks, press Down from the last open task,
+or press PageDown. The mouse wheel also moves through them like any other
+tasks.
+
+History and Trash don't skip done and cancelled tasks. In those views,
+Right, End, and `G` select the last task, whatever its status, and Up on
+the first task wraps to it.
+In the list pickers and the language picker, Right and End select the
+last item, and Up on the first item wraps to it.
+
+Help lists the action of Right, End, and `G` as
+`Select last item, skipping done and cancelled`, or
+`Vælg sidste punkt, spring udførte og annullerede over` in Danish.
 
 ### Use Option+arrows in macOS Terminal
 
@@ -1484,8 +1555,10 @@ husker config --example
 Use `first` and `last` to customize boundary selection. For example,
 `first = ["ctrl+home"]` replaces Home, `g`, and Left. Ctrl+Home then
 follows the same rule as Left: in All tasks and list views, it skips the
-tasks under Earlier. Use `last = []` to disable End, `G`, and Right for
-selecting the last item.
+tasks under Earlier. Likewise, `last = ["ctrl+end"]` replaces End, `G`,
+and Right. Ctrl+End then follows the same rule as Right: in All tasks and
+list views, it skips the done and cancelled tasks. Use `last = []` to
+disable End, `G`, and Right for selecting the last item.
 
 If a custom action already uses `g`, `G`, Home, End, Left, or Right in a selection screen,
 the new defaults can cause a shortcut conflict. For example,
@@ -1649,6 +1722,17 @@ Install the current version from the repository:
 ```text
 cargo install --path . --locked
 ```
+
+Version 0.22.0 changes Right, End, and `G` in All tasks and list views.
+They now skip the done and cancelled tasks at the bottom of the view and
+select the last open task, such as the last task under Tomorrow. Up on the
+first task wraps to that task too. In 0.21.1, Right and Up on the first
+task both selected the last task, which was often under Done today or
+Cancelled today. To reach those tasks, press Down from the last open task,
+or press PageDown. A key you bound to `last` in `config.toml` follows the
+same rule. History, Trash, and the pickers don't change. See
+[Jump to the last open task](#jump-to-the-last-open-task).
+Version 0.22.0 doesn't change the database.
 
 Version 0.21.1 changes which task Husker selects for you in All tasks and
 list views. Husker now selects the first task after Earlier, the same task

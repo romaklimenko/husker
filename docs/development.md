@@ -880,6 +880,27 @@ The script never contacts Azure. The host check in
 the Azure Functions host on your computer. The Azure front end before
 the host and a cold start in Azure stay untested.
 
+## Checks for version 0.22.0
+
+The change that makes Last and the Up wrap select the last open task completed these checks on November 20, 2026, on macOS 27.2.1 with Rust 1.100.0:
+
+| Check | Result |
+| --- | --- |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Unit tests | 402 passed. Two new UI tests cover Right, End, and `G` with tasks under Done today and Cancelled today, Up on the first task under Earlier, Down from the last open task, a held row after it, a list view whose first task is its only open task, the filter `s:done`, History, Trash, a list view without Earlier, and a list view where only tasks under Earlier are open. |
+| Mutation checks | Each of three code paths was undone in turn: Last, the Up wrap, and the view check that keeps History and Trash on their last row. The first new test failed each time. |
+| Integration tests | CLI 9, MCP 8, online 9, sync 8, terminal keys 1, and package 2 passed. |
+| Pseudo-terminal run | The 0.22.0 release executable ran in a Python pseudo-terminal, 100 columns by 30 rows, against a temporary profile with two tasks under Earlier, one each under Today, Tomorrow, and Sometime, one under Done today, and one under Cancelled today. Up from the first Earlier task selected `Someday` under Sometime. Down then reached the done and cancelled tasks and wrapped to `Pay rent`. Right, End, and `G` selected `Someday`. After Space on `Someday`, the held row was skipped, and End and the Up wrap selected `Call the bank`. Help showed `End / G / Right` with `Select last item, skipping done and cancelled`. |
+| Review | An independent code review found no bug. It noted that Home lands below End when only tasks under Earlier are open and tasks are closed today, that the spec contradicted itself for a view with no open task, and two test gaps. The design now records the first case, the spec was fixed, and a new test covers the gaps. The docs review fixed two spec sentences and one scenario. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.22.0. |
+| OpenSpec | `openspec validate jump-to-last-open-task --strict` passed. |
+
+Not verified:
+
+- Windows and Linux.
+- The Help label in History, which names the skip although History holds only closed tasks.
+
 ## Checks for version 0.21.1
 
 The change that selects today's first task when no task is known completed these checks on November 19, 2026, on Windows 11 with Rust 1.91.1:
