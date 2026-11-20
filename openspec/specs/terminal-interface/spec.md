@@ -14,7 +14,7 @@ Husker SHALL provide the following default shortcuts in task navigation, History
 | Up or `k` | Select the previous task |
 | Down or `j` | Select the next task |
 | Left, Home, or `g` | Select the first visible task, skipping the rows under Earlier |
-| Right, End, or `G` | Select the last visible task |
+| Right, End, or `G` | Select the last visible task. In All tasks and list views, skip done and cancelled tasks while any task is open |
 | PageUp or PageDown | Move the selection one displayed page up or down |
 | `l` | Open the list picker |
 | `h` | Open History from ordinary task navigation, or return from History |
@@ -1454,14 +1454,16 @@ Husker SHALL wrap configured Up and Down selection and support configured First 
 | Move-task picker | Ordinary destination lists in their existing order. |
 | Language picker | English, then Dansk. |
 
-Up on the first item selects the last item. Down on the last item selects the start item.
-First selects the start item and Last selects the last item without changing result order or applying a picker choice.
+Up on the first item selects the end item. Down on the last item selects the start item.
+First selects the start item and Last selects the end item without changing result order or applying a picker choice.
 The ordinary task view is All tasks or a list view. Its start item is the first task whose row is not under the Earlier heading.
 When every visible task in the ordinary task view is under Earlier, its start item is the first task.
-In every other mode, the start item is the first item. History and Trash have no Earlier heading.
 A row is under Earlier when the nearest heading above it is Earlier, or Tidligere in Danish. A held row counts under the heading it shows. The `planning-search` spec owns the date groups.
-When the last item is also the start item, Down on it keeps it selected.
-Up and Down reach every item. When tasks under Earlier precede the start item, Up from the start item selects the last task under Earlier.
+The end item of the ordinary task view is the last visible task whose status is open. While any visible task is open, a done or cancelled task is never the end item, even in a held row.
+When no visible task in the ordinary task view is open, its end item is the last task.
+In every other mode, the start item is the first item and the end item is the last item. History and Trash have no Earlier heading.
+When the last item is also the start item, Down on it keeps it selected. When the first item is also the end item, Up on it keeps it selected.
+Up and Down reach every item. When tasks under Earlier precede the start item, Up from the start item selects the last task under Earlier. When done or cancelled tasks follow the end item, Down from the end item selects the first of them.
 Default keys are Up or `k` and Down or `j`.
 First defaults to Home, `g`, and Left. Last defaults to End, `G`, and Right.
 Configured PageUp and PageDown move the selection by the number of selectable rows last displayed in that selection area, not counting heading rows, clamped at the first or last item without wrapping. They are unavailable in the language picker.
@@ -1484,7 +1486,7 @@ Left and Right retain text-cursor movement in text inputs and horizontal scrolli
 
 #### Scenario: Jump through a long task view
 
-- **WHEN** a task view with no task under Earlier has more rows than fit on screen and the user invokes Last then First
+- **WHEN** a task view with no task under Earlier and no done or cancelled task has more rows than fit on screen and the user invokes Last then First
 - **THEN** the last visible-result task and then the first visible-result task are selected and scrolled into view
 
 #### Scenario: Skip Earlier with First and with Down from the last task
@@ -1515,10 +1517,39 @@ Left and Right retain text-cursor movement in text inputs and horizontal scrolli
 - **WHEN** All tasks shows two tasks under Earlier and one task under Today, and the task under Today is selected
 - **THEN** Down keeps the task under Today selected
 
+#### Scenario: Skip closed tasks with Last and with Up from the first task
+
+- **WHEN** All tasks shows `Old report` under Earlier, `Pay rent` under Today, `Call the bank` under Tomorrow, and `Filed taxes` under Done today, and `Old report` is selected
+- **THEN** Up selects `Call the bank`
+- **AND** Down then selects `Filed taxes`, and Right then selects `Call the bank`
+
+#### Scenario: Use the last task when no task is open
+
+- **WHEN** the filter `s:done` shows three done tasks and the first is selected
+- **THEN** Up selects the third task, and `G` keeps it selected
+
+#### Scenario: Skip a held row with Last
+
+- **WHEN** All tasks shows `Pay rent` and `Call mom` under Today and nothing else, and the user marks `Call mom` done
+- **THEN** the done task stays held under Today
+- **AND** Down selects `Call mom`, and End then selects `Pay rent`
+
+#### Scenario: Place the end item above the start item
+
+- **WHEN** a list view shows `Older report` and `Old report` under Earlier, and `Work done` under Done today
+- **THEN** Home selects `Work done` and End selects `Old report`
+- **AND** Up on `Older report` selects `Old report`, and Down on `Work done` keeps it selected
+
+#### Scenario: Keep the first task when it is the end item
+
+- **WHEN** a list view shows one task under Today and two tasks under Done today, and the task under Today is selected
+- **THEN** Up keeps the task under Today selected
+
 #### Scenario: Wrap History and Trash
 
 - **WHEN** the last visible task is selected in History or Trash and the user invokes Down
 - **THEN** the first visible task becomes selected without changing any task data
+- **AND** Up then selects the last visible task, even when it is done or cancelled
 
 #### Scenario: Keep empty and single-item results stable
 
