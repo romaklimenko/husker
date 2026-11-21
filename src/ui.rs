@@ -215,38 +215,22 @@ fn navigation_selection(current: usize, count: usize, action: Action) -> usize {
     match action {
         Action::First => 0,
         Action::Last => last,
-        Action::Up => {
-            if current == 0 {
-                last
-            } else {
-                current - 1
-            }
-        }
-        Action::Down => {
-            if current == last {
-                0
-            } else {
-                current + 1
-            }
-        }
+        Action::Up => current.saturating_sub(1),
+        Action::Down => (current + 1).min(last),
         _ => current,
     }
 }
 
-/// Moves the selection of a task view. First, and Down on the last row, select `start`
-/// instead of the first row. Last, and Up on the first row, select `end` instead of the
-/// last row. Other actions move as `navigation_selection` does.
+/// Moves the selection of a task view. First selects `start` instead of the first row,
+/// and Last selects `end` instead of the last row. Up and Down move as
+/// `navigation_selection` does and stop at the first and last row.
 fn task_selection(current: usize, count: usize, start: usize, end: usize, action: Action) -> usize {
     if count == 0 {
         return 0;
     }
-    let start = start.min(count - 1);
-    let end = end.min(count - 1);
     match action {
-        Action::First => start,
-        Action::Last => end,
-        Action::Down if current >= count - 1 => start,
-        Action::Up if current == 0 => end,
+        Action::First => start.min(count - 1),
+        Action::Last => end.min(count - 1),
         _ => navigation_selection(current, count, action),
     }
 }
@@ -1516,7 +1500,7 @@ impl App {
         self.visible.len()
     }
 
-    /// The row that First selects and that Down wraps to: in All tasks and list views,
+    /// The row that First selects: in All tasks and list views,
     /// the first row that is not under the Earlier heading. A held row counts under the
     /// heading it shows. Without such a row, and in History and Trash, it is row 0.
     fn first_row_from_today(&self) -> usize {
@@ -1536,7 +1520,7 @@ impl App {
         .map_or(0, |row| row.index)
     }
 
-    /// The row that Last selects and that Up wraps to: in All tasks and list views, the
+    /// The row that Last selects: in All tasks and list views, the
     /// last open task. A done or cancelled task is skipped, even in a held row. Without an
     /// open task, and in History and Trash, it is the last row.
     fn last_open_row(&self) -> usize {
@@ -8509,7 +8493,7 @@ mod tests {
     }
 
     #[test]
-    fn keyboard_wrap_and_jumps_follow_filtered_task_rows_without_writing() {
+    fn keyboard_steps_and_jumps_follow_filtered_task_rows_without_writing() {
         let (directory, mut store, config) = fixture();
         let work = store.create_list("Work").unwrap();
         for category in ["open", "history", "trash"] {
@@ -8560,20 +8544,22 @@ mod tests {
             assert!(ids.len() >= 6);
             let last = ids.len() - 1;
             // All tasks and the Work list show `Keep open 0` and `Keep open 6` under
-            // Earlier. First and the wrap of Down skip them. History and Trash have no
-            // Earlier heading.
-            let start = if matches!(view, View::Planned | View::List(_)) {
+            // Earlier. First skips them. History and Trash have no Earlier heading.
+            let start: usize = if matches!(view, View::Planned | View::List(_)) {
                 2
             } else {
                 0
             };
             for (code, expected) in [
-                (KeyCode::Up, last),
-                (KeyCode::Down, start),
-                (KeyCode::Up, start.checked_sub(1).unwrap_or(last)),
-                (KeyCode::Char('k'), start.checked_sub(2).unwrap_or(last - 1)),
+                (KeyCode::Up, 0),
+                (KeyCode::Down, 1),
+                (KeyCode::Left, start),
+                (KeyCode::Up, start.saturating_sub(1)),
+                (KeyCode::Char('k'), start.saturating_sub(2)),
+                (KeyCode::Char('k'), 0),
                 (KeyCode::Char('G'), last),
-                (KeyCode::Char('j'), start),
+                (KeyCode::Char('j'), last),
+                (KeyCode::Down, last),
                 (KeyCode::End, last),
                 (KeyCode::Char('g'), start),
                 (KeyCode::Char('G'), last),
@@ -8802,7 +8788,7 @@ mod tests {
     }
 
     #[test]
-    fn first_and_down_wrap_skip_tasks_under_earlier() {
+    fn first_skips_tasks_under_earlier_and_down_stops_on_the_last_row() {
         let (_directory, mut store, config) = fixture();
         let work = store.create_list("Work").unwrap();
         // Marking a task done stamps the real date, so the held-row check needs it as today.
@@ -8853,20 +8839,12 @@ mod tests {
         app.handle_key(key(KeyCode::End), &mut store, &config);
         assert_eq!(title(&app), "Work sometime");
         app.handle_key(key(KeyCode::Down), &mut store, &config);
-        assert_eq!(
-            title(&app),
-            "Pay rent",
-            "Down on the last row wraps to today"
-        );
+        assert_eq!(title(&app), "Work sometime", "Down stops on the last row");
         app.selection = 0;
         app.handle_key(key(KeyCode::Up), &mut store, &config);
-        assert_eq!(
-            title(&app),
-            "Work sometime",
-            "Up on the first row still wraps"
-        );
+        assert_eq!(title(&app), "Work earlier", "Up stops on the first row");
         app.handle_key(key(KeyCode::Char('j')), &mut store, &config);
-        assert_eq!(title(&app), "Pay rent");
+        assert_eq!(title(&app), "Two days ago");
         let first = help_lines(&config, HelpOrigin::Tasks)
             .iter()
             .map(|line| line.to_string())
@@ -8880,7 +8858,7 @@ mod tests {
         app.selection = 0;
         app.handle_key(key(KeyCode::Home), &mut store, &config);
         assert_eq!(title(&app), "Work sometime");
-        // The start row is also the last row, so Down keeps it.
+        // The start row is also the last row, and Down keeps it.
         app.handle_key(key(KeyCode::Down), &mut store, &config);
         assert_eq!(title(&app), "Work sometime");
         app.handle_key(key(KeyCode::Up), &mut store, &config);
@@ -8894,10 +8872,11 @@ mod tests {
         assert_eq!(app.visible.len(), 4);
         app.handle_key(key(KeyCode::End), &mut store, &config);
         app.handle_key(key(KeyCode::Down), &mut store, &config);
-        assert_eq!(title(&app), "Work earlier");
-        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        assert_eq!(title(&app), "Work later", "Down stops on the last row");
         app.handle_key(key(KeyCode::Char('g')), &mut store, &config);
         assert_eq!(title(&app), "Work earlier");
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        assert_eq!(title(&app), "Work earlier", "Up stops on the first row");
 
         // A held row keeps the heading it showed, so a just-closed Earlier task is skipped.
         app.filter.clear();
@@ -8957,11 +8936,11 @@ mod tests {
         assert_eq!(app.selection, 0);
         app.handle_key(key(KeyCode::End), &mut store, &config);
         app.handle_key(key(KeyCode::Down), &mut store, &config);
-        assert_eq!(app.selection, 0);
+        assert_eq!(app.selection, 4);
     }
 
     #[test]
-    fn last_and_up_wrap_skip_done_and_cancelled_tasks() {
+    fn last_skips_done_and_cancelled_tasks_and_up_stops_on_the_first_row() {
         let (_directory, mut store, config) = fixture();
         let work = store.create_list("Work").unwrap();
         // Marking a task done stamps the real date, so the held-row check needs it as today.
@@ -9020,17 +8999,13 @@ mod tests {
         assert_eq!(title(&app), "Work done", "Down still reaches Done today");
         app.selection = 0;
         app.handle_key(key(KeyCode::Up), &mut store, &config);
-        assert_eq!(
-            title(&app),
-            "Call the bank",
-            "Up on the first row wraps to the last open task"
-        );
+        assert_eq!(title(&app), "Old report", "Up stops on the first row");
         app.selection = 6;
         app.handle_key(key(KeyCode::Down), &mut store, &config);
-        assert_eq!(title(&app), "Pay rent", "Down on the last row still wraps");
+        assert_eq!(title(&app), "Skipped gym", "Down stops on the last row");
         app.handle_key(key(KeyCode::Char('k')), &mut store, &config);
-        assert_eq!(title(&app), "Old report");
-        app.handle_key(key(KeyCode::Char('k')), &mut store, &config);
+        assert_eq!(title(&app), "Filed taxes");
+        app.handle_key(key(KeyCode::Right), &mut store, &config);
         assert_eq!(title(&app), "Call the bank");
         let last = help_lines(&config, HelpOrigin::Tasks)
             .iter()
@@ -9050,13 +9025,10 @@ mod tests {
         assert!(app.is_held(app.visible[3].id));
         app.handle_key(key(KeyCode::End), &mut store, &config);
         assert_eq!(title(&app), "Work today");
-        app.selection = 0;
-        app.handle_key(key(KeyCode::Up), &mut store, &config);
-        assert_eq!(title(&app), "Work today");
         app.handle_key(key(KeyCode::Down), &mut store, &config);
         assert_eq!(title(&app), "Call the bank", "Down reaches the held row");
 
-        // The only open task of the Work list is first, so Up keeps it.
+        // The only open task of the Work list is first, and Up keeps it.
         app.set_view(View::List(work.id), &store).unwrap();
         assert_eq!(titles(&app), ["Work today", "Work done"]);
         assert_eq!(title(&app), "Work today");
@@ -9067,7 +9039,7 @@ mod tests {
         app.handle_key(key(KeyCode::Right), &mut store, &config);
         assert_eq!(title(&app), "Work today");
 
-        // Without an open task, Last and the wrap of Up select the last row.
+        // Without an open task, Last selects the last row.
         app.set_view(View::Planned, &store).unwrap();
         app.filter = "s:done".into();
         app.query = Query::parse(&app.filter).unwrap();
@@ -9076,9 +9048,10 @@ mod tests {
         assert_eq!(app.visible.len(), 3);
         app.selection = 0;
         app.handle_key(key(KeyCode::Up), &mut store, &config);
-        assert_eq!(app.selection, 2);
-        app.selection = 0;
+        assert_eq!(app.selection, 0);
         app.handle_key(key(KeyCode::Char('G')), &mut store, &config);
+        assert_eq!(app.selection, 2);
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
         assert_eq!(app.selection, 2);
 
         // History and Trash end at their last row, whatever its status.
@@ -9089,9 +9062,11 @@ mod tests {
         assert_eq!(app.visible.len(), 4);
         app.handle_key(key(KeyCode::End), &mut store, &config);
         assert_eq!(app.selection, 3);
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        assert_eq!(app.selection, 3);
         app.selection = 0;
         app.handle_key(key(KeyCode::Up), &mut store, &config);
-        assert_eq!(app.selection, 3);
+        assert_eq!(app.selection, 0);
         app.set_view(View::Planned, &store).unwrap();
         for task in store.tasks().unwrap() {
             if ["Pay rent", "Filed taxes"].contains(&task.title.as_str()) {
@@ -9103,12 +9078,14 @@ mod tests {
         app.handle_key(key(KeyCode::End), &mut store, &config);
         assert_eq!(title(&app), "Filed taxes");
         app.handle_key(key(KeyCode::Down), &mut store, &config);
-        app.handle_key(key(KeyCode::Up), &mut store, &config);
         assert_eq!(title(&app), "Filed taxes");
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        assert_eq!(title(&app), "Pay rent");
     }
 
     #[test]
-    fn up_wraps_to_the_last_open_task_without_earlier_and_with_only_earlier() {
+    fn up_and_down_stop_at_the_ends_without_earlier_and_with_only_earlier() {
         let (_directory, mut store, config) = fixture();
         let work = store.create_list("Work").unwrap();
         let day = |offset: i64| Some(today() + chrono::Duration::days(offset));
@@ -9144,19 +9121,22 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
-        // Without Earlier, the start task is first, and Up on it wraps past Done today.
+        // Without Earlier, the start task is first, and Up keeps it.
         app.set_view(View::List(1), &store).unwrap();
         assert_eq!(titles(&app), ["Pay rent", "Call the bank", "Filed taxes"]);
         assert_eq!(title(&app), "Pay rent");
         app.handle_key(key(KeyCode::Up), &mut store, &config);
-        assert_eq!(title(&app), "Call the bank");
+        assert_eq!(title(&app), "Pay rent");
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
         app.handle_key(key(KeyCode::Down), &mut store, &config);
         assert_eq!(title(&app), "Filed taxes");
         app.handle_key(key(KeyCode::Down), &mut store, &config);
-        assert_eq!(title(&app), "Pay rent");
+        assert_eq!(title(&app), "Filed taxes");
+        app.handle_key(key(KeyCode::Right), &mut store, &config);
+        assert_eq!(title(&app), "Call the bank");
 
         // When only tasks under Earlier are open, the start task is the first closed task
-        // and the end task is above it. Up and Down together still reach every task.
+        // and the end task is above it. Up and Down still reach every task.
         app.set_view(View::List(work.id), &store).unwrap();
         assert_eq!(
             titles(&app),
@@ -9168,16 +9148,56 @@ mod tests {
         assert_eq!(title(&app), "Old report");
         app.handle_key(key(KeyCode::Up), &mut store, &config);
         app.handle_key(key(KeyCode::Up), &mut store, &config);
-        assert_eq!(title(&app), "Old report", "Up on the first task wraps");
+        assert_eq!(title(&app), "Older report", "Up stops on the first task");
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
         app.handle_key(key(KeyCode::Down), &mut store, &config);
         app.handle_key(key(KeyCode::Down), &mut store, &config);
         assert_eq!(title(&app), "Work skipped");
         app.handle_key(key(KeyCode::Down), &mut store, &config);
-        assert_eq!(title(&app), "Work done", "Down on the last task wraps");
+        assert_eq!(title(&app), "Work skipped", "Down stops on the last task");
     }
 
     #[test]
-    fn navigation_picker_wraps_virtual_endpoints_and_cancel_preserves_task_state() {
+    fn up_stops_on_the_first_of_six_tasks_under_earlier() {
+        let (_directory, mut store, config) = fixture();
+        let day = |offset: i64| Some(today() + chrono::Duration::days(offset));
+        for (title, due) in [
+            ("Earlier 1", day(-6)),
+            ("Earlier 2", day(-5)),
+            ("Earlier 3", day(-4)),
+            ("Earlier 4", day(-3)),
+            ("Earlier 5", day(-2)),
+            ("Earlier 6", day(-1)),
+            ("Pay rent", day(0)),
+            ("Someday", None),
+        ] {
+            let mut value = input(1, title);
+            value.due = due;
+            store.create_task(&value).unwrap();
+        }
+        let mut app = App::new(&store, today()).unwrap();
+        let title = |app: &App| app.selected_task().unwrap().title.clone();
+        assert_eq!(title(&app), "Pay rent");
+        for _ in 0..6 {
+            app.handle_key(key(KeyCode::Up), &mut store, &config);
+        }
+        assert_eq!(title(&app), "Earlier 1");
+        app.handle_key(key(KeyCode::Up), &mut store, &config);
+        assert_eq!(
+            title(&app),
+            "Earlier 1",
+            "a seventh Up keeps the first task"
+        );
+        app.handle_key(key(KeyCode::Left), &mut store, &config);
+        assert_eq!(title(&app), "Pay rent");
+        app.handle_key(key(KeyCode::Right), &mut store, &config);
+        assert_eq!(title(&app), "Someday");
+        app.handle_key(key(KeyCode::Down), &mut store, &config);
+        assert_eq!(title(&app), "Someday", "Down keeps the last task");
+    }
+
+    #[test]
+    fn navigation_picker_stops_at_virtual_endpoints_and_cancel_preserves_task_state() {
         let (_directory, mut store, config) = fixture();
         for index in 0..25 {
             store.create_list(&format!("List {index}")).unwrap();
@@ -9196,8 +9216,10 @@ mod tests {
         let scroll = app.list_state;
         app.open_picker();
         for (code, identity) in [
-            (KeyCode::Up, RowIdentity::Trash),
-            (KeyCode::Down, RowIdentity::AllTasks),
+            (KeyCode::Up, RowIdentity::AllTasks),
+            (KeyCode::End, RowIdentity::Trash),
+            (KeyCode::Down, RowIdentity::Trash),
+            (KeyCode::Home, RowIdentity::AllTasks),
             (KeyCode::End, RowIdentity::Trash),
             (KeyCode::Home, RowIdentity::AllTasks),
             (KeyCode::Right, RowIdentity::Trash),
@@ -9238,7 +9260,7 @@ mod tests {
     }
 
     #[test]
-    fn editor_picker_wraps_ordinary_rows_and_handles_singleton_and_empty_choices() {
+    fn editor_picker_stops_at_ordinary_rows_and_handles_singleton_and_empty_choices() {
         let (directory, mut store, config) = fixture();
         let task = store.create_task(&input(1, "Original")).unwrap();
         let mut app = App::new(&store, today()).unwrap();
@@ -9263,9 +9285,10 @@ mod tests {
         app.open_editor_list_picker(&store).unwrap();
         let last = app.lists.len() - 1;
         for (code, expected) in [
-            (KeyCode::Up, last),
-            (KeyCode::Down, 0),
+            (KeyCode::Up, 0),
+            (KeyCode::Down, 1),
             (KeyCode::End, last),
+            (KeyCode::Down, last),
             (KeyCode::Home, 0),
             (KeyCode::Right, last),
             (KeyCode::Left, 0),
@@ -9314,7 +9337,7 @@ mod tests {
     }
 
     #[test]
-    fn language_wrap_and_jumps_do_not_apply_until_confirmed() {
+    fn language_steps_and_jumps_do_not_apply_until_confirmed() {
         let (directory, mut store, mut config) = fixture();
         let task = store.create_task(&input(1, "Original")).unwrap();
         let mut app = App::new(&store, today()).unwrap();
@@ -9326,12 +9349,14 @@ mod tests {
         let draft = editor.clone();
         app.handle_key(key(KeyCode::F(3)), &mut store, &config);
         for (code, expected) in [
-            (KeyCode::Up, Language::Da),
             (KeyCode::Up, Language::En),
             (KeyCode::Down, Language::Da),
-            (KeyCode::Down, Language::En),
-            (KeyCode::Char('k'), Language::Da),
-            (KeyCode::Char('j'), Language::En),
+            (KeyCode::Down, Language::Da),
+            (KeyCode::Up, Language::En),
+            (KeyCode::Char('j'), Language::Da),
+            (KeyCode::Char('j'), Language::Da),
+            (KeyCode::Char('k'), Language::En),
+            (KeyCode::Char('k'), Language::En),
             (KeyCode::End, Language::Da),
             (KeyCode::Home, Language::En),
             (KeyCode::Char('G'), Language::Da),

@@ -880,6 +880,27 @@ The script never contacts Azure. The host check in
 the Azure Functions host on your computer. The Azure front end before
 the host and a cold start in Azure stay untested.
 
+## Checks for version 0.23.0
+
+The change that makes Up and Down stop at the ends of every selection list completed these checks on November 21, 2026, on macOS 27.2.1 with Rust 1.100.0:
+
+| Check | Result |
+| --- | --- |
+| Formatting | `cargo fmt --check` passed. |
+| Clippy | All targets passed with warnings denied. |
+| Unit tests | 403 passed. A new UI test covers six tasks under Earlier: six Up presses from `Pay rent` reach the first Earlier task, a seventh keeps it, Left returns to `Pay rent`, Right selects `Someday`, and Down keeps it. Seven existing tests now expect Up on the first item and Down on the last item to keep the selection, in All tasks, a list view, History, Trash, the navigation picker, the editor picker, and the language picker. |
+| Mutation check | With the 0.22.0 wrap restored in `navigation_selection` and `task_selection`, the new test and the seven changed tests failed. |
+| Integration tests | CLI 9, MCP 8, online 9, sync 8, terminal keys 1, and package 2 passed. |
+| Hang in the first run | The first `cargo test --all-targets` run hung in four `sync::worker` tests, with every thread waiting on the global SQLite mutex. The rerun passed in seconds. The change does not touch sync. |
+| Pseudo-terminal run | The 0.23.0 release executable ran in a Python pseudo-terminal, 90 columns by 30 rows, against a temporary profile with six tasks under Earlier, one each under Today and Sometime, and one under Done today. Six Up presses from `Pay rent` reached `Earlier 1`, and two more kept it. Left selected `Pay rent` and Right `Someday`. Down reached `Filed taxes`, and three more kept it. In the list picker, Up kept All tasks, End selected Trash, and Down kept Trash. In the language picker, Up kept English, Down selected Dansk, and a second Down kept Dansk. |
+| Release build | `cargo build --release --locked` passed. The release executable reports version 0.23.0. |
+| OpenSpec | `openspec validate stop-at-list-ends --strict` passed. |
+
+Not verified:
+
+- Windows and Linux.
+- An independent code review. It was interrupted before it reported.
+
 ## Checks for version 0.22.0
 
 The change that makes Last and the Up wrap select the last open task completed these checks on November 20, 2026, on macOS 27.2.1 with Rust 1.100.0:

@@ -383,7 +383,7 @@ These keys work in the list picker:
 | --- | --- |
 | Letters, digits, Space, and other characters | Type into the picker's filter. |
 | Backspace | Remove the last character of the filter. |
-| Up or Down | Select the previous or next entry. |
+| Up or Down | Select the previous or next entry. Stop at the first and last entry. |
 | Left or Home | Select the first entry. |
 | Right or End | Select the last entry. |
 | PageUp or PageDown | Move the selection by one screen. |
@@ -1116,11 +1116,11 @@ Trash:
 
 | Key | Action |
 | --- | --- |
-| Up or `k` | Select the previous item. On the first item, wrap to the item that Right selects. |
-| Down or `j` | Select the next item. On the last item, wrap to the item that Left selects. |
+| Up or `k` | Select the previous item. On the first item, keep it selected. |
+| Down or `j` | Select the next item. On the last item, keep it selected. |
 | Left, Home, or `g` | Select the first item. In All tasks and list views, skip the tasks under Earlier. |
 | Right, End, or `G` | Select the last item. In All tasks and list views, skip the done and cancelled tasks. |
-| PageUp or PageDown | Move the selection by one screen without wrapping. |
+| PageUp or PageDown | Move the selection by one screen. Stop at the first or last item. |
 | Enter | Edit a task. |
 | `n` | Create a task in All tasks or a list view. |
 | `r` | Refresh database contents in All tasks and list views. Restore a task in Trash, or reopen a task in History. |
@@ -1150,33 +1150,34 @@ The pickers for the editor's List field and for moving a task use the
 arrow keys, Home, End, PageUp, PageDown, Enter, Esc, F1, and Backspace in
 the same way.
 
-Wrapping and first/last jumps work in task views, including History and
-Trash, and in the list pickers and the language picker. PageUp and PageDown
-work in the same places except the language picker. In the list pickers,
-use Up, Down, Home, End, Left, and Right, because `k`, `j`, `g`, and `G`
-type text there. With a filter
+Up, Down, and the first and last jumps work in task views, including
+History and Trash, and in the list pickers and the language picker. Up and
+Down move one item at a time and stop at each end. Up on the first item and
+Down on the last item keep that item selected. To jump to the start or the
+end, press Left or Right, as the next paragraphs describe. PageUp and
+PageDown work in the same places except the language picker. In the list
+pickers, use Up, Down, Home, End, Left, and Right, because `k`, `j`, `g`,
+and `G` type text there. With a filter
 applied, the keys move only through matching tasks. Group headings are
 skipped, and the selected item scrolls into view. An empty result stays empty.
 A result with one item keeps that item selected.
 
 In All tasks and list views, Left, Home, and `g` skip the tasks under
-Earlier, and Down on the last task wraps to the first task after Earlier.
-Husker also selects that task when it starts, when you open a list, and
-when you filter the tasks.
+Earlier and select the first task after them. Husker also selects that
+task when it starts, when you open a list, and when you filter the tasks.
 See [Jump past Earlier to today's tasks](#jump-past-earlier-to-todays-tasks).
 
 In All tasks and list views, Right, End, and `G` skip the done and
-cancelled tasks at the bottom and select the last open task. Up on the
-first task wraps to the same task.
+cancelled tasks at the bottom and select the last open task.
 See [Jump to the last open task](#jump-to-the-last-open-task).
 
-In History and Trash, Left, Home, and `g` select the first task, and Down
-on the last task wraps to the first. Right, End, and `G` select the last
-task, whatever its status, and Up on the first task wraps to it. For
-example, in Trash, press End to select the last task, then Down to return
-to the first. The pickers work the same way with Left, Home, Right, and
-End. In the language picker, Home selects English and End selects Dansk.
-Press Enter to apply the selected language; moving selection alone does not save it.
+In History and Trash, Left, Home, and `g` select the first task. Right,
+End, and `G` select the last task, whatever its status. For example, in
+Trash, press End to select the last task. Press Down, and the last task
+stays selected. Press Home to return to the first task. The pickers work
+the same way with Left, Home, Right, and End. In the language picker, Up
+and Home select English, and Down and End select Dansk. Press Enter to
+apply the selected language. Moving the selection alone doesn't save it.
 
 Mouse-wheel movement stops at each end. Reordering with Alt+Up, Alt+Down,
 `K`, or `J` also stops at the allowed boundary. In text fields, Left/Right
@@ -1198,9 +1199,8 @@ Backspace edits text in an input field. It does not delete a task.
 In All tasks and list views, press Left, Home, or `g` to select the first
 task after the Earlier heading. Earlier, shown as Tidligere in Danish,
 holds the open tasks planned before today. Left therefore takes you to the
-start of today's work, even while older tasks are still open. Down on the
-last task wraps to the same task. Husker also selects this task for you
-when it starts.
+start of today's work, even while older tasks are still open. Husker also
+selects this task for you when it starts.
 
 For example, All tasks shows these three tasks:
 
@@ -1211,28 +1211,40 @@ For example, All tasks shows these three tasks:
 | Tomorrow | `Call the bank` |
 
 1. Start Husker. `Pay rent` is selected.
-2. Press Right to select `Call the bank`, the last open task.
-3. Press Down. The selection wraps to `Pay rent` and skips `Old report`.
-4. Press Up. `Old report` is selected, because Up and Down move one row at
+2. Press Up. `Old report` is selected, because Up and Down move one row at
    a time.
-5. Press Left. `Pay rent` is selected again.
+3. Press Up again. `Old report` stays selected, because it's the first
+   task.
+4. Press Left. `Pay rent` is selected again.
+5. Press Right to select `Call the bank`, the last open task.
+6. Press Down. `Call the bank` stays selected, because it's the last task.
+7. Press Left. `Pay rent` is selected again.
 
 The same rule covers these cases:
 
 - If nothing is planned for today, Left selects the first task under the
   next heading, such as Tomorrow, a date, Sometime, or Done today.
-- If every task in the view is under Earlier, Left selects the first task,
-  and Down on the last task wraps to it. For example, the filter
-  `due:overdue` shows only tasks under Earlier.
+- If every task in the view is under Earlier, Left selects the first task.
+  For example, the filter `due:overdue` shows only tasks under Earlier.
 - A task you just marked done or cancelled keeps its row under the same
   heading until the view changes. If that heading is Earlier, Left still
   skips the task. See [Complete, cancel, and restore tasks](#complete-cancel-and-restore-tasks).
-- If the first task after Earlier is also the last task, Down keeps it
-  selected. Press Up to reach the tasks under Earlier.
 - A key you bind to `first` in `config.toml` follows the same rule.
 
-Up on the first task wraps to the last open task, the task that Right
-selects. See [Jump to the last open task](#jump-to-the-last-open-task).
+Because Up stops at the first task, you can walk up through a long Earlier
+group and stop at its oldest task. Tasks under Earlier are sorted by
+planned date, so the first task under Earlier is the one planned furthest
+back. For example, All tasks shows six tasks under Earlier, `Pay rent`
+under Today, and `Someday` under Sometime.
+
+1. Start Husker. `Pay rent` is selected.
+2. Press Up six times. Each press selects the task above. After the sixth
+   press, the first task under Earlier is selected.
+3. Press Up again. The first task under Earlier stays selected.
+4. Press Left. `Pay rent` is selected again.
+5. Press Right. `Someday` is selected, because it's the last open task.
+   See [Jump to the last open task](#jump-to-the-last-open-task).
+
 PageUp, PageDown, and the mouse wheel move through the tasks under Earlier
 like any other tasks.
 
@@ -1261,10 +1273,10 @@ To reach a task under Earlier from the first task after Earlier, press Up
 or PageUp.
 
 History and Trash have no Earlier heading. In those views, Left, Home, and
-`g` select the first task, and Down on the last task wraps to the first.
-Opening History or Trash also selects the first task.
+`g` select the first task. Opening History or Trash also selects the first
+task.
 In the list pickers and the language picker, Left and Home select the
-first item, and Down on the last item wraps to the first.
+first item.
 
 Help lists the action of Left, Home, and `g` as
 `Select first item, skipping Earlier`, or
@@ -1276,7 +1288,6 @@ In All tasks and list views, press Right, End, or `G` to select the last
 open task. Done and cancelled tasks follow the open tasks at the bottom of
 the view, under headings such as Done today and Cancelled today. Right
 skips them, so it takes you to the end of the work that is still open.
-Up on the first task wraps to the same task.
 
 For example, All tasks shows these four tasks:
 
@@ -1292,16 +1303,14 @@ For example, All tasks shows these four tasks:
    task.
 3. Press Down. `Filed taxes` is selected, because Up and Down move one row
    at a time.
-4. Press Down again. The selection wraps to `Pay rent`.
-5. Press Up. `Old report` is selected.
-6. Press Up again. The selection wraps to `Call the bank` and skips
-   `Filed taxes`.
+4. Press Down again. `Filed taxes` stays selected, because it's the last
+   task.
+5. Press Right. `Call the bank` is selected again.
 
 The same rule covers these cases:
 
-- If no task in the view is open, Right selects the last task, and Up on
-  the first task wraps to it. For example, the filter `s:done` shows only
-  done tasks.
+- If no task in the view is open, Right selects the last task. For
+  example, the filter `s:done` shows only done tasks.
 - A task you just marked done or cancelled keeps its row under the same
   heading until the view changes. Right skips that task, even under Today
   or Tomorrow, because it's no longer open. For example, select
@@ -1310,8 +1319,6 @@ The same rule covers these cases:
   `Call the bank` again, then press Right. `Pay rent` is selected, because
   it's now the last open task.
   See [Complete, cancel, and restore tasks](#complete-cancel-and-restore-tasks).
-- If the last open task is also the first task, Up keeps it selected.
-  Press Down to reach the done and cancelled tasks.
 - A key you bind to `last` in `config.toml` follows the same rule.
 
 Left works by heading, not by status. For example, if you mark `Pay rent`
@@ -1323,10 +1330,9 @@ or press PageDown. The mouse wheel also moves through them like any other
 tasks.
 
 History and Trash don't skip done and cancelled tasks. In those views,
-Right, End, and `G` select the last task, whatever its status, and Up on
-the first task wraps to it.
+Right, End, and `G` select the last task, whatever its status.
 In the list pickers and the language picker, Right and End select the
-last item, and Up on the first item wraps to it.
+last item.
 
 Help lists the action of Right, End, and `G` as
 `Select last item, skipping done and cancelled`, or
@@ -1427,9 +1433,9 @@ your work in existing Terminal windows and restart Terminal when convenient.
 
 ## Set the language and shortcuts
 
-Press F3 to open the language picker. Use Up or Down to select English or
-Dansk, then press Enter. The interface changes after Husker saves the choice.
-The next launch uses the same language. Press Esc to cancel without saving.
+Press F3 to open the language picker. Press Up to select English or Down
+to select Dansk, then press Enter. The interface changes after Husker
+saves the choice. The next launch uses the same language. Press Esc to cancel without saving.
 The language shortcut is listed in Help (`?`).
 
 You can change language while editing a task. Your draft, cursor, and undo
@@ -1723,12 +1729,27 @@ Install the current version from the repository:
 cargo install --path . --locked
 ```
 
+Version 0.23.0 changes Up and Down in every selection list. Up on the
+first item and Down on the last item now keep that item selected. The
+change covers All tasks, list views, History, Trash, the list picker, the
+List field's picker, the move picker, and the language picker. In 0.22.0,
+Up on the first task wrapped to the last open task, and Down on the last
+task wrapped to the first task after Earlier. The pickers wrapped from one
+end to the other in the same way. To reach the other end now, press Left,
+Home, or `g` for the first task, or Right, End, or `G` for the last task.
+In All tasks and list views, Left still skips the tasks under Earlier, and
+Right still skips the done and cancelled tasks. In the language picker, Up
+selects English and Down selects Dansk. Keys you bound to `up` and `down`
+in `config.toml` follow the same rule. PageUp, PageDown, and the mouse wheel don't change. See
+[Jump past Earlier to today's tasks](#jump-past-earlier-to-todays-tasks).
+Version 0.23.0 doesn't change the database.
+
 Version 0.22.0 changes Right, End, and `G` in All tasks and list views.
 They now skip the done and cancelled tasks at the bottom of the view and
-select the last open task, such as the last task under Tomorrow. Up on the
-first task wraps to that task too. In 0.21.1, Right and Up on the first
-task both selected the last task, which was often under Done today or
-Cancelled today. To reach those tasks, press Down from the last open task,
+select the last open task, such as the last task under Tomorrow. Until
+0.23.0, Up on the first task wrapped to that task too. In 0.21.1, Right
+and Up on the first task both selected the last task, which was often
+under Done today or Cancelled today. To reach those tasks, press Down from the last open task,
 or press PageDown. A key you bound to `last` in `config.toml` follows the
 same rule. History, Trash, and the pickers don't change. See
 [Jump to the last open task](#jump-to-the-last-open-task).
@@ -1756,9 +1777,9 @@ Version 0.21.1 doesn't change the database.
 
 Version 0.21.0 changes Left, Home, and `g` in All tasks and list views.
 They now skip the tasks under Earlier and select the first task after
-them, such as the first task under Today. Down on the last task wraps to
-that task too. In 0.20.1, Left and Down on the last task both selected the
-first task, which was often under Earlier. To reach a task under Earlier,
+them, such as the first task under Today. Until 0.23.0, Down on the last
+task wrapped to that task too. In 0.20.1, Left and Down on the last task
+both selected the first task, which was often under Earlier. To reach a task under Earlier,
 press Up from the first task after Earlier, or press PageUp. A key you bound to `first` in
 `config.toml` follows the same rule. History, Trash, and the pickers don't
 change. See [Jump past Earlier to today's tasks](#jump-past-earlier-to-todays-tasks).
